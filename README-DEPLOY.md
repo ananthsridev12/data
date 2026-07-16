@@ -31,8 +31,9 @@ and import, in order:
 7. `sql/007_column_preferences.sql`
 8. `sql/008_custom_fields.sql`
 9. `sql/009_delivery_status.sql`
+10. `sql/010_relax_required_fields.sql`
 
-(If you're setting up a brand-new site, import all nine in order. If
+(If you're setting up a brand-new site, import all ten in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
