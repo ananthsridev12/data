@@ -43,6 +43,7 @@ function render_header(string $title): void
     <div class="collapse navbar-collapse" id="navMain">
       <ul class="navbar-nav me-auto">
         <li class="nav-item"><a class="nav-link" href="dashboard.php">Dashboard</a></li>
+        <li class="nav-item"><a class="nav-link" href="accounts.php">Accounts</a></li>
         <?php if ($user['role'] === ROLE_ADMIN): ?>
         <li class="nav-item"><a class="nav-link" href="import.php">Import</a></li>
         <li class="nav-item"><a class="nav-link" href="import_history.php">Import History</a></li>
