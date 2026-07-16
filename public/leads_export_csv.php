@@ -18,7 +18,11 @@ if (!empty($_GET['campaign_export'])) {
         exit;
     }
 
-    $idsStmt = db()->prepare('SELECT lead_id FROM lead_campaign_assignments WHERE campaign_id = ? ORDER BY lead_id');
+    // Only 'active' assignments -- held (wave-1 pending) and suppressed
+    // (wave-1 bounced) leads must never go out in a campaign export.
+    $idsStmt = db()->prepare(
+        "SELECT lead_id FROM lead_campaign_assignments WHERE campaign_id = ? AND wave_status = 'active' ORDER BY lead_id"
+    );
     $idsStmt->execute([$campaignId]);
     $leadIds = array_map('intval', $idsStmt->fetchAll(PDO::FETCH_COLUMN));
 
@@ -35,14 +39,18 @@ if (!empty($_GET['campaign_export'])) {
 $filters = [
     'q' => trim((string) ($_GET['q'] ?? '')),
     'company' => trim((string) ($_GET['company'] ?? '')),
+    'domain' => trim((string) ($_GET['domain'] ?? '')),
     'title' => trim((string) ($_GET['title'] ?? '')),
     'seniority' => trim((string) ($_GET['seniority'] ?? '')),
     'departments' => trim((string) ($_GET['departments'] ?? '')),
     'industry' => trim((string) ($_GET['industry'] ?? '')),
     'country' => trim((string) ($_GET['country'] ?? '')),
     'employee_count' => trim((string) ($_GET['employee_count'] ?? '')),
+    'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
+    'service_id' => trim((string) ($_GET['service_id'] ?? '')),
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
     'hide_used_in_campaign' => !empty($_GET['hide_used_in_campaign']),
+    'show_suppressed' => !empty($_GET['show_suppressed']),
 ];
 
 $leadIds = LeadRepository::matchingIds(db(), $filters);

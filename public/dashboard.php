@@ -18,6 +18,7 @@ $filters = [
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
     'hide_used_in_campaign' => !empty($_GET['hide_used_in_campaign']),
+    'show_suppressed' => !empty($_GET['show_suppressed']),
 ];
 $page = max(1, (int) ($_GET['page'] ?? 1));
 
@@ -120,6 +121,10 @@ render_header('Dashboard');
         <input class="form-check-input me-2" type="checkbox" name="hide_used_in_campaign" value="1" id="hideUsed" <?= $filters['hide_used_in_campaign'] ? 'checked' : '' ?>>
         <label class="form-check-label" for="hideUsed">Hide leads already used in selected campaign</label>
       </div>
+      <div class="col-md-3 form-check d-flex align-items-center">
+        <input class="form-check-input me-2" type="checkbox" name="show_suppressed" value="1" id="showSuppressed" <?= $filters['show_suppressed'] ? 'checked' : '' ?>>
+        <label class="form-check-label" for="showSuppressed">Show suppressed (bounced-domain) leads</label>
+      </div>
       <div class="col-md-2">
         <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
       </div>
@@ -188,6 +193,9 @@ render_header('Dashboard');
             <?php if ($lead['used_in_campaigns']): ?>
               <span class="badge badge-used" title="<?= e($lead['used_in_campaigns']) ?>">Used</span>
             <?php endif; ?>
+            <?php if ($lead['suppressed_reason'] !== null): ?>
+              <span class="badge bg-danger" title="<?= e($lead['suppressed_reason']) ?>">Suppressed</span>
+            <?php endif; ?>
           </td>
         </tr>
       <?php endforeach; ?>
@@ -198,7 +206,7 @@ render_header('Dashboard');
     </table>
   </div>
 
-  <div class="card mb-4">
+  <div class="card mb-3">
     <div class="card-body d-flex flex-wrap gap-2 align-items-center">
       <select name="campaign_id" class="form-select form-select-sm" style="max-width: 260px;" required>
         <option value="">Choose a campaign...</option>
@@ -209,6 +217,17 @@ render_header('Dashboard');
       <button type="submit" name="mode" value="checked" class="btn btn-sm btn-primary">Assign checked leads to campaign</button>
       <button type="submit" name="mode" value="filter" class="btn btn-sm btn-outline-primary" onclick="return confirm('Assign ALL <?= (int) $result['total'] ?> leads matching the current filter to this campaign?');">Assign all <?= (int) $result['total'] ?> matching leads</button>
       <?php if (!$campaigns): ?><span class="text-muted small">No campaigns yet -- create one on the <a href="campaigns.php">Campaigns</a> page.</span><?php endif; ?>
+    </div>
+  </div>
+
+  <div class="card mb-4 border-warning">
+    <div class="card-header">Wave 1 (1 contact per company, rest held back)</div>
+    <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+      <input type="text" name="title_priority" class="form-control form-control-sm" style="max-width: 320px;"
+             placeholder="Title priority, e.g. VP Engineering, CTO, Director">
+      <button type="submit" name="wave_mode" value="checked" class="btn btn-sm btn-warning">Wave-1 checked leads</button>
+      <button type="submit" name="wave_mode" value="filter" class="btn btn-sm btn-outline-warning" onclick="return confirm('Assign wave-1 (1 per company) across all <?= (int) $result['total'] ?> leads matching the current filter?');">Wave-1 all <?= (int) $result['total'] ?> matching leads</button>
+      <span class="text-muted small">Picks the first title match per company (falls back to seniority); the rest are held until you release or suppress them on the campaign's page.</span>
     </div>
   </div>
 </form>

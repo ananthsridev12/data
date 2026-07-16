@@ -24,6 +24,14 @@ and import, in order:
    after your first login**, or edit the password hash in that file before
    importing -- see the comment at the top of the file for how to generate
    a new one.)
+3. `sql/003_verticals_services_email_tracking.sql`
+4. `sql/004_wave_suppression.sql`
+
+(If you're setting up a brand-new site, import all four in order. If
+you already have a running site from before these were added, just
+import whichever of 003/004 you're missing -- they're additive, so
+re-running 001/002 against an existing database will error on already-
+existing tables/rows.)
 
 ## 3. Upload the files
 

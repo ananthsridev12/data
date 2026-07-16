@@ -35,10 +35,61 @@ $stmt = db()->prepare(
 $stmt->execute(['campaign_id' => $campaignId]);
 $assignments = $stmt->fetchAll();
 
+$waveStmt = db()->prepare(
+    "SELECT a.id AS leader_assignment_id, a.bounce_status, a.assigned_at,
+            l.na_company_name, l.first_name, l.last_name, l.email,
+            (SELECT COUNT(*) FROM lead_campaign_assignments h WHERE h.wave_leader_id = a.id) AS held_count,
+            (SELECT COUNT(*) FROM lead_campaign_assignments h WHERE h.wave_leader_id = a.id AND h.wave_status = 'held') AS still_held
+       FROM lead_campaign_assignments a
+       JOIN leads l ON l.id = a.lead_id
+      WHERE a.campaign_id = :campaign_id
+        AND EXISTS (SELECT 1 FROM lead_campaign_assignments h2 WHERE h2.wave_leader_id = a.id)
+      ORDER BY a.assigned_at DESC"
+);
+$waveStmt->execute(['campaign_id' => $campaignId]);
+$waveGroups = $waveStmt->fetchAll();
+
 render_header('Campaign leads');
 ?>
 <h1 class="h4 mb-1">Leads assigned to "<?= e($campaign['name']) ?>"</h1>
 <p class="text-muted"><?= number_format($total) ?> lead(s) assigned (page <?= $page ?> of <?= $totalPages ?>)</p>
+
+<?php if ($waveGroups): ?>
+<div class="card mb-4 border-warning">
+  <div class="card-header">Wave 1 groups awaiting a delivered/bounced decision</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead><tr><th>Company</th><th>Wave-1 contact</th><th>Held</th><th>Outcome</th><th></th></tr></thead>
+      <tbody>
+      <?php foreach ($waveGroups as $w): ?>
+        <tr>
+          <td><?= e($w['na_company_name']) ?></td>
+          <td><?= e($w['first_name'] . ' ' . $w['last_name']) ?> (<?= e($w['email']) ?>)</td>
+          <td><?= (int) $w['held_count'] ?> (<?= (int) $w['still_held'] ?> still held)</td>
+          <td>
+            <?php
+            $bounceBadge = ['pending' => 'secondary', 'delivered' => 'success', 'bounced' => 'danger'];
+            ?>
+            <span class="badge bg-<?= $bounceBadge[$w['bounce_status']] ?>"><?= e($w['bounce_status']) ?></span>
+          </td>
+          <td>
+            <?php if ($w['still_held'] > 0): ?>
+            <form method="post" action="campaign_wave_update.php" class="d-inline">
+              <?= csrf_field() ?>
+              <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+              <input type="hidden" name="leader_assignment_id" value="<?= (int) $w['leader_assignment_id'] ?>">
+              <button type="submit" name="action" value="release" class="btn btn-sm btn-outline-success">Delivered -- release held</button>
+              <button type="submit" name="action" value="suppress" class="btn btn-sm btn-outline-danger" onclick="return confirm('Bounced -- suppress this domain everywhere? This affects all campaigns and future imports too.');">Bounced -- suppress domain</button>
+            </form>
+            <?php endif; ?>
+          </td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+<?php endif; ?>
 
 <form method="post" action="campaign_assignment_update.php">
   <?= csrf_field() ?>
@@ -50,7 +101,7 @@ render_header('Campaign leads');
       <thead>
         <tr>
           <th><input type="checkbox" id="selectAllOnPage"></th>
-          <th>Company</th><th>Contact</th><th>Email</th><th>Assigned</th>
+          <th>Company</th><th>Contact</th><th>Email</th><th>Wave</th><th>Assigned</th>
           <th>Imported to Saleshandy</th><th>Email Sent</th><th>Email Date</th>
         </tr>
       </thead>
@@ -61,6 +112,10 @@ render_header('Campaign leads');
           <td><?= e($a['na_company_name']) ?></td>
           <td><?= e($a['first_name'] . ' ' . $a['last_name']) ?></td>
           <td><?= e($a['email']) ?></td>
+          <td>
+            <?php $waveBadge = ['active' => 'success', 'held' => 'warning', 'suppressed' => 'danger']; ?>
+            <span class="badge bg-<?= $waveBadge[$a['wave_status']] ?>"><?= e($a['wave_status']) ?></span>
+          </td>
           <td class="small text-muted"><?= e($a['assigned_at']) ?></td>
           <td>
             <?php if (in_array($a['status'], ['exported', 'pushed'], true)): ?>
@@ -81,7 +136,7 @@ render_header('Campaign leads');
         </tr>
       <?php endforeach; ?>
       <?php if (!$assignments): ?>
-        <tr><td colspan="7" class="text-center text-muted py-4">No leads assigned to this campaign yet.</td></tr>
+        <tr><td colspan="8" class="text-center text-muted py-4">No leads assigned to this campaign yet.</td></tr>
       <?php endif; ?>
       </tbody>
     </table>

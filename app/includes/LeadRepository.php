@@ -11,9 +11,10 @@ class LeadRepository
     private const PER_PAGE = 50;
 
     /**
-     * @param array<string,mixed> $filters q, company, title, seniority,
-     *   departments, industry, country, employee_count, campaign_id,
-     *   hide_used_in_campaign (bool)
+     * @param array<string,mixed> $filters q, company, domain, title, seniority,
+     *   departments, industry, country, employee_count, vertical_id, service_id,
+     *   campaign_id, hide_used_in_campaign (bool), show_suppressed (bool -- by
+     *   default, leads on a suppressed domain are excluded entirely)
      * @return array{rows: array<int,array>, total: int, page: int, perPage: int, totalPages: int}
      */
     public static function search(PDO $db, array $filters, int $page = 1): array
@@ -37,7 +38,9 @@ class LeadRepository
                   (SELECT GROUP_CONCAT(c.name SEPARATOR ', ')
                      FROM lead_campaign_assignments a
                      JOIN campaigns c ON c.id = a.campaign_id
-                    WHERE a.lead_id = l.id) AS used_in_campaigns
+                    WHERE a.lead_id = l.id) AS used_in_campaigns,
+                  (SELECT sd.reason FROM suppressed_domains sd
+                    WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)) AS suppressed_reason
                 FROM leads l
                 LEFT JOIN verticals v ON v.id = l.vertical_id
                 LEFT JOIN services s ON s.id = l.service_id
@@ -121,6 +124,10 @@ class LeadRepository
                 $clauses[] = 'NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.campaign_id = :hide_campaign_id)';
                 $params['hide_campaign_id'] = $campaignId;
             }
+        }
+
+        if (empty($filters['show_suppressed'])) {
+            $clauses[] = "NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1))";
         }
 
         $where = $clauses ? ('WHERE ' . implode(' AND ', $clauses)) : '';
