@@ -85,6 +85,10 @@ class LeadRepository
         if (!empty($filters['company'])) {
             $like('na_company_name', $filters['company']);
         }
+        if (!empty($filters['domain'])) {
+            $clauses[] = "SUBSTRING_INDEX(l.email, '@', -1) LIKE :domain";
+            $params['domain'] = '%' . $filters['domain'] . '%';
+        }
         if (!empty($filters['title'])) {
             $like('title', $filters['title']);
         }

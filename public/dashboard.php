@@ -13,6 +13,7 @@ $filters = [
     'industry' => trim((string) ($_GET['industry'] ?? '')),
     'country' => trim((string) ($_GET['country'] ?? '')),
     'employee_count' => trim((string) ($_GET['employee_count'] ?? '')),
+    'domain' => trim((string) ($_GET['domain'] ?? '')),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
@@ -48,6 +49,9 @@ render_header('Dashboard');
       </div>
       <div class="col-md-2">
         <input type="text" name="company" class="form-control form-control-sm" placeholder="Company" value="<?= e($filters['company']) ?>">
+      </div>
+      <div class="col-md-2">
+        <input type="text" name="domain" class="form-control form-control-sm" placeholder="Email domain, e.g. acme.com" value="<?= e($filters['domain']) ?>">
       </div>
       <div class="col-md-2">
         <input type="text" name="title" class="form-control form-control-sm" placeholder="Title" value="<?= e($filters['title']) ?>">
