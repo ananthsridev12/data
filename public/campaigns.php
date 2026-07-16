@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 
 $admin = require_admin();
 
@@ -40,6 +41,24 @@ $campaigns = db()->query(
      JOIN users u ON u.id = c.created_by
      ORDER BY c.created_at DESC"
 )->fetchAll();
+
+// Live Saleshandy sequence status (active/paused) for linked campaigns --
+// one listSequences() call covers every linked campaign on this page, so
+// it's cheap even with many campaigns. Left empty (badge just omitted) if
+// Saleshandy isn't configured or the call fails -- this page must never
+// break because of it.
+$liveSequenceActive = [];
+if (array_filter($campaigns, static fn(array $c) => $c['saleshandy_sequence_id'])) {
+    try {
+        $config = require __DIR__ . '/../app/config/config.php';
+        $client = SaleshandyClient::fromConfig($config);
+        foreach ($client->listSequences() as $seq) {
+            $liveSequenceActive[$seq['id']] = (bool) ($seq['active'] ?? false);
+        }
+    } catch (SaleshandyApiException $ex) {
+        // Not configured or unreachable -- badges just won't show, page still works.
+    }
+}
 
 render_header('Campaigns');
 ?>
@@ -84,6 +103,15 @@ render_header('Campaigns');
           <span class="badge bg-warning">Sequence set, no step</span>
         <?php else: ?>
           <span class="badge bg-secondary">Not linked</span>
+        <?php endif; ?>
+        <?php if ($c['saleshandy_sequence_id'] && array_key_exists($c['saleshandy_sequence_id'], $liveSequenceActive)): ?>
+          <?php if ($liveSequenceActive[$c['saleshandy_sequence_id']]): ?>
+            <span class="badge bg-success">Sequence active</span>
+          <?php else: ?>
+            <span class="badge bg-danger" title="This sequence is paused/archived on Saleshandy -- pushing here won't do anything until it's reactivated there.">Sequence paused</span>
+          <?php endif; ?>
+        <?php elseif ($c['saleshandy_sequence_id']): ?>
+          <span class="badge bg-light text-muted border" title="Could not reach Saleshandy to check live status.">Status unknown</span>
         <?php endif; ?>
         <a href="campaign_saleshandy_settings.php?campaign_id=<?= (int) $c['id'] ?>" class="small d-block">Configure</a>
       </td>
