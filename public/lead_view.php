@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
+require_once __DIR__ . '/../app/includes/TagRepository.php';
 
 $user = require_login();
 
@@ -48,6 +49,10 @@ $customStmt = db()->prepare(
 );
 $customStmt->execute([$leadId]);
 $customFieldValues = $customStmt->fetchAll();
+
+$allTags = TagRepository::all(db());
+$leadTagIds = TagRepository::tagIdsForLead(db(), $leadId);
+$leadTagNames = TagRepository::namesForLead(db(), $leadId);
 
 render_header('Lead detail');
 
@@ -172,6 +177,22 @@ $field = static function (string $label, ?string $value) {
 <?php endif; ?>
 
 <div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    Tags
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editTagsModal">Edit</button>
+  </div>
+  <div class="card-body">
+    <?php if ($leadTagNames): ?>
+      <?php foreach ($leadTagNames as $name): ?>
+        <span class="badge bg-secondary me-1"><?= e($name) ?></span>
+      <?php endforeach; ?>
+    <?php else: ?>
+      <p class="text-muted small mb-0">No tags set yet.</p>
+    <?php endif; ?>
+  </div>
+</div>
+
+<div class="card mb-4">
   <div class="card-header">Campaign history</div>
   <div class="table-responsive">
     <table class="table table-sm mb-0">
@@ -264,4 +285,39 @@ $field = static function (string $label, ?string $value) {
   </div>
 </div>
 <?php endif; ?>
+<div class="modal fade" id="editTagsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="lead_tags_update.php">
+        <?= csrf_field() ?>
+        <input type="hidden" name="lead_id" value="<?= (int) $lead['id'] ?>">
+        <input type="hidden" name="return_to" value="lead_view.php?id=<?= (int) $lead['id'] ?>">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Tags</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <?php if ($allTags): ?>
+          <div class="mb-3">
+            <label class="form-label">Existing tags (ctrl/cmd-click to select multiple)</label>
+            <select name="tag_ids[]" class="form-select form-select-sm" multiple size="6">
+              <?php foreach ($allTags as $t): ?>
+                <option value="<?= (int) $t['id'] ?>" <?= in_array((int) $t['id'], $leadTagIds, true) ? 'selected' : '' ?>><?= e($t['name']) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <?php endif; ?>
+          <div class="mb-3">
+            <label class="form-label">New tags (comma-separated)</label>
+            <input type="text" name="new_tags" class="form-control form-control-sm" placeholder="e.g. Hot Lead, Q3 Push">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 <?php render_footer(); ?>

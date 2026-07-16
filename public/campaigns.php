@@ -66,7 +66,7 @@ render_header('Campaigns');
 
 <table class="table table-striped bg-white">
   <thead>
-    <tr><th>Name</th><th>Description</th><th>Leads assigned</th><th>Exported</th><th>Created by</th><th>Status</th><th></th></tr>
+    <tr><th>Name</th><th>Description</th><th>Leads assigned</th><th>Exported</th><th>Created by</th><th>Status</th><th>Saleshandy</th><th></th></tr>
   </thead>
   <tbody>
   <?php foreach ($campaigns as $c): ?>
@@ -77,6 +77,16 @@ render_header('Campaigns');
       <td><?= (int) $c['exported_count'] ?></td>
       <td><?= e($c['created_by_name']) ?></td>
       <td><span class="badge bg-<?= $c['is_active'] ? 'success' : 'secondary' ?>"><?= $c['is_active'] ? 'Active' : 'Inactive' ?></span></td>
+      <td>
+        <?php if ($c['saleshandy_sequence_id'] && $c['saleshandy_step_id']): ?>
+          <span class="badge bg-success">Linked</span>
+        <?php elseif ($c['saleshandy_sequence_id']): ?>
+          <span class="badge bg-warning">Sequence set, no step</span>
+        <?php else: ?>
+          <span class="badge bg-secondary">Not linked</span>
+        <?php endif; ?>
+        <a href="campaign_saleshandy_settings.php?campaign_id=<?= (int) $c['id'] ?>" class="small d-block">Configure</a>
+      </td>
       <td class="d-flex gap-1">
         <a class="btn btn-sm btn-outline-secondary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>">Manage leads</a>
         <a class="btn btn-sm btn-outline-secondary" href="leads_export_csv.php?campaign_export=<?= (int) $c['id'] ?>">Export CSV</a>
@@ -90,7 +100,7 @@ render_header('Campaigns');
     </tr>
   <?php endforeach; ?>
   <?php if (!$campaigns): ?>
-    <tr><td colspan="7" class="text-center text-muted py-4">No campaigns yet.</td></tr>
+    <tr><td colspan="8" class="text-center text-muted py-4">No campaigns yet.</td></tr>
   <?php endif; ?>
   </tbody>
 </table>

@@ -63,6 +63,27 @@ render_header('Campaign leads');
   <a href="column_settings.php?page=campaign_leads&return_to=<?= urlencode('campaign_leads.php?campaign_id=' . $campaignId) ?>">Manage columns</a>
 </p>
 
+<?php if ($campaign['saleshandy_sequence_id'] && $campaign['saleshandy_step_id']): ?>
+<div class="card mb-4">
+  <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+    <form method="post" action="campaign_saleshandy_push.php" onsubmit="return confirm('Push currently-eligible leads for this campaign to Saleshandy?');">
+      <?= csrf_field() ?>
+      <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+      <button type="submit" class="btn btn-sm btn-primary">Push to Saleshandy</button>
+    </form>
+    <form method="post" action="campaign_saleshandy_sync.php">
+      <?= csrf_field() ?>
+      <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+      <button type="submit" class="btn btn-sm btn-outline-primary">Refresh statuses from Saleshandy</button>
+    </form>
+    <span class="text-muted small">
+      Push only sends leads currently eligible under the wave-1 domain-safety gate.
+      <?= $campaign['saleshandy_last_synced_at'] ? 'Last synced ' . e($campaign['saleshandy_last_synced_at']) . '.' : 'Never synced yet.' ?>
+    </span>
+  </div>
+</div>
+<?php endif; ?>
+
 <div class="card mb-4 border-danger">
   <div class="card-header">Paste bounced emails</div>
   <div class="card-body">

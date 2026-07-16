@@ -3,6 +3,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadImporter.php';
 require_once __DIR__ . '/../app/includes/ImportMapper.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
+require_once __DIR__ . '/../app/includes/TagRepository.php';
 
 $admin = require_admin();
 $config = require __DIR__ . '/../app/config/config.php';
@@ -36,6 +37,7 @@ $lookupOptions = [
     'service' => LeadRepository::activeLookupOptions(db(), 'services'),
 ];
 $campaignOptions = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORDER BY name')->fetchAll();
+$allTags = TagRepository::all(db());
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_mapping') {
     csrf_verify();
@@ -51,7 +53,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
     $targetLabels = array_merge(
         array_map(static fn(array $f) => $f['label'], LEAD_FIELDS),
         array_map(static fn(array $f) => $f['label'], LOOKUP_FIELDS),
-        $customFieldLabels
+        $customFieldLabels,
+        ['tags' => 'Tags']
     );
 
     foreach ($headerKeys as $i => $key) {
@@ -72,10 +75,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
     $postedDefaults = $_POST['defaults'] ?? [];
     $defaults = [];
     foreach ($targetLabels as $targetKey => $label) {
+        if ($targetKey === 'tags') {
+            continue; // handled separately below -- multi-valued, not a single default string
+        }
         $value = trim((string) ($postedDefaults[$targetKey] ?? ''));
         if ($value !== '') {
             $defaults[$targetKey] = $value;
         }
+    }
+
+    // Tags for this whole import: existing tags picked from the multi-select plus any typed as new.
+    $defaultTagIds = array_map('intval', $_POST['defaults_tags_ids'] ?? []);
+    $defaultTagNames = [];
+    if ($defaultTagIds) {
+        $placeholders = implode(',', array_fill(0, count($defaultTagIds), '?'));
+        $tagNameStmt = db()->prepare("SELECT name FROM tags WHERE id IN ({$placeholders})");
+        $tagNameStmt->execute($defaultTagIds);
+        $defaultTagNames = $tagNameStmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+    $newDefaultTags = array_filter(array_map('trim', explode(',', (string) ($_POST['defaults_tags_new'] ?? ''))));
+    $defaultTagNames = array_merge($defaultTagNames, $newDefaultTags);
+    if ($defaultTagNames) {
+        $defaults['tags'] = implode(',', $defaultTagNames);
     }
 
     $missingRequired = [];
@@ -273,6 +294,9 @@ if ($batch['status'] === 'processing') {
                 <?php endforeach; ?>
               </optgroup>
               <?php endif; ?>
+              <optgroup label="Tags">
+                <option value="tags" <?= $chosen === 'tags' ? 'selected' : '' ?>>Tags (comma/semicolon-separated)</option>
+              </optgroup>
             </select>
           </td>
         </tr>
@@ -310,6 +334,25 @@ if ($batch['status'] === 'processing') {
           </div>
         <?php endforeach; ?>
       </div>
+    </div>
+  </div>
+
+  <div class="card mb-3" id="default-row-tags" data-default-row="tags">
+    <div class="card-header">Tags for this import (optional)</div>
+    <div class="card-body">
+      <p class="text-muted small">Applied to every lead imported or updated by this file, in addition to any tags mapped from a column above -- tags accumulate rather than replace, so a re-imported lead keeps tags it already had.</p>
+      <?php if ($allTags): ?>
+      <div class="mb-2">
+        <label class="form-label small mb-0">Existing tags (ctrl/cmd-click to select multiple)</label>
+        <select name="defaults_tags_ids[]" class="form-select form-select-sm" multiple size="4">
+          <?php foreach ($allTags as $t): ?>
+            <option value="<?= (int) $t['id'] ?>"><?= e($t['name']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <?php endif; ?>
+      <label class="form-label small mb-0">New tags (comma-separated)</label>
+      <input type="text" name="defaults_tags_new" class="form-control form-control-sm" placeholder="e.g. Hot Lead, Q3 Push">
     </div>
   </div>
 

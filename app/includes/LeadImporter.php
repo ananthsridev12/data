@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../config/constants.php';
 require_once __DIR__ . '/../vendor/simplexlsx/SimpleXLSX.php';
+require_once __DIR__ . '/TagRepository.php';
 
 use Shuchkin\SimpleXLSX;
 
@@ -216,6 +217,7 @@ class LeadImporter
             $data = [];
             $lookupRaw = [];
             $customRaw = [];
+            $tagsRaw = '';
             foreach ($headerKeys as $i => $key) {
                 $col = $mapping[$key] ?? null;
                 if ($col === null) {
@@ -228,6 +230,8 @@ class LeadImporter
                     $lookupRaw[$col] = $value;
                 } elseif (isset($customFields[$col])) {
                     $customRaw[$col] = $value;
+                } elseif ($col === 'tags') {
+                    $tagsRaw = $value;
                 }
             }
 
@@ -242,6 +246,13 @@ class LeadImporter
                 } elseif (isset($customFields[$key]) && empty($customRaw[$key])) {
                     $customRaw[$key] = $defaultValue;
                 }
+            }
+
+            // Tags accumulate rather than "default when empty" -- a batch-level
+            // default tag list and a per-row mapped Tags column are both applied.
+            $tagNames = array_filter(array_map('trim', preg_split('/[,;]/', $tagsRaw)));
+            if (!empty($defaults['tags'])) {
+                $tagNames = array_merge($tagNames, array_filter(array_map('trim', explode(',', $defaults['tags']))));
             }
 
             $missing = [];
@@ -317,6 +328,10 @@ class LeadImporter
 
             if ($campaignAssignStmt !== null) {
                 $campaignAssignStmt->execute([$leadId, $assignCampaignId, $assignedByUserId]);
+            }
+
+            if ($tagNames) {
+                TagRepository::addTagsToLead($db, $leadId, $tagNames);
             }
         }
 

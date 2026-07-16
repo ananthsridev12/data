@@ -27,4 +27,20 @@ return [
     'app_url' => 'https://example.com',
 
     'session_name' => 'shdash_sess',
+
+    'saleshandy' => [
+        // Generate under Saleshandy -> Settings -> API. Required for
+        // "Push to Saleshandy" / "Refresh statuses" on Campaign Leads,
+        // and for the Saleshandy Field Mapping and Tags admin pages.
+        // Leave blank to leave those features disabled (everything else
+        // in the app works fine without it).
+        'api_key' => '',
+
+        // A random string you make up (e.g. `openssl rand -hex 32`).
+        // Required only if you set up the scheduled sync cron job (see
+        // README-DEPLOY.md) -- it's the shared secret cron_saleshandy_sync.php
+        // checks in its `token` query param, since a cron hit has no
+        // logged-in session to authenticate with.
+        'cron_token' => '',
+    ],
 ];

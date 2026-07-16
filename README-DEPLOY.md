@@ -32,8 +32,9 @@ and import, in order:
 8. `sql/008_custom_fields.sql`
 9. `sql/009_delivery_status.sql`
 10. `sql/010_relax_required_fields.sql`
+11. `sql/011_saleshandy_integration.sql`
 
-(If you're setting up a brand-new site, import all ten in order. If
+(If you're setting up a brand-new site, import all eleven in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -146,6 +147,52 @@ sequence via its API instead of a CSV round-trip -- the `campaigns`
 table already has a `saleshandy_sequence_id` column and
 `lead_campaign_assignments.status` already supports a `pushed` value to
 support that without a schema change.
+
+## Direct Saleshandy push/pull (optional)
+
+Beyond the CSV export above, the app can push leads straight into a
+Saleshandy sequence step and pull delivery/reply/bounce activity back,
+via `app/includes/SaleshandyClient.php`. This is entirely optional --
+everything else in the app works without it.
+
+**Setup:**
+1. Generate an API key in Saleshandy under **Settings -> API**, and paste
+   it into `app/config/config.php` as `saleshandy.api_key`.
+2. (Optional, for the scheduled sync) make up a random string (e.g.
+   `openssl rand -hex 32`) and set it as `saleshandy.cron_token`.
+3. Visit **Saleshandy Field Mapping** (admin nav) and choose which of
+   your fields get sent on push, and what Saleshandy field label each
+   maps to -- everything is opt-in; nothing is sent unless you enable and
+   label it here. Use "Fetch field list from Saleshandy" to see the
+   exact label spelling Saleshandy expects.
+4. Visit **Tags** (admin nav) and "Sync from Saleshandy" to pull in your
+   existing Saleshandy tags, so leads can be tagged from a known list
+   during import or editing (new tags typed in here are created on
+   Saleshandy's side automatically the first time they're used in a push).
+5. On **Campaigns**, click **Configure** next to a campaign to link it to
+   a Saleshandy sequence and step.
+6. On that campaign's **Campaign Leads** page, use **Push to Saleshandy**
+   (sends only leads currently eligible under the existing wave-1
+   domain-safety gate) and **Refresh statuses from Saleshandy** (pulls
+   delivery/reply/bounce activity back into each lead's Delivery Status,
+   and cascades a bounce into the same domain-suppression logic Bounce
+   Import uses).
+
+**Important caveat:** `SaleshandyClient.php`'s endpoint paths were built
+from Saleshandy's documented request/response shapes rather than a full
+API spec, since the reference used to build this only exposed request/
+response shapes, not literal endpoint URLs. Do a small, low-stakes test
+(one campaign, a couple of leads) before relying on push/pull broadly,
+and check that file's docblock if a call fails outright rather than
+returning a normal API error.
+
+**Optional scheduled sync:** in cPanel's **Cron Jobs**, add a job that
+hits (e.g. every few hours):
+```
+wget -q -O /dev/null "https://yoursite.com/cron_saleshandy_sync.php?token=YOUR_CRON_TOKEN"
+```
+This syncs every campaign that has a Saleshandy sequence linked, as a
+backstop alongside the manual "Refresh statuses" button.
 
 ## Automated deploys via GitHub Actions
 
