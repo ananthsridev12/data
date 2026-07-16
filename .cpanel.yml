@@ -1,0 +1,8 @@
+---
+deployment:
+  tasks:
+    - export DOCROOT=/home1/de2shrnx/data.easi7.in
+    - export APPDIR=/home1/de2shrnx/app
+    - /bin/mkdir -p "$APPDIR"
+    - /bin/cp -R public/. "$DOCROOT"/
+    - /bin/cp -R app/. "$APPDIR"/
