@@ -16,6 +16,7 @@ $filters = [
     'domain' => trim((string) ($_GET['domain'] ?? '')),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
+    'imported_by' => trim((string) ($_GET['imported_by'] ?? '')),
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
     'hide_used_in_campaign' => !empty($_GET['hide_used_in_campaign']),
     'show_suppressed' => !empty($_GET['show_suppressed']),
@@ -31,6 +32,9 @@ $employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
 $campaigns = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORDER BY name')->fetchAll();
+$importers = db()->query(
+    "SELECT DISTINCT u.id, u.name FROM users u JOIN import_batches ib ON ib.uploaded_by = u.id ORDER BY u.name"
+)->fetchAll();
 
 // Rebuild the current filter query string (minus `page`) for pagination links
 // and for the "export/assign everything matching this filter" hidden fields.
@@ -109,6 +113,14 @@ render_header('Dashboard');
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="col-md-2">
+        <select name="imported_by" class="form-select form-select-sm">
+          <option value="">Imported by (all)</option>
+          <?php foreach ($importers as $imp): ?>
+            <option value="<?= (int) $imp['id'] ?>" <?= (string) $filters['imported_by'] === (string) $imp['id'] ? 'selected' : '' ?>><?= e($imp['name']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
       <div class="col-md-3">
         <select name="campaign_id" class="form-select form-select-sm">
           <option value="">Filter by campaign...</option>
@@ -140,7 +152,7 @@ render_header('Dashboard');
     <table class="table table-hover mb-0 align-middle">
       <thead>
         <tr>
-          <th>Company</th><th>Name</th><th>Title</th><th>Email</th><th>Industry</th><th>Country</th><th>Seniority</th><th>Vertical</th><th>Service</th><th>Used in</th>
+          <th>Company</th><th>Name</th><th>Title</th><th>Email</th><th>Industry</th><th>Country</th><th>Seniority</th><th>Vertical</th><th>Service</th><th>Imported by</th><th>Used in</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -153,34 +165,9 @@ render_header('Dashboard');
           <td><?= e($lead['industry']) ?></td>
           <td><?= e($lead['country']) ?></td>
           <td><?= e($lead['seniority']) ?></td>
-          <td>
-            <form method="post" action="lead_update.php">
-              <?= csrf_field() ?>
-              <input type="hidden" name="field" value="vertical">
-              <input type="hidden" name="lead_id" value="<?= (int) $lead['id'] ?>">
-              <input type="hidden" name="return_to" value="<?= e($returnTo) ?>">
-              <select name="value_id" class="form-select form-select-sm" onchange="this.form.submit()">
-                <option value="">--</option>
-                <?php foreach ($verticals as $v): ?>
-                  <option value="<?= (int) $v['id'] ?>" <?= (int) $lead['vertical_id'] === (int) $v['id'] ? 'selected' : '' ?>><?= e($v['code']) ?></option>
-                <?php endforeach; ?>
-              </select>
-            </form>
-          </td>
-          <td>
-            <form method="post" action="lead_update.php">
-              <?= csrf_field() ?>
-              <input type="hidden" name="field" value="service">
-              <input type="hidden" name="lead_id" value="<?= (int) $lead['id'] ?>">
-              <input type="hidden" name="return_to" value="<?= e($returnTo) ?>">
-              <select name="value_id" class="form-select form-select-sm" onchange="this.form.submit()">
-                <option value="">--</option>
-                <?php foreach ($services as $s): ?>
-                  <option value="<?= (int) $s['id'] ?>" <?= (int) $lead['service_id'] === (int) $s['id'] ? 'selected' : '' ?>><?= e($s['code']) ?></option>
-                <?php endforeach; ?>
-              </select>
-            </form>
-          </td>
+          <td><?= e($lead['vertical_code'] ?? '') ?></td>
+          <td><?= e($lead['service_code'] ?? '') ?></td>
+          <td class="small text-muted" title="<?= e($lead['imported_filename'] ?? '') . ' -- ' . e($lead['imported_at'] ?? '') ?>"><?= e($lead['imported_by_name'] ?? '') ?></td>
           <td>
             <?php if ($lead['used_in_campaigns']): ?>
               <span class="badge badge-used" title="<?= e($lead['used_in_campaigns']) ?>">Used</span>
@@ -189,10 +176,52 @@ render_header('Dashboard');
               <span class="badge bg-danger" title="<?= e($lead['suppressed_reason']) ?>">Suppressed</span>
             <?php endif; ?>
           </td>
+          <td>
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editLead<?= (int) $lead['id'] ?>">Edit</button>
+            <div class="modal fade" id="editLead<?= (int) $lead['id'] ?>" tabindex="-1" aria-hidden="true">
+              <div class="modal-dialog">
+                <div class="modal-content">
+                  <form method="post" action="lead_update.php">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="lead_id" value="<?= (int) $lead['id'] ?>">
+                    <input type="hidden" name="return_to" value="<?= e($returnTo) ?>">
+                    <div class="modal-header">
+                      <h5 class="modal-title"><?= e($lead['first_name'] . ' ' . $lead['last_name']) ?> -- <?= e($lead['na_company_name']) ?></h5>
+                      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                      <div class="mb-3">
+                        <label class="form-label">Vertical</label>
+                        <select name="vertical_id" class="form-select form-select-sm">
+                          <option value="">--</option>
+                          <?php foreach ($verticals as $v): ?>
+                            <option value="<?= (int) $v['id'] ?>" <?= (int) $lead['vertical_id'] === (int) $v['id'] ? 'selected' : '' ?>><?= e($v['label']) ?></option>
+                          <?php endforeach; ?>
+                        </select>
+                      </div>
+                      <div class="mb-3">
+                        <label class="form-label">Service</label>
+                        <select name="service_id" class="form-select form-select-sm">
+                          <option value="">--</option>
+                          <?php foreach ($services as $s): ?>
+                            <option value="<?= (int) $s['id'] ?>" <?= (int) $lead['service_id'] === (int) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
+                          <?php endforeach; ?>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="modal-footer">
+                      <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </td>
         </tr>
       <?php endforeach; ?>
       <?php if (!$result['rows']): ?>
-        <tr><td colspan="10" class="text-center text-muted py-4">No leads match this filter.</td></tr>
+        <tr><td colspan="12" class="text-center text-muted py-4">No leads match this filter.</td></tr>
       <?php endif; ?>
       </tbody>
     </table>

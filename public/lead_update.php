@@ -11,30 +11,33 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 csrf_verify();
 
 $leadId = (int) ($_POST['lead_id'] ?? 0);
-$field = $_POST['field'] ?? '';
-$valueId = $_POST['value_id'] !== '' ? (int) $_POST['value_id'] : null;
+$returnTo = $_POST['return_to'] ?? 'dashboard.php';
 
-$columns = ['vertical' => 'vertical_id', 'service' => 'service_id'];
-$tables = ['vertical' => 'verticals', 'service' => 'services'];
-
-if ($leadId <= 0 || !isset($columns[$field])) {
+if ($leadId <= 0) {
     flash_set('danger', 'Invalid update request.');
-    header('Location: dashboard.php');
+    header('Location: ' . $returnTo);
     exit;
 }
 
-if ($valueId !== null) {
-    $check = db()->prepare("SELECT id FROM {$tables[$field]} WHERE id = ? AND is_active = 1");
+$verticalId = ($_POST['vertical_id'] ?? '') !== '' ? (int) $_POST['vertical_id'] : null;
+$serviceId = ($_POST['service_id'] ?? '') !== '' ? (int) $_POST['service_id'] : null;
+
+foreach (['vertical_id' => ['verticals', $verticalId], 'service_id' => ['services', $serviceId]] as [$table, $valueId]) {
+    if ($valueId === null) {
+        continue;
+    }
+    $check = db()->prepare("SELECT id FROM {$table} WHERE id = ? AND is_active = 1");
     $check->execute([$valueId]);
     if (!$check->fetch()) {
-        flash_set('danger', 'That value is not a valid, active list entry.');
-        header('Location: ' . ($_POST['return_to'] ?? 'dashboard.php'));
+        flash_set('danger', 'One of the selected values is not a valid, active list entry.');
+        header('Location: ' . $returnTo);
         exit;
     }
 }
 
-$column = $columns[$field];
-db()->prepare("UPDATE leads SET {$column} = ? WHERE id = ?")->execute([$valueId, $leadId]);
+db()->prepare('UPDATE leads SET vertical_id = ?, service_id = ? WHERE id = ?')
+    ->execute([$verticalId, $serviceId, $leadId]);
 
-header('Location: ' . ($_POST['return_to'] ?? 'dashboard.php'));
+flash_set('success', 'Lead updated.');
+header('Location: ' . $returnTo);
 exit;

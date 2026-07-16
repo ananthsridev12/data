@@ -13,8 +13,9 @@ class LeadRepository
     /**
      * @param array<string,mixed> $filters q, company, domain, title, seniority,
      *   departments, industry, country, employee_count, vertical_id, service_id,
-     *   campaign_id, hide_used_in_campaign (bool), show_suppressed (bool -- by
-     *   default, leads on a suppressed domain are excluded entirely)
+     *   imported_by (user id), campaign_id, hide_used_in_campaign (bool),
+     *   show_suppressed (bool -- by default, leads on a suppressed domain
+     *   are excluded entirely)
      * @return array{rows: array<int,array>, total: int, page: int, perPage: int, totalPages: int}
      */
     public static function search(PDO $db, array $filters, int $page = 1): array
@@ -35,6 +36,7 @@ class LeadRepository
 
         $sql = "SELECT l.*, v.code AS vertical_code, v.label AS vertical_label,
                   s.code AS service_code, s.label AS service_label,
+                  ib.filename AS imported_filename, ib.started_at AS imported_at, iu.name AS imported_by_name,
                   (SELECT GROUP_CONCAT(c.name SEPARATOR ', ')
                      FROM lead_campaign_assignments a
                      JOIN campaigns c ON c.id = a.campaign_id
@@ -44,6 +46,8 @@ class LeadRepository
                 FROM leads l
                 LEFT JOIN verticals v ON v.id = l.vertical_id
                 LEFT JOIN services s ON s.id = l.service_id
+                LEFT JOIN import_batches ib ON ib.id = l.last_import_batch_id
+                LEFT JOIN users iu ON iu.id = ib.uploaded_by
                 {$where}
                 ORDER BY l.id DESC
                 LIMIT {$perPage} OFFSET {$offset}";
@@ -113,6 +117,10 @@ class LeadRepository
         if (!empty($filters['vertical_id'])) {
             $clauses[] = 'l.vertical_id = :vertical_id';
             $params['vertical_id'] = (int) $filters['vertical_id'];
+        }
+        if (!empty($filters['imported_by'])) {
+            $clauses[] = 'EXISTS (SELECT 1 FROM import_batches ib2 WHERE ib2.id = l.last_import_batch_id AND ib2.uploaded_by = :imported_by)';
+            $params['imported_by'] = (int) $filters['imported_by'];
         }
         if (!empty($filters['service_id'])) {
             $clauses[] = 'l.service_id = :service_id';

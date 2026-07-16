@@ -26,9 +26,10 @@ $page = min($page, $totalPages);
 $offset = ($page - 1) * $perPage;
 
 $stmt = db()->prepare(
-    "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email
+    "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email, u.name AS assigned_by_name
        FROM lead_campaign_assignments a
        JOIN leads l ON l.id = a.lead_id
+       JOIN users u ON u.id = a.assigned_by
       WHERE a.campaign_id = :campaign_id
       ORDER BY a.assigned_at DESC
       LIMIT {$perPage} OFFSET {$offset}"
@@ -148,7 +149,7 @@ render_header('Campaign leads');
             <?php $waveBadge = ['active' => 'success', 'held' => 'warning', 'suppressed' => 'danger']; ?>
             <span class="badge bg-<?= $waveBadge[$a['wave_status']] ?>"><?= e($a['wave_status']) ?></span>
           </td>
-          <td class="small text-muted"><?= e($a['assigned_at']) ?></td>
+          <td class="small text-muted"><?= e($a['assigned_at']) ?> by <?= e($a['assigned_by_name']) ?></td>
           <td>
             <?php if (in_array($a['status'], ['exported', 'pushed'], true)): ?>
               <span class="badge bg-success">Yes</span>
