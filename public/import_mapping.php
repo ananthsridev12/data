@@ -108,14 +108,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         }
         $batchMappingJson = json_encode($batchMapping, JSON_UNESCAPED_UNICODE);
 
-        $saveTemplate = !empty($_POST['save_template']);
         $templateName = trim((string) ($_POST['template_name'] ?? ''));
-        if ($saveTemplate && $templateName !== '') {
+        $templateSaved = false;
+        if ($templateName !== '') {
             $tplStmt = db()->prepare(
                 'INSERT INTO import_field_mappings (name, mapping_json, created_by, last_used_at) VALUES (?, ?, ?, NOW())
                  ON DUPLICATE KEY UPDATE mapping_json = VALUES(mapping_json), last_used_at = NOW()'
             );
             $tplStmt->execute([$templateName, $mappingJson, $admin['id']]);
+            $templateSaved = true;
         }
 
         $total = LeadImporter::streamToCache(
@@ -127,6 +128,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 
         db()->prepare('UPDATE import_batches SET mapping_json = ?, total_rows = ?, next_offset = 0, status = ? WHERE id = ?')
             ->execute([$batchMappingJson, $total, $total > 0 ? 'processing' : 'completed', $batchId]);
+
+        if ($templateSaved) {
+            flash_set('success', "Saved mapping template \"{$templateName}\".");
+        }
 
         if ($total === 0) {
             db()->prepare('UPDATE import_batches SET finished_at = NOW() WHERE id = ?')->execute([$batchId]);
@@ -161,6 +166,8 @@ if ($batch['status'] !== 'processing') {
 
     $postedMapping = $_POST['mapping'] ?? null;
     $postedDefaults = $_POST['defaults'] ?? [];
+
+    $savedTemplates = db()->query('SELECT id, name, mapping_json FROM import_field_mappings ORDER BY name')->fetchAll();
 }
 
 render_header('Map columns');
@@ -198,6 +205,27 @@ if ($batch['status'] === 'processing') {
   <div class="alert alert-danger"><?= e($formError) ?></div>
 <?php endif; ?>
 
+<?php if ($savedTemplates): ?>
+<div class="card mb-3">
+  <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+    <label for="loadTemplateSelect" class="form-label small mb-0">Load a saved template:</label>
+    <select id="loadTemplateSelect" class="form-select form-select-sm" style="max-width: 320px;">
+      <option value="">-- choose a template --</option>
+      <?php foreach ($savedTemplates as $tpl): ?>
+        <option value="<?= (int) $tpl['id'] ?>"><?= e($tpl['name']) ?></option>
+      <?php endforeach; ?>
+    </select>
+    <span class="text-muted small">Applies its mapping to any column below whose header text matches. Columns not covered by the template are left as-is.</span>
+  </div>
+</div>
+<script>
+  window.SH_SAVED_TEMPLATES = <?= json_encode(array_map(static fn(array $t) => [
+      'id' => (int) $t['id'],
+      'mapping' => json_decode($t['mapping_json'], true) ?: [],
+  ], $savedTemplates), JSON_UNESCAPED_UNICODE) ?>;
+</script>
+<?php endif; ?>
+
 <form method="post" action="import_mapping.php">
   <?= csrf_field() ?>
   <input type="hidden" name="action" value="confirm_mapping">
@@ -221,7 +249,7 @@ if ($batch['status'] === 'processing') {
           </td>
           <td>
             <?php $chosen = $postedMapping[$i] ?? ($suggestion[$key] ?? null); ?>
-            <select name="mapping[<?= $i ?>]" class="form-select form-select-sm">
+            <select name="mapping[<?= $i ?>]" class="form-select form-select-sm" data-header-key="<?= e($key) ?>">
               <option value="">-- Not mapped / ignore --</option>
               <optgroup label="Required fields">
                 <?php foreach (LEAD_FIELDS as $col => $meta): if (!$meta['required']) continue; ?>
@@ -302,11 +330,9 @@ if ($batch['status'] === 'processing') {
 
   <div class="card mb-3">
     <div class="card-body">
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" name="save_template" value="1" id="saveTemplate">
-        <label class="form-check-label" for="saveTemplate">Save this mapping as a reusable template</label>
-      </div>
-      <input type="text" name="template_name" class="form-control form-control-sm mt-2" placeholder="Template name, e.g. &quot;Apollo export&quot;" style="max-width: 320px;">
+      <label class="form-label small mb-0" for="templateNameInput">Save this mapping as a reusable template (optional)</label>
+      <input type="text" name="template_name" id="templateNameInput" class="form-control form-control-sm mt-1" placeholder="Template name, e.g. &quot;Apollo export&quot; -- leave blank to skip" style="max-width: 320px;" value="<?= e($_POST['template_name'] ?? '') ?>">
+      <p class="text-muted small mb-0 mt-1">Enter a name to save (or update) a reusable template with this exact column mapping, so next time a similarly-shaped file can auto-fill or be loaded from the picker above.</p>
     </div>
   </div>
 
@@ -334,6 +360,32 @@ if ($batch['status'] === 'processing') {
       sel.addEventListener('change', refresh);
     });
     refresh();
+
+    var loadTemplateSelect = document.getElementById('loadTemplateSelect');
+    if (loadTemplateSelect && window.SH_SAVED_TEMPLATES) {
+      var templatesById = {};
+      window.SH_SAVED_TEMPLATES.forEach(function (t) {
+        templatesById[t.id] = t.mapping;
+      });
+
+      loadTemplateSelect.addEventListener('change', function () {
+        var mapping = templatesById[loadTemplateSelect.value];
+        if (!mapping) {
+          return;
+        }
+        mappingSelects.forEach(function (sel) {
+          var headerKey = sel.getAttribute('data-header-key');
+          if (Object.prototype.hasOwnProperty.call(mapping, headerKey) && mapping[headerKey]) {
+            var target = mapping[headerKey];
+            var hasOption = Array.prototype.some.call(sel.options, function (o) { return o.value === target; });
+            if (hasOption) {
+              sel.value = target;
+            }
+          }
+        });
+        refresh();
+      });
+    }
   })();
 </script>
 <?php render_footer(); ?>

@@ -65,6 +65,26 @@ const LOOKUP_FIELDS = [
 ];
 
 /**
+ * Per-lead-per-campaign delivery/sequence status as reported by Saleshandy
+ * (distinct from `status` ENUM('assigned','exported','pushed'), which is
+ * this app's own assignment workflow state). Stored free-text in
+ * `lead_campaign_assignments.delivery_status` rather than a DB ENUM so a
+ * new Saleshandy status doesn't require a migration -- validated against
+ * this list at every write site instead.
+ */
+const DELIVERY_STATUSES = [
+    'Active', 'Waiting', 'Paused', 'Replied',
+    'Bounced', 'All Bounced', 'Hard Bounced', 'Soft Bounced', 'Block Bounced',
+];
+
+/**
+ * Which DELIVERY_STATUSES values should also trigger the existing
+ * domain-suppression logic (WaveAssigner::suppressByEmail), same as the
+ * dedicated Bounce Import / Campaign Bounce Paste flows.
+ */
+const DELIVERY_STATUS_BOUNCE_VALUES = ['Bounced', 'All Bounced', 'Hard Bounced', 'Soft Bounced', 'Block Bounced'];
+
+/**
  * Known source header text (as seen in real provider exports) mapped to a
  * `leads` column, used to auto-suggest the import mapping. Matching is
  * done case/whitespace-insensitively (see ImportMapper::normalizeHeader).

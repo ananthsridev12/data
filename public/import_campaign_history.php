@@ -29,7 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'success',
         "{$stats['processed']} row(s) processed -- {$stats['vertical_updated']} Vertical update(s), {$stats['service_updated']} Service update(s), "
             . "{$stats['campaigns_created']} campaign(s) created, {$stats['assignments_created']} new assignment(s), "
-            . "{$stats['marked_imported']} marked Imported to Saleshandy, {$stats['marked_email_sent']} marked Email Sent. "
+            . "{$stats['marked_imported']} marked Imported to Saleshandy, {$stats['marked_email_sent']} marked Email Sent, "
+            . "{$stats['delivery_status_updated']} delivery status update(s)" . ($stats['bounces_processed'] > 0 ? " ({$stats['bounces_processed']} bounce(s), domains suppressed)" : '') . ". "
             . "{$stats['lead_not_found']} row(s) had no matching lead."
     );
 }
@@ -40,9 +41,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   Upload a CSV shaped like your tracking sheet. Only <strong>Email</strong> is required -- every other column
   is optional and only applied when present in a given row: <code>Vertical</code>, <code>Service</code>,
   <code>Campaign ID</code> (creates the campaign if it doesn't exist yet), <code>Imported Saleshandy</code>
-  (TRUE/FALSE/Yes/No), <code>Email Sent</code> (same), <code>Email Date</code>. Rows whose email doesn't match
-  an existing lead are skipped and reported below; Vertical/Service values that don't match anything in
-  <a href="lists.php">Lists</a> are also skipped (with the rest of that row's fields still applied).
+  (TRUE/FALSE/Yes/No), <code>Email Sent</code> (same), <code>Email Date</code>, and <code>Status</code>
+  (Active, Waiting, Paused, Replied, Bounced, All Bounced, Hard Bounced, Soft Bounced, or Block Bounced --
+  a bounced value also suppresses that lead's domain the same way Bounce Import does). <code>Status</code>
+  and <code>Imported Saleshandy</code>/<code>Email Sent</code>/<code>Email Date</code> all require a
+  <code>Campaign ID</code> in the same row. Rows whose email doesn't match an existing lead are skipped and
+  reported below; Vertical/Service values that don't match anything in <a href="lists.php">Lists</a> are also
+  skipped (with the rest of that row's fields still applied).
 </p>
 
 <div class="card mb-4">

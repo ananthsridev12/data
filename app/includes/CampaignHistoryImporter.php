@@ -1,14 +1,16 @@
 <?php
 
+require_once __DIR__ . '/WaveAssigner.php';
+
 /**
  * Backfills historical tracking data from a spreadsheet shaped like the
  * user's existing sheet: Email (required, matches an existing lead) plus
  * whichever of Vertical, Service, Campaign ID, Imported Saleshandy, Email
- * Sent, Email Date are present. Every column is optional except Email --
- * only the fields actually present in a given row are touched, so a row
- * with just Vertical/Service doesn't require a Campaign ID, and a row
- * with Campaign ID but no Imported/Email Sent value just creates/confirms
- * the assignment without changing its status.
+ * Sent, Email Date, Status are present. Every column is optional except
+ * Email -- only the fields actually present in a given row are touched, so
+ * a row with just Vertical/Service doesn't require a Campaign ID, and a
+ * row with Campaign ID but no Imported/Email Sent/Status value just
+ * creates/confirms the assignment without changing it.
  */
 class CampaignHistoryImporter
 {
@@ -27,12 +29,18 @@ class CampaignHistoryImporter
         'email date' => 'email_date',
         'email sent date' => 'email_date',
         'date' => 'email_date',
+        'status' => 'status',
+        'delivery status' => 'status',
+        'mail status' => 'status',
+        'email status' => 'status',
+        'lead status' => 'status',
     ];
 
     /**
      * @return array{
      *   processed:int, lead_not_found:int, vertical_updated:int, service_updated:int,
      *   campaigns_created:int, assignments_created:int, marked_imported:int, marked_email_sent:int,
+     *   delivery_status_updated:int, bounces_processed:int,
      *   skipped_notes:array<int,string>
      * }
      */
@@ -41,6 +49,7 @@ class CampaignHistoryImporter
         $stats = [
             'processed' => 0, 'lead_not_found' => 0, 'vertical_updated' => 0, 'service_updated' => 0,
             'campaigns_created' => 0, 'assignments_created' => 0, 'marked_imported' => 0, 'marked_email_sent' => 0,
+            'delivery_status_updated' => 0, 'bounces_processed' => 0,
             'skipped_notes' => [],
         ];
 
@@ -133,15 +142,25 @@ class CampaignHistoryImporter
                 $db->prepare('UPDATE leads SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($params);
             }
 
-            // Campaign-scoped fields (Imported Saleshandy / Email Sent / Email Date) need a Campaign ID.
+            // Campaign-scoped fields (Imported Saleshandy / Email Sent / Email Date / Status) need a Campaign ID.
             $campaignName = isset($colMap['campaign']) ? trim((string) ($row[$colMap['campaign']] ?? '')) : '';
             $imported = isset($colMap['imported']) ? self::parseBool($row[$colMap['imported']] ?? '') : null;
             $emailSent = isset($colMap['email_sent']) ? self::parseBool($row[$colMap['email_sent']] ?? '') : null;
             $emailDate = isset($colMap['email_date']) ? self::parseDate($row[$colMap['email_date']] ?? '') : null;
+            $deliveryStatus = null;
+            if (isset($colMap['status'])) {
+                $rawStatus = trim((string) ($row[$colMap['status']] ?? ''));
+                if ($rawStatus !== '') {
+                    $deliveryStatus = self::normalizeDeliveryStatus($rawStatus);
+                    if ($deliveryStatus === null) {
+                        $stats['skipped_notes'][] = "Row {$rowNum} ({$email}): Status \"{$rawStatus}\" not recognized, left unchanged.";
+                    }
+                }
+            }
 
             if ($campaignName === '') {
-                if ($imported !== null || $emailSent !== null) {
-                    $stats['skipped_notes'][] = "Row {$rowNum} ({$email}): Imported/Email Sent given without a Campaign ID, skipped.";
+                if ($imported !== null || $emailSent !== null || $deliveryStatus !== null) {
+                    $stats['skipped_notes'][] = "Row {$rowNum} ({$email}): Imported/Email Sent/Status given without a Campaign ID, skipped.";
                 }
                 continue;
             }
@@ -180,6 +199,16 @@ class CampaignHistoryImporter
                     ->execute([$emailDate, $assignmentId]);
                 $stats['marked_email_sent']++;
             }
+            if ($deliveryStatus !== null) {
+                $db->prepare('UPDATE lead_campaign_assignments SET delivery_status = ? WHERE id = ?')
+                    ->execute([$deliveryStatus, $assignmentId]);
+                $stats['delivery_status_updated']++;
+
+                if (in_array($deliveryStatus, DELIVERY_STATUS_BOUNCE_VALUES, true)) {
+                    WaveAssigner::suppressByEmail($db, $email, $userId, "Campaign history import: {$deliveryStatus}", $deliveryStatus);
+                    $stats['bounces_processed']++;
+                }
+            }
         }
 
         return $stats;
@@ -193,6 +222,17 @@ class CampaignHistoryImporter
             $map[mb_strtolower($row['label'])] = (int) $row['id'];
         }
         return $map;
+    }
+
+    private static function normalizeDeliveryStatus(string $raw): ?string
+    {
+        $normalized = mb_strtolower(trim($raw));
+        foreach (DELIVERY_STATUSES as $canonical) {
+            if (mb_strtolower($canonical) === $normalized) {
+                return $canonical;
+            }
+        }
+        return null;
     }
 
     private static function parseBool($value): ?bool

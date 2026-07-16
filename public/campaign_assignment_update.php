@@ -1,7 +1,8 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 
-require_login();
+$user = require_login();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: campaigns.php');
@@ -45,6 +46,37 @@ if ($action === 'mark_imported') {
     );
     $stmt->execute(array_merge([$emailSentAt, $campaignId], $ids));
     flash_set('success', $stmt->rowCount() . ' lead(s) marked as email sent (' . $emailSentAt . ').');
+} elseif ($action === 'set_delivery_status') {
+    $deliveryStatus = trim((string) ($_POST['delivery_status'] ?? ''));
+    if (!in_array($deliveryStatus, DELIVERY_STATUSES, true)) {
+        flash_set('danger', 'Please choose a valid delivery status.');
+        header('Location: ' . $redirect);
+        exit;
+    }
+
+    $stmt = db()->prepare(
+        "UPDATE lead_campaign_assignments SET delivery_status = ? WHERE campaign_id = ? AND id IN ({$placeholders})"
+    );
+    $stmt->execute(array_merge([$deliveryStatus], [$campaignId], $ids));
+    $updated = $stmt->rowCount();
+
+    $suppressedCount = 0;
+    if (in_array($deliveryStatus, DELIVERY_STATUS_BOUNCE_VALUES, true)) {
+        $emailStmt = db()->prepare(
+            "SELECT l.email FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
+              WHERE a.campaign_id = ? AND a.id IN ({$placeholders})"
+        );
+        $emailStmt->execute(array_merge([$campaignId], $ids));
+        foreach ($emailStmt->fetchAll(PDO::FETCH_COLUMN) as $email) {
+            WaveAssigner::suppressByEmail(db(), $email, $user['id'], "Delivery status: {$deliveryStatus}", $deliveryStatus);
+            $suppressedCount++;
+        }
+    }
+
+    flash_set(
+        'success',
+        "{$updated} lead(s) marked \"{$deliveryStatus}\"" . ($suppressedCount > 0 ? " -- {$suppressedCount} domain(s) suppressed." : '.')
+    );
 } else {
     flash_set('danger', 'Unknown action.');
 }

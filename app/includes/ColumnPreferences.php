@@ -34,6 +34,7 @@ class ColumnPreferences
             'imported' => 'Imported to Saleshandy',
             'email_sent' => 'Email Sent',
             'email_date' => 'Email Date',
+            'delivery_status' => 'Delivery Status',
         ],
     ];
 

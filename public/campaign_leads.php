@@ -166,6 +166,18 @@ render_header('Campaign leads');
               </td>
               <?php break;
           case 'email_date': ?><td class="small"><?= e($a['email_sent_at'] ?? '') ?></td><?php break;
+          case 'delivery_status': ?>
+              <td>
+                <?php if ($a['delivery_status']):
+                  $deliveryBadge = in_array($a['delivery_status'], DELIVERY_STATUS_BOUNCE_VALUES, true) ? 'danger'
+                      : ($a['delivery_status'] === 'Active' ? 'success' : ($a['delivery_status'] === 'Replied' ? 'primary' : ($a['delivery_status'] === 'Paused' ? 'warning' : 'secondary')));
+                ?>
+                  <span class="badge bg-<?= $deliveryBadge ?>"><?= e($a['delivery_status']) ?></span>
+                <?php else: ?>
+                  <span class="text-muted small">--</span>
+                <?php endif; ?>
+              </td>
+              <?php break;
       }
   };
   $visibleAssignmentColumns = array_values(array_filter($columns, static fn(array $c) => $c['visible']));
@@ -204,7 +216,32 @@ render_header('Campaign leads');
       <button type="submit" name="action" value="mark_email_sent" class="btn btn-sm btn-outline-primary">Mark checked as Email Sent</button>
     </div>
   </div>
+
+  <div class="card mb-4">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+      <span class="text-muted small">Delivery status:</span>
+      <select name="delivery_status" id="deliveryStatusSelect" class="form-select form-select-sm" style="max-width: 180px;">
+        <option value="">-- choose --</option>
+        <?php foreach (DELIVERY_STATUSES as $ds): ?>
+          <option value="<?= e($ds) ?>" data-bounce="<?= in_array($ds, DELIVERY_STATUS_BOUNCE_VALUES, true) ? '1' : '0' ?>"><?= e($ds) ?></option>
+        <?php endforeach; ?>
+      </select>
+      <button type="submit" name="action" value="set_delivery_status" class="btn btn-sm btn-outline-primary" id="setDeliveryStatusBtn">Apply to checked</button>
+      <span class="text-muted small">A bounced status also suppresses that lead's domain everywhere, same as Bounce Import.</span>
+    </div>
+  </div>
 </form>
+<script>
+  document.getElementById('setDeliveryStatusBtn').addEventListener('click', function (e) {
+    var sel = document.getElementById('deliveryStatusSelect');
+    var opt = sel.options[sel.selectedIndex];
+    if (opt && opt.dataset.bounce === '1') {
+      if (!confirm('This will suppress the domain(s) of every checked lead everywhere (all campaigns and future imports). Continue?')) {
+        e.preventDefault();
+      }
+    }
+  });
+</script>
 
 <?php if ($totalPages > 1): ?>
 <nav>
