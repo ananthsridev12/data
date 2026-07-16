@@ -1,0 +1,7 @@
+app/config/config.php
+public/uploads/*
+!public/uploads/.htaccess
+!public/uploads/cache
+public/uploads/cache/*
+!public/uploads/cache/.gitkeep
+.DS_Store

@@ -1,0 +1,16 @@
+body {
+    background-color: #f5f6f8;
+}
+
+.table-responsive {
+    background: #fff;
+}
+
+.badge-used {
+    background-color: #6c757d;
+}
+
+.filter-card {
+    background: #fff;
+    border-radius: 0.5rem;
+}
