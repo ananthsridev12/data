@@ -1,8 +1,11 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
+require_once __DIR__ . '/../app/includes/ColumnPreferences.php';
 
 $user = require_login();
+
+$columns = ColumnPreferences::getForUser(db(), $user['id'], 'campaign_leads');
 
 $campaignId = (int) ($_GET['campaign_id'] ?? 0);
 $campStmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
@@ -56,7 +59,8 @@ render_header('Campaign leads');
 <h1 class="h4 mb-1">Leads assigned to "<?= e($campaign['name']) ?>"</h1>
 <p class="text-muted">
   <?= number_format($total) ?> lead(s) assigned (page <?= $page ?> of <?= $totalPages ?>) --
-  <a href="campaign_select_leads.php?campaign_id=<?= (int) $campaignId ?>">Add leads to this campaign</a>
+  <a href="campaign_select_leads.php?campaign_id=<?= (int) $campaignId ?>">Add leads to this campaign</a> --
+  <a href="column_settings.php?page=campaign_leads&return_to=<?= urlencode('campaign_leads.php?campaign_id=' . $campaignId) ?>">Manage columns</a>
 </p>
 
 <div class="card mb-4 border-danger">
@@ -129,47 +133,64 @@ render_header('Campaign leads');
   <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
   <input type="hidden" name="page" value="<?= (int) $page ?>">
 
+  <?php
+  $renderAssignmentCell = static function (string $key, array $a) {
+      switch ($key) {
+          case 'company': ?><td><?= e($a['na_company_name']) ?></td><?php break;
+          case 'contact': ?><td><?= e($a['first_name'] . ' ' . $a['last_name']) ?></td><?php break;
+          case 'email': ?><td><?= e($a['email']) ?></td><?php break;
+          case 'wave': ?>
+              <td>
+                <?php $waveBadge = ['active' => 'success', 'held' => 'warning', 'suppressed' => 'danger']; ?>
+                <span class="badge bg-<?= $waveBadge[$a['wave_status']] ?>"><?= e($a['wave_status']) ?></span>
+              </td>
+              <?php break;
+          case 'assigned': ?><td class="small text-muted"><?= e($a['assigned_at']) ?> by <?= e($a['assigned_by_name']) ?></td><?php break;
+          case 'imported': ?>
+              <td>
+                <?php if (in_array($a['status'], ['exported', 'pushed'], true)): ?>
+                  <span class="badge bg-success">Yes</span>
+                  <span class="small text-muted d-block"><?= e($a['exported_at'] ?? '') ?></span>
+                <?php else: ?>
+                  <span class="badge bg-secondary">No</span>
+                <?php endif; ?>
+              </td>
+              <?php break;
+          case 'email_sent': ?>
+              <td>
+                <?php if ($a['email_sent']): ?>
+                  <span class="badge bg-success">Yes</span>
+                <?php else: ?>
+                  <span class="badge bg-secondary">No</span>
+                <?php endif; ?>
+              </td>
+              <?php break;
+          case 'email_date': ?><td class="small"><?= e($a['email_sent_at'] ?? '') ?></td><?php break;
+      }
+  };
+  $visibleAssignmentColumns = array_values(array_filter($columns, static fn(array $c) => $c['visible']));
+  ?>
   <div class="table-responsive card mb-3">
     <table class="table table-hover mb-0 align-middle">
       <thead>
         <tr>
           <th><input type="checkbox" id="selectAllOnPage"></th>
-          <th>Company</th><th>Contact</th><th>Email</th><th>Wave</th><th>Assigned</th>
-          <th>Imported to Saleshandy</th><th>Email Sent</th><th>Email Date</th>
+          <?php foreach ($visibleAssignmentColumns as $col): ?>
+            <th><?= e($col['label']) ?></th>
+          <?php endforeach; ?>
         </tr>
       </thead>
       <tbody>
       <?php foreach ($assignments as $a): ?>
         <tr>
           <td><input type="checkbox" name="assignment_ids[]" value="<?= (int) $a['id'] ?>" class="lead-checkbox"></td>
-          <td><?= e($a['na_company_name']) ?></td>
-          <td><?= e($a['first_name'] . ' ' . $a['last_name']) ?></td>
-          <td><?= e($a['email']) ?></td>
-          <td>
-            <?php $waveBadge = ['active' => 'success', 'held' => 'warning', 'suppressed' => 'danger']; ?>
-            <span class="badge bg-<?= $waveBadge[$a['wave_status']] ?>"><?= e($a['wave_status']) ?></span>
-          </td>
-          <td class="small text-muted"><?= e($a['assigned_at']) ?> by <?= e($a['assigned_by_name']) ?></td>
-          <td>
-            <?php if (in_array($a['status'], ['exported', 'pushed'], true)): ?>
-              <span class="badge bg-success">Yes</span>
-              <span class="small text-muted d-block"><?= e($a['exported_at'] ?? '') ?></span>
-            <?php else: ?>
-              <span class="badge bg-secondary">No</span>
-            <?php endif; ?>
-          </td>
-          <td>
-            <?php if ($a['email_sent']): ?>
-              <span class="badge bg-success">Yes</span>
-            <?php else: ?>
-              <span class="badge bg-secondary">No</span>
-            <?php endif; ?>
-          </td>
-          <td class="small"><?= e($a['email_sent_at'] ?? '') ?></td>
+          <?php foreach ($visibleAssignmentColumns as $col): ?>
+            <?php $renderAssignmentCell($col['key'], $a); ?>
+          <?php endforeach; ?>
         </tr>
       <?php endforeach; ?>
       <?php if (!$assignments): ?>
-        <tr><td colspan="8" class="text-center text-muted py-4">No leads assigned to this campaign yet.</td></tr>
+        <tr><td colspan="<?= count($visibleAssignmentColumns) + 1 ?>" class="text-center text-muted py-4">No leads assigned to this campaign yet.</td></tr>
       <?php endif; ?>
       </tbody>
     </table>

@@ -1,8 +1,11 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
+require_once __DIR__ . '/../app/includes/ColumnPreferences.php';
 
 $user = require_login();
+
+$columns = ColumnPreferences::getForUser(db(), $user['id'], 'dashboard');
 
 $filters = [
     'q' => trim((string) ($_GET['q'] ?? '')),
@@ -146,36 +149,55 @@ render_header('Dashboard');
 
 <div class="d-flex justify-content-between align-items-center mb-2">
   <div class="text-muted small"><?= number_format($result['total']) ?> leads match this filter (page <?= $result['page'] ?> of <?= $result['totalPages'] ?>)</div>
+  <a href="column_settings.php?page=dashboard&return_to=<?= urlencode($returnTo) ?>" class="btn btn-sm btn-outline-secondary">Manage columns</a>
 </div>
+
+<?php
+$renderCell = static function (string $key, array $lead) {
+    switch ($key) {
+        case 'company': ?><td><?= e($lead['na_company_name']) ?></td><?php break;
+        case 'name': ?><td><?= e($lead['first_name'] . ' ' . $lead['last_name']) ?></td><?php break;
+        case 'title': ?><td><?= e($lead['title']) ?></td><?php break;
+        case 'email': ?><td><?= e($lead['email']) ?></td><?php break;
+        case 'industry': ?><td><?= e($lead['industry']) ?></td><?php break;
+        case 'country': ?><td><?= e($lead['country']) ?></td><?php break;
+        case 'seniority': ?><td><?= e($lead['seniority']) ?></td><?php break;
+        case 'vertical': ?><td><?= e($lead['vertical_code'] ?? '') ?></td><?php break;
+        case 'service': ?><td><?= e($lead['service_code'] ?? '') ?></td><?php break;
+        case 'imported_by': ?>
+            <td class="small text-muted" title="<?= e($lead['imported_filename'] ?? '') . ' -- ' . e($lead['imported_at'] ?? '') ?>"><?= e($lead['imported_by_name'] ?? '') ?></td>
+            <?php break;
+        case 'used_in': ?>
+            <td>
+              <?php if ($lead['used_in_campaigns']): ?>
+                <span class="badge badge-used" title="<?= e($lead['used_in_campaigns']) ?>">Used</span>
+              <?php endif; ?>
+              <?php if ($lead['suppressed_reason'] !== null): ?>
+                <span class="badge bg-danger" title="<?= e($lead['suppressed_reason']) ?>">Suppressed</span>
+              <?php endif; ?>
+            </td>
+            <?php break;
+    }
+};
+$visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c['visible']));
+?>
 
 <div class="table-responsive card mb-3">
     <table class="table table-hover mb-0 align-middle">
       <thead>
         <tr>
-          <th>Company</th><th>Name</th><th>Title</th><th>Email</th><th>Industry</th><th>Country</th><th>Seniority</th><th>Vertical</th><th>Service</th><th>Imported by</th><th>Used in</th><th></th>
+          <?php foreach ($visibleColumns as $col): ?>
+            <th><?= e($col['label']) ?></th>
+          <?php endforeach; ?>
+          <th></th>
         </tr>
       </thead>
       <tbody>
       <?php foreach ($result['rows'] as $lead): ?>
         <tr>
-          <td><?= e($lead['na_company_name']) ?></td>
-          <td><?= e($lead['first_name'] . ' ' . $lead['last_name']) ?></td>
-          <td><?= e($lead['title']) ?></td>
-          <td><?= e($lead['email']) ?></td>
-          <td><?= e($lead['industry']) ?></td>
-          <td><?= e($lead['country']) ?></td>
-          <td><?= e($lead['seniority']) ?></td>
-          <td><?= e($lead['vertical_code'] ?? '') ?></td>
-          <td><?= e($lead['service_code'] ?? '') ?></td>
-          <td class="small text-muted" title="<?= e($lead['imported_filename'] ?? '') . ' -- ' . e($lead['imported_at'] ?? '') ?>"><?= e($lead['imported_by_name'] ?? '') ?></td>
-          <td>
-            <?php if ($lead['used_in_campaigns']): ?>
-              <span class="badge badge-used" title="<?= e($lead['used_in_campaigns']) ?>">Used</span>
-            <?php endif; ?>
-            <?php if ($lead['suppressed_reason'] !== null): ?>
-              <span class="badge bg-danger" title="<?= e($lead['suppressed_reason']) ?>">Suppressed</span>
-            <?php endif; ?>
-          </td>
+          <?php foreach ($visibleColumns as $col): ?>
+            <?php $renderCell($col['key'], $lead); ?>
+          <?php endforeach; ?>
           <td>
             <a href="lead_view.php?id=<?= (int) $lead['id'] ?>" class="btn btn-sm btn-outline-secondary">View</a>
             <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editLead<?= (int) $lead['id'] ?>">Edit</button>
@@ -230,7 +252,7 @@ render_header('Dashboard');
         </tr>
       <?php endforeach; ?>
       <?php if (!$result['rows']): ?>
-        <tr><td colspan="12" class="text-center text-muted py-4">No leads match this filter.</td></tr>
+        <tr><td colspan="<?= count($visibleColumns) + 1 ?>" class="text-center text-muted py-4">No leads match this filter.</td></tr>
       <?php endif; ?>
       </tbody>
     </table>
