@@ -13,9 +13,15 @@ return [
         'charset' => 'utf8mb4',
     ],
 
-    // Absolute filesystem path to the public/uploads directory (must be
-    // writable by PHP). On cPanel this is typically under public_html.
-    'uploads_dir' => __DIR__ . '/../../public/uploads',
+    // Absolute filesystem path to the "uploads" directory that ends up
+    // inside your docroot (must be writable by PHP). This must be a real
+    // absolute path on the server -- NOT a __DIR__-relative one -- because
+    // this app/ folder and your docroot are two separate directories on
+    // the server (see README-DEPLOY.md), so there's no fixed relative
+    // path between them. Example for a cPanel docroot at
+    // /home1/youruser/yourdomain.com:
+    //   'uploads_dir' => '/home1/youruser/yourdomain.com/uploads',
+    'uploads_dir' => '/absolute/path/to/your/docroot/uploads',
 
     // Base URL of the site, no trailing slash. Used for redirects/links.
     'app_url' => 'https://example.com',
