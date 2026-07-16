@@ -38,15 +38,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
     $usedColumns = [];
     $duplicateColumn = null;
 
+    $targetLabels = array_merge(
+        array_map(static fn(array $f) => $f['label'], LEAD_FIELDS),
+        array_map(static fn(array $f) => $f['label'], LOOKUP_FIELDS)
+    );
+
     foreach ($headerKeys as $i => $key) {
         $col = trim((string) ($posted[$i] ?? ''));
         $col = $col === '' ? null : $col;
-        if ($col !== null && !isset(LEAD_FIELDS[$col])) {
+        if ($col !== null && !isset($targetLabels[$col])) {
             $col = null;
         }
         if ($col !== null) {
             if (isset($usedColumns[$col])) {
-                $duplicateColumn = LEAD_FIELDS[$col]['label'];
+                $duplicateColumn = $targetLabels[$col];
             }
             $usedColumns[$col] = true;
         }
@@ -152,7 +157,7 @@ if ($batch['status'] === 'processing') {
 }
 ?>
 <h1 class="h4 mb-1">Map columns for "<?= e($batch['filename']) ?>"</h1>
-<p class="text-muted">Match each detected column to a lead field. Required fields are marked with *.</p>
+<p class="text-muted">Match each detected column to a lead field. Required fields are marked with *. Vertical/Service values must match a code or name already in <a href="lists.php">Lists</a> -- unrecognized values will be skipped as row errors.</p>
 
 <?php if ($formError): ?>
   <div class="alert alert-danger"><?= e($formError) ?></div>
@@ -190,6 +195,11 @@ if ($batch['status'] === 'processing') {
               </optgroup>
               <optgroup label="Optional fields">
                 <?php foreach (LEAD_FIELDS as $col => $meta): if ($meta['required']) continue; ?>
+                  <option value="<?= e($col) ?>" <?= $chosen === $col ? 'selected' : '' ?>><?= e($meta['label']) ?></option>
+                <?php endforeach; ?>
+              </optgroup>
+              <optgroup label="Classification (from your Lists)">
+                <?php foreach (LOOKUP_FIELDS as $col => $meta): ?>
                   <option value="<?= e($col) ?>" <?= $chosen === $col ? 'selected' : '' ?>><?= e($meta['label']) ?></option>
                 <?php endforeach; ?>
               </optgroup>

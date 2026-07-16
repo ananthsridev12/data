@@ -78,6 +78,7 @@ render_header('Campaigns');
       <td><?= e($c['created_by_name']) ?></td>
       <td><span class="badge bg-<?= $c['is_active'] ? 'success' : 'secondary' ?>"><?= $c['is_active'] ? 'Active' : 'Inactive' ?></span></td>
       <td class="d-flex gap-1">
+        <a class="btn btn-sm btn-outline-secondary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>">Manage leads</a>
         <a class="btn btn-sm btn-outline-secondary" href="leads_export_csv.php?campaign_export=<?= (int) $c['id'] ?>">Export CSV</a>
         <form method="post" action="campaigns.php" onsubmit="return confirm('Toggle active status for <?= e($c['name']) ?>?');">
           <?= csrf_field() ?>

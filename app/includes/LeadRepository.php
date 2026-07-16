@@ -32,12 +32,15 @@ class LeadRepository
         $page = min($page, $totalPages);
         $offset = ($page - 1) * $perPage;
 
-        $sql = "SELECT l.*,
+        $sql = "SELECT l.*, v.code AS vertical_code, v.label AS vertical_label,
+                  s.code AS service_code, s.label AS service_label,
                   (SELECT GROUP_CONCAT(c.name SEPARATOR ', ')
                      FROM lead_campaign_assignments a
                      JOIN campaigns c ON c.id = a.campaign_id
                     WHERE a.lead_id = l.id) AS used_in_campaigns
                 FROM leads l
+                LEFT JOIN verticals v ON v.id = l.vertical_id
+                LEFT JOIN services s ON s.id = l.service_id
                 {$where}
                 ORDER BY l.id DESC
                 LIMIT {$perPage} OFFSET {$offset}";
@@ -100,6 +103,14 @@ class LeadRepository
         if (!empty($filters['employee_count'])) {
             $exact('employee_count', $filters['employee_count']);
         }
+        if (!empty($filters['vertical_id'])) {
+            $clauses[] = 'l.vertical_id = :vertical_id';
+            $params['vertical_id'] = (int) $filters['vertical_id'];
+        }
+        if (!empty($filters['service_id'])) {
+            $clauses[] = 'l.service_id = :service_id';
+            $params['service_id'] = (int) $filters['service_id'];
+        }
         if (!empty($filters['campaign_id'])) {
             $campaignId = (int) $filters['campaign_id'];
             if (!empty($filters['hide_used_in_campaign'])) {
@@ -132,6 +143,18 @@ class LeadRepository
         $stmt = $db->prepare("SELECT l.id FROM leads l {$where}");
         $stmt->execute($params);
         return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    /**
+     * Active rows from a lookup table (verticals/services), for filter
+     * dropdowns and inline-edit selects. Table name is never user input.
+     */
+    public static function activeLookupOptions(PDO $db, string $table): array
+    {
+        if (!in_array($table, ['verticals', 'services'], true)) {
+            throw new InvalidArgumentException("Not a lookup table: {$table}");
+        }
+        return $db->query("SELECT id, code, label FROM {$table} WHERE is_active = 1 ORDER BY label")->fetchAll();
     }
 
     public static function findByIds(PDO $db, array $ids): array

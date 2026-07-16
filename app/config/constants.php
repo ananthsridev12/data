@@ -51,6 +51,20 @@ function lead_required_fields(): array
 }
 
 /**
+ * "Lookup" fields are mappable/importable/filterable like LEAD_FIELDS, but
+ * their allowed values come from an admin-maintained table (see
+ * public/lists.php) rather than being free text. On import, the raw cell
+ * value is matched case-insensitively against that table's `code` or
+ * `label` columns; a value that doesn't match anything is a row error
+ * (see LeadImporter::resolveLookupValue()) rather than being imported as
+ * free text, so the leads table never accumulates inconsistent spellings.
+ */
+const LOOKUP_FIELDS = [
+    'vertical' => ['label' => 'Vertical', 'table' => 'verticals', 'fk_column' => 'vertical_id'],
+    'service' => ['label' => 'Service', 'table' => 'services', 'fk_column' => 'service_id'],
+];
+
+/**
  * Known source header text (as seen in real provider exports) mapped to a
  * `leads` column, used to auto-suggest the import mapping. Matching is
  * done case/whitespace-insensitively (see ImportMapper::normalizeHeader).
@@ -98,6 +112,8 @@ const HEADER_ALIASES = [
     'latest funding'                  => 'latest_funding',
     'latest funding amount'           => 'latest_funding_amount',
     'last raised at'                   => 'last_raised_at',
+    'vertical'                          => 'vertical',
+    'service'                           => 'service',
     // 'country' is intentionally absent here: it's resolved positionally
     // in ImportMapper because the same header text is used twice.
 ];

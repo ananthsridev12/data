@@ -152,11 +152,21 @@ class LeadImporter
         }
         fseek($cache, $offsets[$offset]);
 
+        $lookupMaps = [];
+        foreach (LOOKUP_FIELDS as $field => $meta) {
+            $lookupMaps[$field] = self::loadLookupMap($db, $meta['table']);
+        }
+
         $columns = array_keys(LEAD_FIELDS);
-        $placeholders = implode(', ', array_fill(0, count($columns), '?'));
-        $updateClause = implode(', ', array_map(static fn($c) => "{$c} = VALUES({$c})", array_filter($columns, static fn($c) => $c !== 'email')));
-        $sql = 'INSERT INTO leads (' . implode(', ', $columns) . ', last_import_batch_id) VALUES (' . $placeholders . ', ?) '
-            . "ON DUPLICATE KEY UPDATE {$updateClause}, last_import_batch_id = VALUES(last_import_batch_id)";
+        $extraColumns = array_map(static fn(array $f) => $f['fk_column'], LOOKUP_FIELDS);
+        $allColumns = array_merge($columns, $extraColumns);
+        $placeholders = implode(', ', array_fill(0, count($allColumns), '?'));
+        $updateClause = implode(', ', array_map(
+            static fn($c) => "{$c} = VALUES({$c})",
+            array_filter(array_merge($allColumns, ['last_import_batch_id']), static fn($c) => $c !== 'email')
+        ));
+        $sql = 'INSERT INTO leads (' . implode(', ', $allColumns) . ', last_import_batch_id) VALUES (' . $placeholders . ', ?) '
+            . "ON DUPLICATE KEY UPDATE {$updateClause}";
         $stmt = $db->prepare($sql);
 
         $errStmt = $db->prepare(
@@ -178,10 +188,16 @@ class LeadImporter
             }
 
             $data = [];
+            $lookupRaw = [];
             foreach ($headerKeys as $i => $key) {
                 $col = $mapping[$key] ?? null;
-                if ($col !== null && isset(LEAD_FIELDS[$col])) {
+                if ($col === null) {
+                    continue;
+                }
+                if (isset(LEAD_FIELDS[$col])) {
                     $data[$col] = trim((string) ($rawRow[$i] ?? ''));
+                } elseif (isset(LOOKUP_FIELDS[$col])) {
+                    $lookupRaw[$col] = trim((string) ($rawRow[$i] ?? ''));
                 }
             }
 
@@ -194,10 +210,28 @@ class LeadImporter
 
             $email = isset($data['email']) ? strtolower(trim($data['email'])) : '';
 
+            $lookupIds = [];
+            $unknownLookups = [];
+            foreach (LOOKUP_FIELDS as $field => $meta) {
+                $raw = $lookupRaw[$field] ?? '';
+                if ($raw === '') {
+                    $lookupIds[$meta['fk_column']] = null;
+                    continue;
+                }
+                $normalized = mb_strtolower($raw);
+                if (isset($lookupMaps[$field][$normalized])) {
+                    $lookupIds[$meta['fk_column']] = $lookupMaps[$field][$normalized];
+                } else {
+                    $unknownLookups[] = "{$meta['label']} \"{$raw}\" (add it under Lists first)";
+                }
+            }
+
             if ($missing) {
                 $reason = 'Missing required field(s): ' . implode(', ', $missing);
             } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 $reason = "Invalid email address: \"{$email}\"";
+            } elseif ($unknownLookups) {
+                $reason = 'Unrecognized value(s): ' . implode('; ', $unknownLookups);
             } else {
                 $reason = null;
             }
@@ -214,6 +248,9 @@ class LeadImporter
             foreach ($columns as $col) {
                 $values[] = $data[$col] ?? null;
             }
+            foreach ($extraColumns as $col) {
+                $values[] = $lookupIds[$col] ?? null;
+            }
             $values[] = $batchId;
 
             $stmt->execute($values);
@@ -228,5 +265,19 @@ class LeadImporter
         fclose($cache);
 
         return $stats;
+    }
+
+    /**
+     * @return array<string,int> normalized(code or label) => id, for active rows only
+     */
+    private static function loadLookupMap(PDO $db, string $table): array
+    {
+        $map = [];
+        $stmt = $db->query("SELECT id, code, label FROM {$table} WHERE is_active = 1");
+        foreach ($stmt as $row) {
+            $map[mb_strtolower($row['code'])] = (int) $row['id'];
+            $map[mb_strtolower($row['label'])] = (int) $row['id'];
+        }
+        return $map;
     }
 }
