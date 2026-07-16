@@ -127,6 +127,8 @@ class LeadImporter
      *
      * @param array<string,string|null> $mapping header_key => target key (LEAD_FIELDS/LOOKUP_FIELDS/custom field key, or null = ignored)
      * @param array<string,string> $defaults target key => default value, used when that field's resolved value is empty
+     * @param ?int $assignCampaignId if set, every successfully imported/updated row in this chunk is also assigned to this campaign
+     * @param ?int $assignedByUserId required if $assignCampaignId is set -- who to record as having made the assignment
      * @return array{processed:int, inserted:int, updated:int, skipped:int, errors:array<int,array{row_num:int,email:?string,reason:string}>}
      */
     public static function processChunk(
@@ -139,7 +141,9 @@ class LeadImporter
         array $mapping,
         int $offset,
         int $limit,
-        array $defaults = []
+        array $defaults = [],
+        ?int $assignCampaignId = null,
+        ?int $assignedByUserId = null
     ): array {
         $headerAndSamples = self::detectHeaderAndSamples($sourcePath, $fileType, 0);
         $headerKeys = ImportMapper::buildHeaderKeys($headerAndSamples['headers']);
@@ -190,6 +194,10 @@ class LeadImporter
         $errStmt = $db->prepare(
             'INSERT INTO import_row_errors (import_batch_id, row_num, email, reason, raw_row_json) VALUES (?, ?, ?, ?, ?)'
         );
+
+        $campaignAssignStmt = $assignCampaignId !== null
+            ? $db->prepare('INSERT IGNORE INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by) VALUES (?, ?, ?)')
+            : null;
 
         $rowNum = $offset;
         for ($n = 0; $n < $limit; $n++) {
@@ -296,14 +304,19 @@ class LeadImporter
                 $stats['updated']++;
             }
 
+            $leadId = (int) $db->lastInsertId();
+
             if ($customRaw) {
-                $leadId = (int) $db->lastInsertId();
                 foreach ($customRaw as $fieldKey => $value) {
                     if ($value === '') {
                         continue;
                     }
                     $customStmt->execute([$leadId, $customFields[$fieldKey], $value]);
                 }
+            }
+
+            if ($campaignAssignStmt !== null) {
+                $campaignAssignStmt->execute([$leadId, $assignCampaignId, $assignedByUserId]);
             }
         }
 

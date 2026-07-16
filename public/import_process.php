@@ -49,6 +49,7 @@ $offsetsPath = $uploadsDir . '/cache/batch_' . $batchId . '.offsets.json';
 $stored = json_decode((string) $batch['mapping_json'], true) ?: [];
 $mapping = $stored['mapping'] ?? $stored; // older batches stored a flat mapping with no "defaults" key
 $defaults = $stored['defaults'] ?? [];
+$assignCampaignId = isset($stored['assign_campaign_id']) ? (int) $stored['assign_campaign_id'] : null;
 
 const IMPORT_CHUNK_SIZE = 300;
 
@@ -62,7 +63,9 @@ $result = LeadImporter::processChunk(
     $mapping,
     (int) $batch['next_offset'],
     IMPORT_CHUNK_SIZE,
-    $defaults
+    $defaults,
+    $assignCampaignId,
+    $assignCampaignId !== null ? (int) $batch['uploaded_by'] : null
 );
 
 $nextOffset = (int) $batch['next_offset'] + $result['processed'];

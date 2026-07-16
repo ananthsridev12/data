@@ -2,6 +2,7 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadImporter.php';
 require_once __DIR__ . '/../app/includes/ImportMapper.php';
+require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $admin = require_admin();
 $config = require __DIR__ . '/../app/config/config.php';
@@ -29,6 +30,12 @@ $formError = null;
 
 $customFieldRows = db()->query('SELECT field_key, label FROM custom_fields WHERE is_active = 1 ORDER BY label')->fetchAll();
 $customFieldLabels = array_column($customFieldRows, 'label', 'field_key');
+
+$lookupOptions = [
+    'vertical' => LeadRepository::activeLookupOptions(db(), 'verticals'),
+    'service' => LeadRepository::activeLookupOptions(db(), 'services'),
+];
+$campaignOptions = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORDER BY name')->fetchAll();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_mapping') {
     csrf_verify();
@@ -84,9 +91,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         $formError = 'These required fields must be mapped from a column or given a default value: ' . implode(', ', $missingRequired);
     }
 
+    $assignCampaignId = (int) ($_POST['assign_campaign_id'] ?? 0);
+    if ($assignCampaignId > 0) {
+        $campaignCheck = db()->prepare('SELECT id FROM campaigns WHERE id = ? AND is_active = 1');
+        $campaignCheck->execute([$assignCampaignId]);
+        if (!$campaignCheck->fetch()) {
+            $assignCampaignId = 0;
+        }
+    }
+
     if ($formError === null) {
         $mappingJson = json_encode($mappingByKey, JSON_UNESCAPED_UNICODE);
-        $batchMappingJson = json_encode(['mapping' => $mappingByKey, 'defaults' => $defaults], JSON_UNESCAPED_UNICODE);
+        $batchMapping = ['mapping' => $mappingByKey, 'defaults' => $defaults];
+        if ($assignCampaignId > 0) {
+            $batchMapping['assign_campaign_id'] = $assignCampaignId;
+        }
+        $batchMappingJson = json_encode($batchMapping, JSON_UNESCAPED_UNICODE);
 
         $saveTemplate = !empty($_POST['save_template']);
         $templateName = trim((string) ($_POST['template_name'] ?? ''));
@@ -236,19 +256,27 @@ if ($batch['status'] === 'processing') {
   <div class="card mb-3">
     <div class="card-header">Default values</div>
     <div class="card-body">
-      <p class="text-muted small">Used for a field when this file has no column mapped to it, or a row's cell is blank. Can satisfy a required field marked * above too. Leave blank to skip.</p>
-      <div class="row">
-        <?php
-        $allTargets = LEAD_FIELDS + LOOKUP_FIELDS;
-        foreach ($allTargets as $key => $meta):
-        ?>
-          <div class="col-md-4 mb-2">
+      <p class="text-muted small">Used for a field when this file has no column mapped to it, or a row's cell is blank. Can satisfy a required field marked * above too. Leave blank to skip. Fields you've already mapped to a column above are hidden here automatically.</p>
+      <div class="row" id="defaultValuesRow">
+        <?php foreach (LEAD_FIELDS as $key => $meta): ?>
+          <div class="col-md-4 mb-2" id="default-row-<?= e($key) ?>" data-default-row="<?= e($key) ?>">
             <label class="form-label small mb-0"><?= e($meta['label']) ?><?= !empty($meta['required']) ? ' *' : '' ?></label>
             <input type="text" name="defaults[<?= e($key) ?>]" class="form-control form-control-sm" value="<?= e($postedDefaults[$key] ?? '') ?>">
           </div>
         <?php endforeach; ?>
+        <?php foreach (LOOKUP_FIELDS as $key => $meta): ?>
+          <div class="col-md-4 mb-2" id="default-row-<?= e($key) ?>" data-default-row="<?= e($key) ?>">
+            <label class="form-label small mb-0"><?= e($meta['label']) ?></label>
+            <select name="defaults[<?= e($key) ?>]" class="form-select form-select-sm">
+              <option value="">-- none --</option>
+              <?php foreach ($lookupOptions[$key] as $opt): ?>
+                <option value="<?= e($opt['label']) ?>" <?= ($postedDefaults[$key] ?? '') === $opt['label'] ? 'selected' : '' ?>><?= e($opt['label']) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+        <?php endforeach; ?>
         <?php foreach ($customFieldLabels as $key => $label): ?>
-          <div class="col-md-4 mb-2">
+          <div class="col-md-4 mb-2" id="default-row-<?= e($key) ?>" data-default-row="<?= e($key) ?>">
             <label class="form-label small mb-0"><?= e($label) ?></label>
             <input type="text" name="defaults[<?= e($key) ?>]" class="form-control form-control-sm" value="<?= e($postedDefaults[$key] ?? '') ?>">
           </div>
@@ -256,6 +284,21 @@ if ($batch['status'] === 'processing') {
       </div>
     </div>
   </div>
+
+  <?php if ($campaignOptions): ?>
+  <div class="card mb-3">
+    <div class="card-header">Assign to campaign (optional)</div>
+    <div class="card-body">
+      <p class="text-muted small">Every lead successfully imported or updated by this file will also be assigned to the chosen campaign, same as using "Add to campaign" from the dashboard.</p>
+      <select name="assign_campaign_id" class="form-select form-select-sm" style="max-width: 320px;">
+        <option value="">-- Don't assign to a campaign --</option>
+        <?php foreach ($campaignOptions as $c): ?>
+          <option value="<?= (int) $c['id'] ?>" <?= (int) ($_POST['assign_campaign_id'] ?? 0) === (int) $c['id'] ? 'selected' : '' ?>><?= e($c['name']) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+  </div>
+  <?php endif; ?>
 
   <div class="card mb-3">
     <div class="card-body">
@@ -270,4 +313,27 @@ if ($batch['status'] === 'processing') {
   <button type="submit" class="btn btn-primary">Confirm mapping &amp; start import</button>
   <a href="import.php" class="btn btn-outline-secondary">Cancel</a>
 </form>
+<script>
+  (function () {
+    var mappingSelects = document.querySelectorAll('select[name^="mapping["]');
+    var defaultRows = document.querySelectorAll('[data-default-row]');
+
+    function refresh() {
+      var mappedKeys = {};
+      mappingSelects.forEach(function (sel) {
+        if (sel.value) {
+          mappedKeys[sel.value] = true;
+        }
+      });
+      defaultRows.forEach(function (row) {
+        row.style.display = mappedKeys[row.getAttribute('data-default-row')] ? 'none' : '';
+      });
+    }
+
+    mappingSelects.forEach(function (sel) {
+      sel.addEventListener('change', refresh);
+    });
+    refresh();
+  })();
+</script>
 <?php render_footer(); ?>
