@@ -3,6 +3,10 @@
 A plain PHP 8 + MySQL app. No SSH, no Composer, and no build step are
 required -- everything can be uploaded via cPanel's File Manager or FTP.
 
+Steps 1-2 and 4-6 below are one-time, manual setup. Once done, file
+sync for future changes can be automated -- see "Automated deploys via
+GitHub Actions" at the bottom.
+
 ## 1. Create the database
 
 In cPanel, under **MySQL Databases**:
@@ -126,3 +130,27 @@ sequence via its API instead of a CSV round-trip -- the `campaigns`
 table already has a `saleshandy_sequence_id` column and
 `lead_campaign_assignments.status` already supports a `pushed` value to
 support that without a schema change.
+
+## Automated deploys via GitHub Actions
+
+`.github/workflows/deploy.yml` rsyncs this repo to the server over SSH
+on every push to `claude/sales-data-dashboard-php-vlpgvd` (or via the
+"Run workflow" button for a manual deploy). It handles file sync only --
+steps 1, 2, 4, and 5 above (database, schema, `config.php`, upload folder
+permissions) are still one-time manual steps; the workflow deliberately
+excludes `app/config/config.php` and `public/uploads/` from sync so it
+never overwrites your real credentials or deletes real uploaded/import
+data.
+
+Before the first automated run, add these under this repo's **Settings
+-> Secrets and variables -> Actions -> New repository secret**:
+
+| Secret | Value |
+|---|---|
+| `DEPLOY_SSH_PRIVATE_KEY` | A private SSH key (generate a dedicated deploy key rather than reusing a personal one). Add the matching **public** key in cPanel under **SSH Access -> Manage SSH Keys -> Import Key**, then click **Authorize**. |
+| `DEPLOY_SSH_HOST` | The SSH hostname/IP for the account (from cPanel's SSH Access page, or ask your host). |
+| `DEPLOY_SSH_USER` | The cPanel account username (from the deploy path `/home1/de2shrnx/...`, this is `de2shrnx` unless your host differs). |
+| `DEPLOY_SSH_PORT` | Optional -- only needed if your host uses a non-standard SSH port. Defaults to `22`. |
+
+If your host doesn't offer SSH access on your plan, use the manual
+File Manager/FTP steps above instead and skip this section.

@@ -1,0 +1,51 @@
+name: Deploy to cPanel
+
+on:
+  push:
+    branches:
+      - claude/sales-data-dashboard-php-vlpgvd
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-cpanel-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load deploy SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+      - name: Trust remote host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.DEPLOY_SSH_PORT || '22' }}" "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      # public/ -> the live docroot. `uploads/` is excluded so real
+      # uploaded lead files and in-progress import cache/offset files are
+      # never touched or deleted by a deploy.
+      - name: Sync public/ (docroot)
+        run: |
+          rsync -avz --delete-after \
+            -e "ssh -p ${{ secrets.DEPLOY_SSH_PORT || '22' }}" \
+            --exclude 'uploads/' \
+            public/ \
+            "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:/home1/de2shrnx/data.easi7.in/"
+
+      # app/ -> one directory above the docroot (every public/*.php includes
+      # via __DIR__ . '/../app/...', so this sibling layout is required).
+      # config.php is excluded so the real, hand-created DB credentials file
+      # on the server (gitignored, never in this repo) is never deleted.
+      - name: Sync app/ (private includes, outside the docroot)
+        run: |
+          rsync -avz --delete-after \
+            -e "ssh -p ${{ secrets.DEPLOY_SSH_PORT || '22' }}" \
+            --exclude 'config/config.php' \
+            app/ \
+            "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:/home1/de2shrnx/app/"
