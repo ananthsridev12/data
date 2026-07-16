@@ -136,24 +136,16 @@ render_header('Dashboard');
   <div class="text-muted small"><?= number_format($result['total']) ?> leads match this filter (page <?= $result['page'] ?> of <?= $result['totalPages'] ?>)</div>
 </div>
 
-<form method="post" action="leads_assign.php" id="leadsForm">
-  <?= csrf_field() ?>
-  <?php foreach ($filterQuery as $k => $v): if (is_array($v)) continue; ?>
-    <input type="hidden" name="filter[<?= e($k) ?>]" value="<?= e((string) $v) ?>">
-  <?php endforeach; ?>
-
-  <div class="table-responsive card mb-3">
+<div class="table-responsive card mb-3">
     <table class="table table-hover mb-0 align-middle">
       <thead>
         <tr>
-          <th><input type="checkbox" id="selectAllOnPage"></th>
           <th>Company</th><th>Name</th><th>Title</th><th>Email</th><th>Industry</th><th>Country</th><th>Seniority</th><th>Vertical</th><th>Service</th><th>Used in</th>
         </tr>
       </thead>
       <tbody>
       <?php foreach ($result['rows'] as $lead): ?>
         <tr>
-          <td><input type="checkbox" name="lead_ids[]" value="<?= (int) $lead['id'] ?>" class="lead-checkbox"></td>
           <td><?= e($lead['na_company_name']) ?></td>
           <td><?= e($lead['first_name'] . ' ' . $lead['last_name']) ?></td>
           <td><?= e($lead['title']) ?></td>
@@ -200,37 +192,13 @@ render_header('Dashboard');
         </tr>
       <?php endforeach; ?>
       <?php if (!$result['rows']): ?>
-        <tr><td colspan="11" class="text-center text-muted py-4">No leads match this filter.</td></tr>
+        <tr><td colspan="10" class="text-center text-muted py-4">No leads match this filter.</td></tr>
       <?php endif; ?>
       </tbody>
     </table>
   </div>
 
-  <div class="card mb-3">
-    <div class="card-body d-flex flex-wrap gap-2 align-items-center">
-      <select name="campaign_id" class="form-select form-select-sm" style="max-width: 260px;" required>
-        <option value="">Choose a campaign...</option>
-        <?php foreach ($campaigns as $c): ?>
-          <option value="<?= (int) $c['id'] ?>"><?= e($c['name']) ?></option>
-        <?php endforeach; ?>
-      </select>
-      <button type="submit" name="mode" value="checked" class="btn btn-sm btn-primary">Assign checked leads to campaign</button>
-      <button type="submit" name="mode" value="filter" class="btn btn-sm btn-outline-primary" onclick="return confirm('Assign ALL <?= (int) $result['total'] ?> leads matching the current filter to this campaign?');">Assign all <?= (int) $result['total'] ?> matching leads</button>
-      <?php if (!$campaigns): ?><span class="text-muted small">No campaigns yet -- create one on the <a href="campaigns.php">Campaigns</a> page.</span><?php endif; ?>
-    </div>
-  </div>
-
-  <div class="card mb-4 border-warning">
-    <div class="card-header">Wave 1 (1 contact per company, rest held back)</div>
-    <div class="card-body d-flex flex-wrap gap-2 align-items-center">
-      <input type="text" name="title_priority" class="form-control form-control-sm" style="max-width: 320px;"
-             placeholder="Title priority, e.g. VP Engineering, CTO, Director">
-      <button type="submit" name="wave_mode" value="checked" class="btn btn-sm btn-warning">Wave-1 checked leads</button>
-      <button type="submit" name="wave_mode" value="filter" class="btn btn-sm btn-outline-warning" onclick="return confirm('Assign wave-1 (1 per company) across all <?= (int) $result['total'] ?> leads matching the current filter?');">Wave-1 all <?= (int) $result['total'] ?> matching leads</button>
-      <span class="text-muted small">Picks the first title match per company (falls back to seniority); the rest are held until you release or suppress them on the campaign's page.</span>
-    </div>
-  </div>
-</form>
+  <p class="text-muted small mb-4">To assign leads to a campaign, open the campaign from <a href="campaigns.php">Campaigns</a> and use "Add leads to this campaign" -- filtering and persona selection now happen there so the whole wave-1/bounce workflow lives in one place.</p>
 
 <div class="d-flex gap-2 mb-4">
   <form method="get" action="leads_export_csv.php">

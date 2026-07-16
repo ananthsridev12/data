@@ -26,12 +26,15 @@ and import, in order:
    a new one.)
 3. `sql/003_verticals_services_email_tracking.sql`
 4. `sql/004_wave_suppression.sql`
+5. `sql/005_bounce_types.sql`
 
-(If you're setting up a brand-new site, import all four in order. If
+(If you're setting up a brand-new site, import all five in order. If
 you already have a running site from before these were added, just
-import whichever of 003/004 you're missing -- they're additive, so
+import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
-existing tables/rows.)
+existing tables/rows. **A 500 error right after deploying new code is
+usually this** -- the code expects tables/columns from a migration that
+hasn't been run against your live database yet.)
 
 ## 3. Upload the files
 

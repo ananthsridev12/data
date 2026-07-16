@@ -31,13 +31,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    $batchBounceType = $_POST['bounce_type'] ?? '';
+    if (!in_array($batchBounceType, WaveAssigner::BOUNCE_TYPES, true)) {
+        $batchBounceType = null;
+    }
+
     $header = fgetcsv($handle);
     $emailCol = null;
+    $typeCol = null;
     if ($header !== false) {
         foreach ($header as $i => $col) {
-            if (strtolower(trim((string) $col)) === 'email') {
+            $colName = strtolower(trim((string) $col));
+            if ($colName === 'email') {
                 $emailCol = $i;
-                break;
+            } elseif (in_array($colName, ['bounce type', 'bounce_type', 'reason', 'bounce reason'], true)) {
+                $typeCol = $i;
             }
         }
         // Single-column file with no recognizable "Email" header: treat
@@ -65,7 +73,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $skipped++;
                 continue;
             }
-            $result = WaveAssigner::suppressByEmail(db(), $email, $admin['id'], 'Bounce report import');
+            // Per-row bounce type from the file (if that column exists) wins over the batch-level dropdown.
+            $rowBounceType = $batchBounceType;
+            if ($typeCol !== null) {
+                $fromRow = trim((string) ($row[$typeCol] ?? ''));
+                if (in_array($fromRow, WaveAssigner::BOUNCE_TYPES, true)) {
+                    $rowBounceType = $fromRow;
+                }
+            }
+            $result = WaveAssigner::suppressByEmail(db(), $email, $admin['id'], 'Bounce report import', $rowBounceType);
             $suppressedDomains[$result['domain']] = true;
             $cascaded += $result['cascaded'];
             $processed++;
@@ -96,13 +112,19 @@ $suppressedDomains = db()->query(
 render_header('Bounce import');
 ?>
 <h1 class="h4 mb-3">Bounce report import</h1>
-<p class="text-muted">Upload the bounce export from Saleshandy (a CSV with an "Email" column, or a single-column list of bounced addresses). Every email in the file is treated as bounced: its domain is added to the global suppression list, and if it was a pending wave-1 contact, the rest of its held group is suppressed too.</p>
+<p class="text-muted">Upload the bounce export from Saleshandy (a CSV with an "Email" column, or a single-column list of bounced addresses). Every email in the file is treated as bounced: its domain is added to the global suppression list, and if it was a pending wave-1 contact, the rest of its held group is suppressed too. If the file has its own "Bounce Type"/"Reason" column, that's used per row; otherwise the dropdown below applies to the whole file.</p>
 
 <div class="card mb-4">
   <div class="card-body">
     <form method="post" action="bounce_import.php" enctype="multipart/form-data" class="d-flex gap-2 align-items-center">
       <?= csrf_field() ?>
       <input type="file" name="bounce_file" class="form-control form-control-sm" accept=".csv" required style="max-width: 320px;">
+      <select name="bounce_type" class="form-select form-select-sm" style="max-width: 220px;">
+        <option value="">Bounce type for this file (optional)</option>
+        <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+          <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
+        <?php endforeach; ?>
+      </select>
       <button type="submit" class="btn btn-primary btn-sm">Process bounces</button>
     </form>
   </div>
@@ -111,12 +133,13 @@ render_header('Bounce import');
 <h2 class="h6">Suppressed domains (<?= count($suppressedDomains) ?> shown, most recent first)</h2>
 <div class="table-responsive card">
   <table class="table table-sm mb-0">
-    <thead><tr><th>Domain</th><th>Reason</th><th>Suppressed by</th><th>Date</th><th></th></tr></thead>
+    <thead><tr><th>Domain</th><th>Reason</th><th>Bounce type</th><th>Suppressed by</th><th>Date</th><th></th></tr></thead>
     <tbody>
     <?php foreach ($suppressedDomains as $d): ?>
       <tr>
         <td><code><?= e($d['domain']) ?></code></td>
         <td><?= e($d['reason'] ?? '') ?></td>
+        <td><?= e($d['bounce_type'] ?? '') ?></td>
         <td><?= e($d['suppressed_by_name']) ?></td>
         <td class="small text-muted"><?= e($d['suppressed_at']) ?></td>
         <td>
@@ -130,7 +153,7 @@ render_header('Bounce import');
       </tr>
     <?php endforeach; ?>
     <?php if (!$suppressedDomains): ?>
-      <tr><td colspan="5" class="text-center text-muted py-3">No domains suppressed yet.</td></tr>
+      <tr><td colspan="6" class="text-center text-muted py-3">No domains suppressed yet.</td></tr>
     <?php endif; ?>
     </tbody>
   </table>

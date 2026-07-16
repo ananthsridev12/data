@@ -134,6 +134,36 @@ class LeadRepository
         return [$where, $params];
     }
 
+    /**
+     * Titles present among leads matching the given filters, with counts --
+     * used for the campaign page's "pick allowed titles" manual persona
+     * checklist. Ordered most-common first, capped to keep the checklist short.
+     */
+    public static function distinctTitlesForFilter(PDO $db, array $filters, int $limit = 40): array
+    {
+        [$where, $params] = self::buildWhere($filters);
+        $titleClause = "l.title IS NOT NULL AND l.title <> ''";
+        $where = $where === '' ? "WHERE {$titleClause}" : "{$where} AND {$titleClause}";
+
+        $sql = "SELECT l.title, COUNT(*) AS lead_count FROM leads l {$where} GROUP BY l.title ORDER BY lead_count DESC, l.title LIMIT {$limit}";
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Distinct email-domain ("company") count among leads matching the
+     * given filters -- shown on the campaign selection page alongside the
+     * lead count, since wave-1 assigns one contact per domain.
+     */
+    public static function domainCountForFilter(PDO $db, array $filters): int
+    {
+        [$where, $params] = self::buildWhere($filters);
+        $stmt = $db->prepare("SELECT COUNT(DISTINCT SUBSTRING_INDEX(l.email, '@', -1)) FROM leads l {$where}");
+        $stmt->execute($params);
+        return (int) $stmt->fetchColumn();
+    }
+
     public static function distinctValues(PDO $db, string $column): array
     {
         $allowed = ['seniority', 'industry', 'country', 'employee_count', 'company_country'];

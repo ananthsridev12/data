@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 
 $user = require_login();
 
@@ -36,7 +37,7 @@ $stmt->execute(['campaign_id' => $campaignId]);
 $assignments = $stmt->fetchAll();
 
 $waveStmt = db()->prepare(
-    "SELECT a.id AS leader_assignment_id, a.bounce_status, a.assigned_at,
+    "SELECT a.id AS leader_assignment_id, a.bounce_status, a.bounce_type, a.assigned_at,
             l.na_company_name, l.first_name, l.last_name, l.email,
             (SELECT COUNT(*) FROM lead_campaign_assignments h WHERE h.wave_leader_id = a.id) AS held_count,
             (SELECT COUNT(*) FROM lead_campaign_assignments h WHERE h.wave_leader_id = a.id AND h.wave_status = 'held') AS still_held
@@ -52,14 +53,38 @@ $waveGroups = $waveStmt->fetchAll();
 render_header('Campaign leads');
 ?>
 <h1 class="h4 mb-1">Leads assigned to "<?= e($campaign['name']) ?>"</h1>
-<p class="text-muted"><?= number_format($total) ?> lead(s) assigned (page <?= $page ?> of <?= $totalPages ?>)</p>
+<p class="text-muted">
+  <?= number_format($total) ?> lead(s) assigned (page <?= $page ?> of <?= $totalPages ?>) --
+  <a href="campaign_select_leads.php?campaign_id=<?= (int) $campaignId ?>">Add leads to this campaign</a>
+</p>
+
+<div class="card mb-4 border-danger">
+  <div class="card-header">Paste bounced emails</div>
+  <div class="card-body">
+    <form method="post" action="campaign_bounce_paste.php">
+      <?= csrf_field() ?>
+      <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+      <textarea name="emails" class="form-control form-control-sm mb-2" rows="3" placeholder="Paste bounced email addresses -- one per line, or comma/space separated"></textarea>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <select name="bounce_type" class="form-select form-select-sm" style="max-width: 220px;">
+          <option value="">Bounce type (optional)</option>
+          <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+            <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
+          <?php endforeach; ?>
+        </select>
+        <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Suppress these domains and release every other pending company in this campaign as the next batch?');">Process bounces &amp; release the rest</button>
+        <span class="text-muted small">Suppresses the pasted emails' domains everywhere, then auto-releases every other still-pending company in this campaign.</span>
+      </div>
+    </form>
+  </div>
+</div>
 
 <?php if ($waveGroups): ?>
 <div class="card mb-4 border-warning">
   <div class="card-header">Wave 1 groups awaiting a delivered/bounced decision</div>
   <div class="table-responsive">
     <table class="table table-sm mb-0 align-middle">
-      <thead><tr><th>Company</th><th>Wave-1 contact</th><th>Held</th><th>Outcome</th><th></th></tr></thead>
+      <thead><tr><th>Company</th><th>Wave-1 contact</th><th>Held</th><th>Outcome</th><th>Bounce type</th><th></th></tr></thead>
       <tbody>
       <?php foreach ($waveGroups as $w): ?>
         <tr>
@@ -72,12 +97,19 @@ render_header('Campaign leads');
             ?>
             <span class="badge bg-<?= $bounceBadge[$w['bounce_status']] ?>"><?= e($w['bounce_status']) ?></span>
           </td>
+          <td class="small text-muted"><?= e($w['bounce_type'] ?? '') ?></td>
           <td>
             <?php if ($w['still_held'] > 0): ?>
             <form method="post" action="campaign_wave_update.php" class="d-inline">
               <?= csrf_field() ?>
               <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
               <input type="hidden" name="leader_assignment_id" value="<?= (int) $w['leader_assignment_id'] ?>">
+              <select name="bounce_type" class="form-select form-select-sm d-inline-block mb-1" style="max-width: 160px;">
+                <option value="">Bounce type...</option>
+                <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+                  <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
+                <?php endforeach; ?>
+              </select><br>
               <button type="submit" name="action" value="release" class="btn btn-sm btn-outline-success">Delivered -- release held</button>
               <button type="submit" name="action" value="suppress" class="btn btn-sm btn-outline-danger" onclick="return confirm('Bounced -- suppress this domain everywhere? This affects all campaigns and future imports too.');">Bounced -- suppress domain</button>
             </form>

@@ -10,6 +10,8 @@
  */
 class WaveAssigner
 {
+    public const BOUNCE_TYPES = ['Hard Bounce', 'Soft Bounce', 'Spam Complaint', 'Invalid Address', 'Other'];
+
     // Seniority fallback rank used when no title-priority keyword matches
     // any lead at a domain -- lower number wins. Unlisted values sort last.
     private const SENIORITY_RANK = [
@@ -129,7 +131,7 @@ class WaveAssigner
      * campaign, and add the whole domain to the global suppression list
      * so it's excluded from every future campaign/import too.
      */
-    public static function suppress(PDO $db, int $leaderAssignmentId, int $userId, string $reason = 'Wave-1 bounce'): int
+    public static function suppress(PDO $db, int $leaderAssignmentId, int $userId, string $reason = 'Wave-1 bounce', ?string $bounceType = null): int
     {
         $leadStmt = $db->prepare(
             'SELECT l.email FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id WHERE a.id = ?'
@@ -138,11 +140,11 @@ class WaveAssigner
         $email = $leadStmt->fetchColumn();
 
         if ($email) {
-            self::suppressDomainOf($db, $email, $userId, $reason);
+            self::suppressDomainOf($db, $email, $userId, $reason, $bounceType);
         }
 
-        $db->prepare("UPDATE lead_campaign_assignments SET bounce_status = 'bounced' WHERE id = ?")
-            ->execute([$leaderAssignmentId]);
+        $db->prepare("UPDATE lead_campaign_assignments SET bounce_status = 'bounced', bounce_type = ? WHERE id = ?")
+            ->execute([$bounceType, $leaderAssignmentId]);
         $stmt = $db->prepare("UPDATE lead_campaign_assignments SET wave_status = 'suppressed' WHERE wave_leader_id = ?");
         $stmt->execute([$leaderAssignmentId]);
         return $stmt->rowCount();
@@ -156,9 +158,9 @@ class WaveAssigner
      *
      * @return array{domain:string, cascaded:int}
      */
-    public static function suppressByEmail(PDO $db, string $email, int $userId, string $reason): array
+    public static function suppressByEmail(PDO $db, string $email, int $userId, string $reason, ?string $bounceType = null): array
     {
-        $domain = self::suppressDomainOf($db, $email, $userId, $reason);
+        $domain = self::suppressDomainOf($db, $email, $userId, $reason, $bounceType);
 
         $leaderStmt = $db->prepare(
             "SELECT a.id FROM lead_campaign_assignments a
@@ -170,7 +172,8 @@ class WaveAssigner
 
         $cascaded = 0;
         foreach ($leaderIds as $leaderId) {
-            $db->prepare("UPDATE lead_campaign_assignments SET bounce_status = 'bounced' WHERE id = ?")->execute([$leaderId]);
+            $db->prepare("UPDATE lead_campaign_assignments SET bounce_status = 'bounced', bounce_type = ? WHERE id = ?")
+                ->execute([$bounceType, $leaderId]);
             $stmt = $db->prepare("UPDATE lead_campaign_assignments SET wave_status = 'suppressed' WHERE wave_leader_id = ?");
             $stmt->execute([$leaderId]);
             $cascaded += $stmt->rowCount();
@@ -179,13 +182,43 @@ class WaveAssigner
         return ['domain' => $domain, 'cascaded' => $cascaded];
     }
 
-    private static function suppressDomainOf(PDO $db, string $email, int $userId, string $reason): string
+    /**
+     * Auto-release path for the campaign paste-bounces flow: every wave-1
+     * leader in this campaign still pending (i.e. not in the just-bounced
+     * set) is treated as delivered and has its held group released.
+     *
+     * @param int[] $excludeLeaderAssignmentIds leader assignment ids just marked bounced (skip these)
+     * @return array{released_leaders:int, released_held:int}
+     */
+    public static function releaseAllPendingInCampaign(PDO $db, int $campaignId, array $excludeLeaderAssignmentIds): array
+    {
+        $exclude = $excludeLeaderAssignmentIds ? array_map('intval', $excludeLeaderAssignmentIds) : [0];
+        $placeholders = implode(',', array_fill(0, count($exclude), '?'));
+
+        $stmt = $db->prepare(
+            "SELECT id FROM lead_campaign_assignments
+              WHERE campaign_id = ? AND wave_leader_id IS NULL AND bounce_status = 'pending'
+                AND id NOT IN ({$placeholders})
+                AND EXISTS (SELECT 1 FROM lead_campaign_assignments h WHERE h.wave_leader_id = lead_campaign_assignments.id)"
+        );
+        $stmt->execute(array_merge([$campaignId], $exclude));
+        $leaderIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+        $releasedHeld = 0;
+        foreach ($leaderIds as $leaderId) {
+            $releasedHeld += self::release($db, $leaderId);
+        }
+
+        return ['released_leaders' => count($leaderIds), 'released_held' => $releasedHeld];
+    }
+
+    private static function suppressDomainOf(PDO $db, string $email, int $userId, string $reason, ?string $bounceType = null): string
     {
         $domain = strtolower(substr(strrchr($email, '@'), 1));
         $db->prepare(
-            'INSERT INTO suppressed_domains (domain, reason, suppressed_by) VALUES (?, ?, ?)
-             ON DUPLICATE KEY UPDATE reason = VALUES(reason)'
-        )->execute([$domain, $reason, $userId]);
+            'INSERT INTO suppressed_domains (domain, reason, bounce_type, suppressed_by) VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE reason = VALUES(reason), bounce_type = VALUES(bounce_type)'
+        )->execute([$domain, $reason, $bounceType, $userId]);
         return $domain;
     }
 

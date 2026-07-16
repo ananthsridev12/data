@@ -35,7 +35,11 @@ if ($action === 'release') {
     $count = WaveAssigner::release(db(), $leaderAssignmentId);
     flash_set('success', "{$count} held lead(s) released and are now active in this campaign.");
 } elseif ($action === 'suppress') {
-    $count = WaveAssigner::suppress(db(), $leaderAssignmentId, $user['id']);
+    $bounceType = $_POST['bounce_type'] ?? '';
+    if (!in_array($bounceType, WaveAssigner::BOUNCE_TYPES, true)) {
+        $bounceType = null;
+    }
+    $count = WaveAssigner::suppress(db(), $leaderAssignmentId, $user['id'], 'Wave-1 bounce', $bounceType);
     flash_set('success', "{$count} held lead(s) suppressed, and their domain has been added to the global suppression list.");
 } else {
     flash_set('danger', 'Unknown action.');
