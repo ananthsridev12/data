@@ -39,6 +39,16 @@ $assignStmt = db()->prepare(
 $assignStmt->execute([$leadId]);
 $assignments = $assignStmt->fetchAll();
 
+$customStmt = db()->prepare(
+    "SELECT cf.id, cf.field_key, cf.label, lcv.value
+       FROM custom_fields cf
+       LEFT JOIN lead_custom_values lcv ON lcv.custom_field_id = cf.id AND lcv.lead_id = ?
+      WHERE cf.is_active = 1
+      ORDER BY cf.label"
+);
+$customStmt->execute([$leadId]);
+$customFieldValues = $customStmt->fetchAll();
+
 render_header('Lead detail');
 
 $field = static function (string $label, ?string $value) {
@@ -146,6 +156,21 @@ $field = static function (string $label, ?string $value) {
   </div>
 </div>
 
+<?php if ($customFieldValues): ?>
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    Custom Fields
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editCustomFieldsModal">Edit</button>
+  </div>
+  <div class="card-body row">
+    <?php $anySet = false; foreach ($customFieldValues as $cf): if ($cf['value'] !== null && $cf['value'] !== '') { $anySet = true; } $field($cf['label'], $cf['value']); endforeach; ?>
+    <?php if (!$anySet): ?>
+      <p class="text-muted small mb-0">No values set yet.</p>
+    <?php endif; ?>
+  </div>
+</div>
+<?php endif; ?>
+
 <div class="card mb-4">
   <div class="card-header">Campaign history</div>
   <div class="table-responsive">
@@ -210,4 +235,33 @@ $field = static function (string $label, ?string $value) {
     </div>
   </div>
 </div>
+<?php if ($customFieldValues): ?>
+<div class="modal fade" id="editCustomFieldsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="lead_custom_update.php">
+        <?= csrf_field() ?>
+        <input type="hidden" name="lead_id" value="<?= (int) $lead['id'] ?>">
+        <input type="hidden" name="return_to" value="lead_view.php?id=<?= (int) $lead['id'] ?>">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Custom Fields</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <?php foreach ($customFieldValues as $cf): ?>
+            <div class="mb-3">
+              <label class="form-label"><?= e($cf['label']) ?></label>
+              <input type="text" name="values[<?= e($cf['field_key']) ?>]" class="form-control form-control-sm" value="<?= e($cf['value'] ?? '') ?>">
+            </div>
+          <?php endforeach; ?>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 <?php render_footer(); ?>

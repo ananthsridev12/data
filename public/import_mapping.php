@@ -27,6 +27,9 @@ if (in_array($batch['status'], ['completed', 'failed', 'partial'], true)) {
 $sourcePath = $uploadsDir . '/' . $batch['stored_path'];
 $formError = null;
 
+$customFieldRows = db()->query('SELECT field_key, label FROM custom_fields WHERE is_active = 1 ORDER BY label')->fetchAll();
+$customFieldLabels = array_column($customFieldRows, 'label', 'field_key');
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_mapping') {
     csrf_verify();
 
@@ -40,7 +43,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 
     $targetLabels = array_merge(
         array_map(static fn(array $f) => $f['label'], LEAD_FIELDS),
-        array_map(static fn(array $f) => $f['label'], LOOKUP_FIELDS)
+        array_map(static fn(array $f) => $f['label'], LOOKUP_FIELDS),
+        $customFieldLabels
     );
 
     foreach ($headerKeys as $i => $key) {
@@ -58,9 +62,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         $mappingByKey[$key] = $col;
     }
 
+    $postedDefaults = $_POST['defaults'] ?? [];
+    $defaults = [];
+    foreach ($targetLabels as $targetKey => $label) {
+        $value = trim((string) ($postedDefaults[$targetKey] ?? ''));
+        if ($value !== '') {
+            $defaults[$targetKey] = $value;
+        }
+    }
+
     $missingRequired = [];
     foreach (lead_required_fields() as $field) {
-        if (empty($usedColumns[$field])) {
+        if (empty($usedColumns[$field]) && empty($defaults[$field])) {
             $missingRequired[] = LEAD_FIELDS[$field]['label'];
         }
     }
@@ -68,11 +81,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
     if ($duplicateColumn) {
         $formError = "\"{$duplicateColumn}\" is mapped from more than one column -- choose only one source column per field.";
     } elseif ($missingRequired) {
-        $formError = 'These required fields must be mapped: ' . implode(', ', $missingRequired);
+        $formError = 'These required fields must be mapped from a column or given a default value: ' . implode(', ', $missingRequired);
     }
 
     if ($formError === null) {
         $mappingJson = json_encode($mappingByKey, JSON_UNESCAPED_UNICODE);
+        $batchMappingJson = json_encode(['mapping' => $mappingByKey, 'defaults' => $defaults], JSON_UNESCAPED_UNICODE);
 
         $saveTemplate = !empty($_POST['save_template']);
         $templateName = trim((string) ($_POST['template_name'] ?? ''));
@@ -92,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         );
 
         db()->prepare('UPDATE import_batches SET mapping_json = ?, total_rows = ?, next_offset = 0, status = ? WHERE id = ?')
-            ->execute([$mappingJson, $total, $total > 0 ? 'processing' : 'completed', $batchId]);
+            ->execute([$batchMappingJson, $total, $total > 0 ? 'processing' : 'completed', $batchId]);
 
         if ($total === 0) {
             db()->prepare('UPDATE import_batches SET finished_at = NOW() WHERE id = ?')->execute([$batchId]);
@@ -126,6 +140,7 @@ if ($batch['status'] !== 'processing') {
     }
 
     $postedMapping = $_POST['mapping'] ?? null;
+    $postedDefaults = $_POST['defaults'] ?? [];
 }
 
 render_header('Map columns');
@@ -203,12 +218,43 @@ if ($batch['status'] === 'processing') {
                   <option value="<?= e($col) ?>" <?= $chosen === $col ? 'selected' : '' ?>><?= e($meta['label']) ?></option>
                 <?php endforeach; ?>
               </optgroup>
+              <?php if ($customFieldLabels): ?>
+              <optgroup label="Custom Fields">
+                <?php foreach ($customFieldLabels as $col => $label): ?>
+                  <option value="<?= e($col) ?>" <?= $chosen === $col ? 'selected' : '' ?>><?= e($label) ?></option>
+                <?php endforeach; ?>
+              </optgroup>
+              <?php endif; ?>
             </select>
           </td>
         </tr>
       <?php endforeach; ?>
       </tbody>
     </table>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Default values</div>
+    <div class="card-body">
+      <p class="text-muted small">Used for a field when this file has no column mapped to it, or a row's cell is blank. Can satisfy a required field marked * above too. Leave blank to skip.</p>
+      <div class="row">
+        <?php
+        $allTargets = LEAD_FIELDS + LOOKUP_FIELDS;
+        foreach ($allTargets as $key => $meta):
+        ?>
+          <div class="col-md-4 mb-2">
+            <label class="form-label small mb-0"><?= e($meta['label']) ?><?= !empty($meta['required']) ? ' *' : '' ?></label>
+            <input type="text" name="defaults[<?= e($key) ?>]" class="form-control form-control-sm" value="<?= e($postedDefaults[$key] ?? '') ?>">
+          </div>
+        <?php endforeach; ?>
+        <?php foreach ($customFieldLabels as $key => $label): ?>
+          <div class="col-md-4 mb-2">
+            <label class="form-label small mb-0"><?= e($label) ?></label>
+            <input type="text" name="defaults[<?= e($key) ?>]" class="form-control form-control-sm" value="<?= e($postedDefaults[$key] ?? '') ?>">
+          </div>
+        <?php endforeach; ?>
+      </div>
+    </div>
   </div>
 
   <div class="card mb-3">

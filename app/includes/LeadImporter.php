@@ -115,11 +115,18 @@ class LeadImporter
 
     /**
      * Processes rows [$offset, $offset + $limit) from the cache file: maps
-     * each row via $mapping (header_key => leads column, from
-     * ImportMapper::suggestMapping()/a saved template), validates required
-     * fields + email format, and upserts into `leads` keyed on email.
+     * each row via $mapping (header_key => target key, from
+     * ImportMapper::suggestMapping()/a saved template), applies $defaults
+     * for any target field left empty by the row (or never mapped from a
+     * column at all), validates required fields + email format, and
+     * upserts into `leads` keyed on email. Custom field values go to
+     * `lead_custom_values` in the same pass, using the definitive lead id
+     * from the upsert (see the `LAST_INSERT_ID(id)` trick below, needed
+     * because plain `ON DUPLICATE KEY UPDATE` alone doesn't expose the
+     * existing row's id via PDO::lastInsertId()).
      *
-     * @param array<string,string|null> $mapping header_key => leads column (or null = ignored)
+     * @param array<string,string|null> $mapping header_key => target key (LEAD_FIELDS/LOOKUP_FIELDS/custom field key, or null = ignored)
+     * @param array<string,string> $defaults target key => default value, used when that field's resolved value is empty
      * @return array{processed:int, inserted:int, updated:int, skipped:int, errors:array<int,array{row_num:int,email:?string,reason:string}>}
      */
     public static function processChunk(
@@ -131,7 +138,8 @@ class LeadImporter
         string $offsetsPath,
         array $mapping,
         int $offset,
-        int $limit
+        int $limit,
+        array $defaults = []
     ): array {
         $headerAndSamples = self::detectHeaderAndSamples($sourcePath, $fileType, 0);
         $headerKeys = ImportMapper::buildHeaderKeys($headerAndSamples['headers']);
@@ -156,6 +164,7 @@ class LeadImporter
         foreach (LOOKUP_FIELDS as $field => $meta) {
             $lookupMaps[$field] = self::loadLookupMap($db, $meta['table']);
         }
+        $customFields = self::loadCustomFieldIds($db);
 
         $columns = array_keys(LEAD_FIELDS);
         $extraColumns = array_map(static fn(array $f) => $f['fk_column'], LOOKUP_FIELDS);
@@ -165,9 +174,18 @@ class LeadImporter
             static fn($c) => "{$c} = VALUES({$c})",
             array_filter(array_merge($allColumns, ['last_import_batch_id']), static fn($c) => $c !== 'email')
         ));
+        // `id = LAST_INSERT_ID(id)` is a no-op value-wise, but makes
+        // PDO::lastInsertId() return the existing row's id on an UPDATE
+        // branch too (normally it only reflects fresh INSERTs), which we
+        // need to attach custom field values to the right lead either way.
         $sql = 'INSERT INTO leads (' . implode(', ', $allColumns) . ', last_import_batch_id) VALUES (' . $placeholders . ', ?) '
-            . "ON DUPLICATE KEY UPDATE {$updateClause}";
+            . "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), {$updateClause}";
         $stmt = $db->prepare($sql);
+
+        $customStmt = $db->prepare(
+            'INSERT INTO lead_custom_values (lead_id, custom_field_id, value) VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE value = VALUES(value)'
+        );
 
         $errStmt = $db->prepare(
             'INSERT INTO import_row_errors (import_batch_id, row_num, email, reason, raw_row_json) VALUES (?, ?, ?, ?, ?)'
@@ -189,15 +207,32 @@ class LeadImporter
 
             $data = [];
             $lookupRaw = [];
+            $customRaw = [];
             foreach ($headerKeys as $i => $key) {
                 $col = $mapping[$key] ?? null;
                 if ($col === null) {
                     continue;
                 }
+                $value = trim((string) ($rawRow[$i] ?? ''));
                 if (isset(LEAD_FIELDS[$col])) {
-                    $data[$col] = trim((string) ($rawRow[$i] ?? ''));
+                    $data[$col] = $value;
                 } elseif (isset(LOOKUP_FIELDS[$col])) {
-                    $lookupRaw[$col] = trim((string) ($rawRow[$i] ?? ''));
+                    $lookupRaw[$col] = $value;
+                } elseif (isset($customFields[$col])) {
+                    $customRaw[$col] = $value;
+                }
+            }
+
+            foreach ($defaults as $key => $defaultValue) {
+                if ((string) $defaultValue === '') {
+                    continue;
+                }
+                if (isset(LEAD_FIELDS[$key]) && empty($data[$key])) {
+                    $data[$key] = $defaultValue;
+                } elseif (isset(LOOKUP_FIELDS[$key]) && empty($lookupRaw[$key])) {
+                    $lookupRaw[$key] = $defaultValue;
+                } elseif (isset($customFields[$key]) && empty($customRaw[$key])) {
+                    $customRaw[$key] = $defaultValue;
                 }
             }
 
@@ -260,11 +295,33 @@ class LeadImporter
             } else {
                 $stats['updated']++;
             }
+
+            if ($customRaw) {
+                $leadId = (int) $db->lastInsertId();
+                foreach ($customRaw as $fieldKey => $value) {
+                    if ($value === '') {
+                        continue;
+                    }
+                    $customStmt->execute([$leadId, $customFields[$fieldKey], $value]);
+                }
+            }
         }
 
         fclose($cache);
 
         return $stats;
+    }
+
+    /**
+     * @return array<string,int> field_key => id, for active custom fields only
+     */
+    private static function loadCustomFieldIds(PDO $db): array
+    {
+        $map = [];
+        foreach ($db->query('SELECT id, field_key FROM custom_fields WHERE is_active = 1') as $row) {
+            $map[$row['field_key']] = (int) $row['id'];
+        }
+        return $map;
     }
 
     /**

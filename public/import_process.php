@@ -46,7 +46,9 @@ $uploadsDir = rtrim($config['uploads_dir'], '/');
 $sourcePath = $uploadsDir . '/' . $batch['stored_path'];
 $cachePath = $uploadsDir . '/cache/batch_' . $batchId . '.ndjson';
 $offsetsPath = $uploadsDir . '/cache/batch_' . $batchId . '.offsets.json';
-$mapping = json_decode((string) $batch['mapping_json'], true) ?: [];
+$stored = json_decode((string) $batch['mapping_json'], true) ?: [];
+$mapping = $stored['mapping'] ?? $stored; // older batches stored a flat mapping with no "defaults" key
+$defaults = $stored['defaults'] ?? [];
 
 const IMPORT_CHUNK_SIZE = 300;
 
@@ -59,7 +61,8 @@ $result = LeadImporter::processChunk(
     $offsetsPath,
     $mapping,
     (int) $batch['next_offset'],
-    IMPORT_CHUNK_SIZE
+    IMPORT_CHUNK_SIZE,
+    $defaults
 );
 
 $nextOffset = (int) $batch['next_offset'] + $result['processed'];
