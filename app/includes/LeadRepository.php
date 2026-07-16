@@ -138,6 +138,8 @@ class LeadRepository
             $clauses[] = "NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1))";
         }
 
+        $clauses[] = 'l.deleted_at IS NULL';
+
         $where = $clauses ? ('WHERE ' . implode(' AND ', $clauses)) : '';
         return [$where, $params];
     }

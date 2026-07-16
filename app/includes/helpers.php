@@ -49,6 +49,7 @@ function render_header(string $title): void
         <li class="nav-item"><a class="nav-link" href="campaigns.php">Campaigns</a></li>
         <li class="nav-item"><a class="nav-link" href="lists.php">Lists</a></li>
         <li class="nav-item"><a class="nav-link" href="bounce_import.php">Bounces</a></li>
+        <li class="nav-item"><a class="nav-link" href="deleted_leads.php">Deleted Leads</a></li>
         <li class="nav-item"><a class="nav-link" href="users.php">Users</a></li>
         <?php endif; ?>
       </ul>

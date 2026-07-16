@@ -177,7 +177,16 @@ render_header('Dashboard');
             <?php endif; ?>
           </td>
           <td>
+            <a href="lead_view.php?id=<?= (int) $lead['id'] ?>" class="btn btn-sm btn-outline-secondary">View</a>
             <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editLead<?= (int) $lead['id'] ?>">Edit</button>
+            <?php if ($user['role'] === ROLE_ADMIN): ?>
+            <form method="post" action="lead_delete.php" class="d-inline" onsubmit="return confirm('Delete this lead? It will be hidden everywhere but its campaign history is kept, and this can be undone.');">
+              <?= csrf_field() ?>
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="lead_id" value="<?= (int) $lead['id'] ?>">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+            <?php endif; ?>
             <div class="modal fade" id="editLead<?= (int) $lead['id'] ?>" tabindex="-1" aria-hidden="true">
               <div class="modal-dialog">
                 <div class="modal-content">
@@ -236,6 +245,16 @@ render_header('Dashboard');
     <?php endforeach; ?>
     <button type="submit" class="btn btn-sm btn-outline-secondary">Export all <?= (int) $result['total'] ?> matching leads as CSV</button>
   </form>
+  <?php if ($user['role'] === ROLE_ADMIN): ?>
+  <form method="post" action="lead_delete.php" onsubmit="return confirm('Delete ALL <?= (int) $result['total'] ?> leads matching the current filter? They will be hidden but restorable from Deleted Leads.');">
+    <?= csrf_field() ?>
+    <input type="hidden" name="action" value="bulk_delete">
+    <?php foreach ($filterQuery as $k => $v): if (is_array($v)) continue; ?>
+      <input type="hidden" name="filter[<?= e($k) ?>]" value="<?= e((string) $v) ?>">
+    <?php endforeach; ?>
+    <button type="submit" class="btn btn-sm btn-outline-danger">Delete all <?= (int) $result['total'] ?> matching leads</button>
+  </form>
+  <?php endif; ?>
 </div>
 
 <?php if ($result['totalPages'] > 1): ?>
