@@ -27,8 +27,10 @@ and import, in order:
 3. `sql/003_verticals_services_email_tracking.sql`
 4. `sql/004_wave_suppression.sql`
 5. `sql/005_bounce_types.sql`
+6. `sql/006_lead_soft_delete.sql`
+7. `sql/007_column_preferences.sql`
 
-(If you're setting up a brand-new site, import all five in order. If
+(If you're setting up a brand-new site, import all seven in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
