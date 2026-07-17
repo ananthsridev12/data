@@ -27,6 +27,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = (int) ($_POST['id'] ?? 0);
         db()->prepare('UPDATE campaigns SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
         flash_set('success', 'Campaign status updated.');
+    } elseif ($action === 'rename') {
+        $id = (int) ($_POST['id'] ?? 0);
+        $name = trim((string) ($_POST['name'] ?? ''));
+        $description = trim((string) ($_POST['description'] ?? ''));
+
+        if ($name === '') {
+            flash_set('danger', 'Campaign name is required.');
+        } else {
+            try {
+                db()->prepare('UPDATE campaigns SET name = ?, description = ? WHERE id = ?')
+                    ->execute([$name, $description ?: null, $id]);
+                flash_set('success', "Campaign renamed to \"{$name}\".");
+            } catch (PDOException $ex) {
+                flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'A campaign with that name already exists.' : 'Could not rename campaign.');
+            }
+        }
     }
 
     header('Location: campaigns.php');
@@ -118,12 +134,45 @@ render_header('Campaigns');
       <td class="d-flex gap-1">
         <a class="btn btn-sm btn-outline-secondary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>">Manage leads</a>
         <a class="btn btn-sm btn-outline-secondary" href="leads_export_csv.php?campaign_export=<?= (int) $c['id'] ?>">Export CSV</a>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#renameCampaign<?= (int) $c['id'] ?>">Rename</button>
         <form method="post" action="campaigns.php" onsubmit="return confirm('Toggle active status for <?= e($c['name']) ?>?');">
           <?= csrf_field() ?>
           <input type="hidden" name="action" value="toggle_active">
           <input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
           <button type="submit" class="btn btn-sm btn-outline-secondary"><?= $c['is_active'] ? 'Deactivate' : 'Activate' ?></button>
         </form>
+        <div class="modal fade" id="renameCampaign<?= (int) $c['id'] ?>" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog">
+            <div class="modal-content">
+              <form method="post" action="campaigns.php">
+                <?= csrf_field() ?>
+                <input type="hidden" name="action" value="rename">
+                <input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
+                <div class="modal-header">
+                  <h5 class="modal-title">Rename campaign</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                  <div class="mb-3">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="name" class="form-control form-control-sm" value="<?= e($c['name']) ?>" required>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Description</label>
+                    <input type="text" name="description" class="form-control form-control-sm" value="<?= e($c['description'] ?? '') ?>">
+                  </div>
+                  <?php if ($c['saleshandy_sequence_id']): ?>
+                    <p class="text-muted small mb-0">This only renames the campaign here -- it doesn't rename the linked Saleshandy sequence.</p>
+                  <?php endif; ?>
+                </div>
+                <div class="modal-footer">
+                  <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                  <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
       </td>
     </tr>
   <?php endforeach; ?>

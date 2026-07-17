@@ -37,11 +37,26 @@ class SaleshandyClient
         return new self($apiKey);
     }
 
-    /** @return array<int,array{id:string,title:string,active:bool}> */
+    /**
+     * Every sequence, paginated through in full -- the campaign linking
+     * screen and the live-status badges on Campaigns both need the
+     * complete list, not just the first page.
+     *
+     * @return array<int,array{id:string,title:string,active:bool}>
+     */
     public function listSequences(): array
     {
-        $data = $this->request('GET', '/sequences', ['pageSize' => 100, 'page' => 1, 'sort' => 'ASC', 'sortBy' => 'sequence.title']);
-        return $this->unwrap($data);
+        $sequences = [];
+        $page = 1;
+        $pageSize = 1000; // API max per the CLI's own default flags
+        do {
+            $data = $this->request('GET', '/sequences', ['pageSize' => $pageSize, 'page' => $page, 'sort' => 'ASC', 'sortBy' => 'sequence.title']);
+            $pageRows = $this->unwrap($data);
+            $sequences = array_merge($sequences, $pageRows);
+            $page++;
+        } while (count($pageRows) === $pageSize);
+
+        return $sequences;
     }
 
     /** @return array<int,array{id:string,number:int,type:string,status:string}> */

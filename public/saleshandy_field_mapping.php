@@ -46,6 +46,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $mappingRows = db()->query('SELECT lead_field_key, saleshandy_label, enabled FROM saleshandy_field_mappings')->fetchAll();
 $mappingByKey = array_column($mappingRows, null, 'lead_field_key');
 $knownFields = $_SESSION['saleshandy_known_fields'] ?? [];
+$knownFieldLabels = array_values(array_unique(array_filter(array_map(
+    static fn(array $f) => trim((string) ($f['label'] ?? '')),
+    $knownFields
+))));
+sort($knownFieldLabels);
 
 render_header('Saleshandy field mapping');
 ?>
@@ -59,7 +64,9 @@ render_header('Saleshandy field mapping');
       <input type="hidden" name="action" value="fetch_fields">
       <button type="submit" class="btn btn-outline-secondary btn-sm">Fetch field list from Saleshandy</button>
     </form>
-    <span class="text-muted small">Labels must match Saleshandy's exactly (spaces and capitalization included) -- use this to check spelling.</span>
+    <span class="text-muted small">
+      <?= $knownFieldLabels ? 'Pick from the dropdowns below.' : "Labels must match Saleshandy's exactly (spaces and capitalization included) -- fetch the list to get dropdowns instead of typing them." ?>
+    </span>
   </div>
   <?php if ($knownFields): ?>
   <div class="card-body pt-0">
@@ -78,18 +85,42 @@ render_header('Saleshandy field mapping');
     <table class="table table-sm mb-0 align-middle">
       <thead><tr><th style="width:5%">Send</th><th style="width:35%">Our field</th><th>Saleshandy label</th></tr></thead>
       <tbody>
+      <?php
+      $renderLabelField = static function (string $key, ?string $current) use ($knownFieldLabels) {
+          if (!$knownFieldLabels) {
+              ?><input type="text" name="label[<?= e($key) ?>]" class="form-control form-control-sm" value="<?= e($current ?? '') ?>" placeholder="e.g. Company"><?php
+              return;
+          }
+          // Keep a previously-saved label selectable even if it's since
+          // disappeared from Saleshandy's list, so saving the form again
+          // doesn't silently wipe out a mapping that's otherwise still valid.
+          $options = $knownFieldLabels;
+          if ($current !== null && $current !== '' && !in_array($current, $options, true)) {
+              $options[] = $current;
+              sort($options);
+          }
+          ?>
+          <select name="label[<?= e($key) ?>]" class="form-select form-select-sm">
+            <option value="">-- don't send --</option>
+            <?php foreach ($options as $label): ?>
+              <option value="<?= e($label) ?>" <?= $current === $label ? 'selected' : '' ?>><?= e($label) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <?php
+      };
+      ?>
       <?php foreach (LEAD_FIELDS as $key => $meta): $row = $mappingByKey[$key] ?? null; ?>
         <tr>
           <td><input type="checkbox" name="enabled[<?= e($key) ?>]" value="1" <?= ($row && $row['enabled']) ? 'checked' : '' ?>></td>
           <td><?= e($meta['label']) ?></td>
-          <td><input type="text" name="label[<?= e($key) ?>]" class="form-control form-control-sm" value="<?= e($row['saleshandy_label'] ?? '') ?>" placeholder="e.g. Company"></td>
+          <td><?php $renderLabelField($key, $row['saleshandy_label'] ?? null); ?></td>
         </tr>
       <?php endforeach; ?>
       <?php foreach (LOOKUP_FIELDS as $key => $meta): $row = $mappingByKey[$key] ?? null; ?>
         <tr>
           <td><input type="checkbox" name="enabled[<?= e($key) ?>]" value="1" <?= ($row && $row['enabled']) ? 'checked' : '' ?>></td>
           <td><?= e($meta['label']) ?></td>
-          <td><input type="text" name="label[<?= e($key) ?>]" class="form-control form-control-sm" value="<?= e($row['saleshandy_label'] ?? '') ?>" placeholder="e.g. Industry"></td>
+          <td><?php $renderLabelField($key, $row['saleshandy_label'] ?? null); ?></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
