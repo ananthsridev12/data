@@ -1,11 +1,11 @@
 # Lead Management Dashboard - Deployment (shared cPanel hosting)
 
-A plain PHP 8 + MySQL app. No SSH, no Composer, and no build step are
-required -- everything can be uploaded via cPanel's File Manager or FTP.
+A plain PHP 8 + MySQL app. No Composer and no build step are required.
 
-Steps 1-2 and 4-6 below are one-time, manual setup. Once done, file
-sync for future changes can be automated -- see "Automated deploys via
-GitHub Actions" at the bottom.
+Steps 1-2 and 4-6 below are one-time, manual setup. File sync for every
+change after that is handled by cPanel's **Git Version Control** feature
+-- see "Deploying updates via cPanel Git Version Control" at the bottom
+-- so there's no File Manager/FTP upload step for routine updates.
 
 ## 1. Create the database
 
@@ -49,15 +49,21 @@ This app is split into two folders that must **not** both end up inside
 your public web root:
 
 - `app/` -- PHP includes, config, and the vendored SimpleXLSX library.
-  Upload this to a directory **outside** `public_html`, e.g.
-  `/home/cpaneluser/app/` (a sibling of `public_html`, not inside it).
-- `public/` -- everything web-visible. Upload the **contents** of this
-  folder directly into `public_html/` (or a subdirectory/addon domain
-  docroot of your choosing).
+  Deployed **outside** the docroot, e.g. `/home1/cpaneluser/app/` (a
+  sibling of the docroot, not inside it).
+- `public/` -- everything web-visible. Its **contents** go directly into
+  the docroot (e.g. `/home1/cpaneluser/yourdomain.com/`), not the
+  `public/` folder itself.
+
+The initial upload can be done via cPanel's File Manager or FTP, matching
+the layout above -- but every deploy after that is handled by cPanel's
+**Git Version Control** feature instead (see the bottom of this doc),
+which copies files into exactly this layout automatically via
+`.cpanel.yml`.
 
 If your hosting plan only gives you one web-facing directory (some
-restrictive addon-domain setups), you can instead upload `app/` inside
-`public_html/app/` and add a `.htaccess` with `Require all denied` in
+restrictive addon-domain setups), you can instead put `app/` inside the
+docroot as `app/` and add a `.htaccess` with `Require all denied` in
 that folder to block direct web access -- but the sibling-directory
 layout above is safer and is what this app assumes by default (all PHP
 files use `__DIR__ . '/../app/...'` relative paths, so `app/` just needs
@@ -193,26 +199,43 @@ wget -q -O /dev/null "https://yoursite.com/cron_saleshandy_sync.php?token=YOUR_C
 This syncs every campaign that has a Saleshandy sequence linked, as a
 backstop alongside the manual "Refresh statuses" button.
 
-## Automated deploys via GitHub Actions
+## Deploying updates via cPanel Git Version Control
 
-`.github/workflows/deploy.yml` rsyncs this repo to the server over SSH
-on every push to `claude/sales-data-dashboard-php-vlpgvd` (or via the
-"Run workflow" button for a manual deploy). It handles file sync only --
-steps 1, 2, 4, and 5 above (database, schema, `config.php`, upload folder
-permissions) are still one-time manual steps; the workflow deliberately
-excludes `app/config/config.php` and `public/uploads/` from sync so it
-never overwrites your real credentials or deletes real uploaded/import
-data.
+This is the actual deploy path for this app -- steps 1, 2, 4, and 5 above
+(database, schema, `config.php`, upload folder permissions) are still
+one-time manual steps, but every code change after that is deployed
+through cPanel's **Git™ Version Control** feature, which clones this repo
+server-side and runs `.cpanel.yml` on deploy:
 
-Before the first automated run, add these under this repo's **Settings
--> Secrets and variables -> Actions -> New repository secret**:
+```yaml
+deployment:
+  tasks:
+    - export DOCROOT=/home1/de2shrnx/data.easi7.in
+    - export APPDIR=/home1/de2shrnx/app
+    - /bin/mkdir -p "$APPDIR"
+    - /bin/cp -R public/. "$DOCROOT"/
+    - /bin/cp -R app/. "$APPDIR"/
+```
 
-| Secret | Value |
-|---|---|
-| `DEPLOY_SSH_PRIVATE_KEY` | A private SSH key (generate a dedicated deploy key rather than reusing a personal one). Add the matching **public** key in cPanel under **SSH Access -> Manage SSH Keys -> Import Key**, then click **Authorize**. |
-| `DEPLOY_SSH_HOST` | The SSH hostname/IP for the account (from cPanel's SSH Access page, or ask your host). |
-| `DEPLOY_SSH_USER` | The cPanel account username (from the deploy path `/home1/de2shrnx/...`, this is `de2shrnx` unless your host differs). |
-| `DEPLOY_SSH_PORT` | Optional -- only needed if your host uses a non-standard SSH port. Defaults to `22`. |
+`config.php` and `public/uploads/` are gitignored, so they simply aren't
+part of the repo checkout `.cpanel.yml` copies from -- they're never
+touched or deleted by a deploy.
 
-If your host doesn't offer SSH access on your plan, use the manual
-File Manager/FTP steps above instead and skip this section.
+**One-time setup** (cPanel -> **Git™ Version Control** -> **Create**):
+point it at this GitHub repo and the `claude/sales-data-dashboard-php-vlpgvd`
+branch, with a repository path outside both the docroot and `app/` (e.g.
+`/home1/de2shrnx/repositories/data`) -- this clone is just a staging
+copy `.cpanel.yml` deploys *from*, not what's actually served.
+
+**Every time there's a new commit to deploy** (cPanel -> **Git Version
+Control** -> **Manage** for this repo -> **Pull or Deploy** tab):
+1. **Update from Remote** -- pulls the latest commits from GitHub into
+   cPanel's clone. This does *not* touch the live site by itself.
+2. **Deploy HEAD Commit** -- runs the `.cpanel.yml` tasks above, copying
+   files into the docroot and `app/`. This is the step that actually
+   updates the live site.
+
+Both steps are manual and must be repeated after every push -- there's
+no webhook wired up for automatic deploy-on-push. If the live site seems
+to be running old code after a push, this is almost always why: check
+whether both steps were run since the last commit you expect to see live.
