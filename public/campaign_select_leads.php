@@ -45,6 +45,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
 
     $selectMode = $_POST['select_mode'] ?? 'wave_auto';
 
+    // "2 in "DM-DT-ESI-US-01", 1 in "Persona Test Campaign"" -- so a skip
+    // is never just a bare count, the admin can see exactly where each
+    // account's other persona is already pending.
+    $describePendingElsewhere = static function (array $campaignCounts): string {
+        $parts = [];
+        foreach ($campaignCounts as $campaignName => $count) {
+            $parts[] = "{$count} in \"{$campaignName}\"";
+        }
+        return implode(', ', $parts);
+    };
+
     if ($selectMode === 'all') {
         $filtered = WaveAssigner::filterEligibleForCampaign(db(), $leadIds, $campaignId);
         $insert = db()->prepare('INSERT IGNORE INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by) VALUES (?, ?, ?)');
@@ -70,6 +81,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         if ($filtered['already_elsewhere_count'] > 0) {
             $message .= " {$filtered['already_elsewhere_count']} skipped (already assigned to a different campaign -- a lead can only belong to one).";
         }
+        if ($filtered['pending_elsewhere_count'] > 0) {
+            $message .= " {$filtered['pending_elsewhere_count']} skipped (their account already has a persona pending delivery in another campaign: "
+                . $describePendingElsewhere($filtered['pending_elsewhere_campaigns']) . ').';
+        }
     } else {
         if ($selectMode === 'wave_manual') {
             $titlePriority = array_values(array_filter(array_map('trim', $_POST['allowed_titles'] ?? [])));
@@ -90,6 +105,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         }
         if ($stats['already_elsewhere_skipped'] > 0) {
             $message .= " {$stats['already_elsewhere_skipped']} skipped (already assigned to a different campaign -- a lead can only belong to one).";
+        }
+        if ($stats['pending_elsewhere_skipped'] > 0) {
+            $message .= " {$stats['pending_elsewhere_skipped']} skipped (their account already has a persona pending delivery in another campaign: "
+                . $describePendingElsewhere($stats['pending_elsewhere_campaigns']) . ').';
         }
         if ($stats['already_in_campaign'] > 0) {
             $message .= " {$stats['already_in_campaign']} were already in this campaign.";

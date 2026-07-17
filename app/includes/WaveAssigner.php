@@ -26,23 +26,58 @@ class WaveAssigner
     ];
 
     /**
+     * SQL fragment (for a `lead_campaign_assignments` row aliased `a2`)
+     * matching an assignment that's still "pending" in the sense used by
+     * pendingElsewhereCampaigns()/filterEligibleForCampaign() below: sent
+     * to (or earmarked for) a domain, with no confirmation yet that it
+     * went out without bouncing.
+     *
+     * Written as the *negation* of "confirmed resolved" rather than
+     * enumerating waiting-states directly, because wave_status/bounce_status
+     * default to ('active','pending') on every row regardless of whether it
+     * ever went through the wave-1 mechanic -- checking for that default
+     * can't distinguish "genuinely still waiting" from "never touched by
+     * wave-1 at all, but delivery_status already says otherwise" (a row
+     * pushed straight to Saleshandy without a wave-1 leader/held pairing
+     * keeps that default forever). Resolved means: wave-1 explicitly
+     * marked "Delivered", or a Saleshandy-synced delivery_status of
+     * Active/Replied/Paused (sent, and not currently flagged as a
+     * bounce). A confirmed bounce isn't handled here at all: it already
+     * suppresses the whole domain via suppressed_domains, which
+     * filterEligibleForCampaign() checks first.
+     */
+    private const PENDING_ASSIGNMENT_SQL = "(
+        a2.bounce_status != 'delivered'
+        AND (a2.delivery_status IS NULL OR a2.delivery_status NOT IN ('Active', 'Replied', 'Paused'))
+    )";
+
+    /**
      * A lead may only ever belong to one campaign -- once its email is
      * assigned anywhere, it's excluded from being assigned to a
      * *different* campaign (re-selecting it into the same campaign it's
-     * already in is unaffected, that's just a no-op INSERT IGNORE). Combined
-     * here with the existing suppressed-domain check since every
-     * assignment entry point needs both: if even one persona at a domain
-     * bounced (per the configured bounce-type severity, see
-     * bounceTypeSuppresses()), no persona at that domain can be added to
-     * any campaign; otherwise, any not-yet-assigned persona there remains
-     * free to be assigned to one (and only one) campaign.
+     * already in is unaffected, that's just a no-op INSERT IGNORE).
+     *
+     * Combined here with two account-wide checks every assignment entry
+     * point needs: if even one persona at a domain bounced (per the
+     * configured bounce-type severity, see bounceTypeSuppresses()), no
+     * persona at that domain can be added to any campaign; and if a
+     * *different* persona at the same domain is currently pending in
+     * another campaign (assigned/pushed there but not yet confirmed sent
+     * without bouncing -- see PENDING_ASSIGNMENT_SQL), this lead is held
+     * back too, so the same account never has two simultaneous,
+     * unconfirmed sends in flight across different campaigns. Once that
+     * other persona's send is confirmed (or it's marked bounced, which
+     * suppresses the domain instead), this lead becomes assignable again.
      *
      * @param int[] $leadIds
-     * @return array{eligible:int[], suppressed_count:int, already_elsewhere_count:int}
+     * @return array{eligible:int[], suppressed_count:int, already_elsewhere_count:int, pending_elsewhere_count:int, pending_elsewhere_campaigns:array<string,int>}
      */
     public static function filterEligibleForCampaign(PDO $db, array $leadIds, int $campaignId): array
     {
-        $stats = ['eligible' => [], 'suppressed_count' => 0, 'already_elsewhere_count' => 0];
+        $stats = [
+            'eligible' => [], 'suppressed_count' => 0, 'already_elsewhere_count' => 0,
+            'pending_elsewhere_count' => 0, 'pending_elsewhere_campaigns' => [],
+        ];
         if (!$leadIds) {
             return $stats;
         }
@@ -75,20 +110,89 @@ class WaveAssigner
         $elsewhereIds = array_map('intval', $elsewhereStmt->fetchAll(PDO::FETCH_COLUMN));
         $stats['already_elsewhere_count'] = count($elsewhereIds);
 
-        $stats['eligible'] = array_values(array_diff($remaining, $elsewhereIds));
+        $remaining2 = array_values(array_diff($remaining, $elsewhereIds));
+        if (!$remaining2) {
+            return $stats;
+        }
+
+        $pending = self::pendingElsewhereCampaigns($db, $remaining2, $campaignId);
+        $stats['pending_elsewhere_count'] = count($pending);
+        foreach ($pending as $campaignNames) {
+            foreach ($campaignNames as $campaignName) {
+                $stats['pending_elsewhere_campaigns'][$campaignName] = ($stats['pending_elsewhere_campaigns'][$campaignName] ?? 0) + 1;
+            }
+        }
+
+        $stats['eligible'] = array_values(array_diff($remaining2, array_keys($pending)));
         return $stats;
+    }
+
+    /**
+     * For each of the given lead ids, the distinct campaign name(s) a
+     * *different* persona at the same email domain is currently pending
+     * in (per PENDING_ASSIGNMENT_SQL), excluding $campaignId itself.
+     * Leads with no such match are simply absent from the result.
+     *
+     * @param int[] $leadIds
+     * @return array<int,array<int,string>> lead id => campaign names blocking it
+     */
+    public static function pendingElsewhereCampaigns(PDO $db, array $leadIds, int $campaignId): array
+    {
+        if (!$leadIds) {
+            return [];
+        }
+        $leadIds = array_values(array_unique(array_map('intval', $leadIds)));
+
+        $placeholders = implode(',', array_fill(0, count($leadIds), '?'));
+        $leadRowsStmt = $db->prepare("SELECT id, email FROM leads WHERE id IN ({$placeholders})");
+        $leadRowsStmt->execute($leadIds);
+        $domainByLead = [];
+        foreach ($leadRowsStmt->fetchAll() as $row) {
+            $domainByLead[(int) $row['id']] = strtolower(substr(strrchr($row['email'], '@'), 1));
+        }
+        $domains = array_values(array_unique($domainByLead));
+        if (!$domains) {
+            return [];
+        }
+
+        $dPlaceholders = implode(',', array_fill(0, count($domains), '?'));
+        $pendingStmt = $db->prepare(
+            "SELECT SUBSTRING_INDEX(l2.email, '@', -1) AS domain, c.name AS campaign_name
+               FROM lead_campaign_assignments a2
+               JOIN leads l2 ON l2.id = a2.lead_id
+               JOIN campaigns c ON c.id = a2.campaign_id
+              WHERE SUBSTRING_INDEX(l2.email, '@', -1) IN ({$dPlaceholders})
+                AND a2.campaign_id != ?
+                AND l2.deleted_at IS NULL
+                AND " . self::PENDING_ASSIGNMENT_SQL
+        );
+        $pendingStmt->execute(array_merge($domains, [$campaignId]));
+
+        $campaignsByDomain = [];
+        foreach ($pendingStmt->fetchAll() as $row) {
+            $campaignsByDomain[$row['domain']][$row['campaign_name']] = true;
+        }
+
+        $result = [];
+        foreach ($domainByLead as $leadId => $domain) {
+            if (isset($campaignsByDomain[$domain])) {
+                $result[$leadId] = array_keys($campaignsByDomain[$domain]);
+            }
+        }
+        return $result;
     }
 
     /**
      * @param int[] $leadIds
      * @param string[] $titlePriority ordered, case-insensitive substring keywords (e.g. ["VP Engineering", "CTO"])
-     * @return array{leaders:int, held:int, suppressed_skipped:int, already_elsewhere_skipped:int, already_in_campaign:int, domains:int}
+     * @return array{leaders:int, held:int, suppressed_skipped:int, already_elsewhere_skipped:int, pending_elsewhere_skipped:int, pending_elsewhere_campaigns:array<string,int>, already_in_campaign:int, domains:int}
      */
     public static function assign(PDO $db, array $leadIds, int $campaignId, int $userId, array $titlePriority): array
     {
         $stats = [
             'leaders' => 0, 'held' => 0, 'suppressed_skipped' => 0,
-            'already_elsewhere_skipped' => 0, 'already_in_campaign' => 0, 'domains' => 0,
+            'already_elsewhere_skipped' => 0, 'pending_elsewhere_skipped' => 0, 'pending_elsewhere_campaigns' => [],
+            'already_in_campaign' => 0, 'domains' => 0,
         ];
         if (!$leadIds) {
             return $stats;
@@ -97,6 +201,8 @@ class WaveAssigner
         $filtered = self::filterEligibleForCampaign($db, $leadIds, $campaignId);
         $stats['suppressed_skipped'] = $filtered['suppressed_count'];
         $stats['already_elsewhere_skipped'] = $filtered['already_elsewhere_count'];
+        $stats['pending_elsewhere_skipped'] = $filtered['pending_elsewhere_count'];
+        $stats['pending_elsewhere_campaigns'] = $filtered['pending_elsewhere_campaigns'];
         if (!$filtered['eligible']) {
             return $stats;
         }

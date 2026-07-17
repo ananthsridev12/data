@@ -161,6 +161,9 @@ $renderCell = static function (string $key, array $lead) {
               <?php if ($lead['suppressed_reason'] !== null): ?>
                 <span class="badge bg-danger" title="<?= e($lead['suppressed_reason']) ?>">Suppressed</span>
               <?php endif; ?>
+              <?php if ($lead['pending_elsewhere_campaigns']): ?>
+                <span class="badge bg-warning text-dark" title="Another persona at this account is pending delivery in: <?= e($lead['pending_elsewhere_campaigns']) ?> -- can't be added to a new campaign until that resolves.">Pending elsewhere</span>
+              <?php endif; ?>
             </td>
             <?php break;
     }

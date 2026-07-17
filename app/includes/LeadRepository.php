@@ -42,7 +42,20 @@ class LeadRepository
                      JOIN campaigns c ON c.id = a.campaign_id
                     WHERE a.lead_id = l.id) AS used_in_campaigns,
                   (SELECT sd.reason FROM suppressed_domains sd
-                    WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)) AS suppressed_reason
+                    WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)) AS suppressed_reason,
+                  -- Which campaign(s) a *different* persona at this lead's domain is
+                  -- currently pending in -- kept in sync by hand with
+                  -- WaveAssigner::PENDING_ASSIGNMENT_SQL, since that constant isn't
+                  -- reachable from a plain SQL string here.
+                  (SELECT GROUP_CONCAT(DISTINCT c2.name SEPARATOR ', ')
+                     FROM lead_campaign_assignments a2
+                     JOIN leads l2 ON l2.id = a2.lead_id
+                     JOIN campaigns c2 ON c2.id = a2.campaign_id
+                    WHERE l2.deleted_at IS NULL AND a2.lead_id != l.id
+                      AND SUBSTRING_INDEX(l2.email, '@', -1) = SUBSTRING_INDEX(l.email, '@', -1)
+                      AND a2.bounce_status != 'delivered'
+                      AND (a2.delivery_status IS NULL OR a2.delivery_status NOT IN ('Active', 'Replied', 'Paused'))
+                     ) AS pending_elsewhere_campaigns
                 FROM leads l
                 LEFT JOIN verticals v ON v.id = l.vertical_id
                 LEFT JOIN services s ON s.id = l.service_id

@@ -139,9 +139,9 @@ Use cPanel's built-in **Backup Wizard** (or your host's equivalent) to
 schedule regular database + file backups, since this setup has no
 SSH/cron access for scripted backups.
 
-## Campaign assignment rules (one campaign per lead, bounce suppression)
+## Campaign assignment rules (one campaign per lead, bounce suppression, one pending send per account)
 
-Two rules govern whether a lead can be added to a campaign, enforced
+Three rules govern whether a lead can be added to a campaign, enforced
 everywhere a new assignment is created (Add leads to campaign, the
 CSV/history import's auto-assign-to-campaign option, and the domain
 suppression flows below) -- `WaveAssigner::filterEligibleForCampaign()` is
@@ -170,6 +170,23 @@ the shared implementation:
    bounce type left unchecked there still gets recorded on that one lead's
    assignment -- it just doesn't block the rest of the account. See
    `WaveAssigner::bounceTypeSuppresses()`.
+3. **An account can only have one unresolved send in flight at a time,
+   across all campaigns.** If persona A at an account is already
+   assigned/pushed in Campaign 1 and its outcome isn't known yet, persona
+   B at the same account can't be added to Campaign 2 until A's send is
+   confirmed -- this closes the gap where rule 2's domain suppression
+   only kicks in *after* a bounce is confirmed, so two contacts at the
+   same account could otherwise go out simultaneously in different
+   campaigns and both bounce. "Confirmed" means wave-1 explicitly marked
+   **Delivered**, or a Saleshandy-synced Delivery Status of
+   Active/Replied/Paused (sent, and not currently flagged as a bounce) --
+   at that point B becomes assignable again. A confirmed bounce doesn't
+   go through this rule at all -- it's already the stronger, permanent
+   block from rule 2. Visible two ways: the Dashboard shows a **Pending
+   elsewhere** badge (hover for which campaign) on any lead whose account
+   has another persona currently in flight, and a skipped selection
+   reports exactly which campaign(s) are holding it up (e.g. "2 in
+   'DM-DT-ESI-US-01'"). See `WaveAssigner::pendingElsewhereCampaigns()`.
 
 On the **Campaign Leads** page, the checkbox list at the bottom has two
 extra actions alongside Mark Imported/Email Sent/Delivery Status:
