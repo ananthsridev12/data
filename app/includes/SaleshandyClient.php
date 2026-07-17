@@ -220,7 +220,15 @@ class SaleshandyClient
 
         $updateProspectId = $db->prepare('UPDATE leads SET saleshandy_prospect_id = ? WHERE id = ?');
 
-        foreach ($eligible as $lead) {
+        foreach ($eligible as $i => $lead) {
+            if ($i > 0) {
+                // A light gap between leads (on top of request()'s
+                // retry-with-backoff) so a big batch doesn't front-load a
+                // burst of calls and trip Saleshandy's rate limit in the
+                // first place -- request() still recovers if it does.
+                usleep(150_000);
+            }
+
             $prospectId = $lead['saleshandy_prospect_id'];
             if (!$prospectId) {
                 try {
@@ -593,10 +601,38 @@ class SaleshandyClient
     }
 
     /**
+     * Retries a request up to 3 extra times (1s, 2s, 4s backoff) if
+     * Saleshandy responds with "Rate Limit exceeded" (error_code 4000,
+     * seen in practice when a bulk action like syncFieldsToSaleshandy()
+     * fires many requests back-to-back) -- Saleshandy's own CLI doesn't
+     * document or handle a rate limit at all, so these numbers are a
+     * conservative guess, not a confirmed spec. Any other error type
+     * still fails immediately, unretried.
+     *
      * @param array<string,mixed> $params query params (GET) or JSON body (POST/PUT)
      * @return array<string,mixed>
      */
     private function request(string $method, string $path, array $params = []): array
+    {
+        $delayMicroseconds = 1_000_000;
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                return $this->doRequest($method, $path, $params);
+            } catch (SaleshandyRateLimitException $ex) {
+                if ($attempt >= 4) {
+                    throw $ex;
+                }
+                usleep($delayMicroseconds);
+                $delayMicroseconds *= 2;
+            }
+        }
+    }
+
+    /**
+     * @param array<string,mixed> $params query params (GET) or JSON body (POST/PUT)
+     * @return array<string,mixed>
+     */
+    private function doRequest(string $method, string $path, array $params = []): array
     {
         $url = self::BASE_URL . $path;
         $ch = curl_init();
@@ -655,7 +691,11 @@ class SaleshandyClient
                 $code = null;
             }
             $suffix = $code !== null ? " (code {$code})" : '';
-            throw new SaleshandyApiException("Saleshandy API error ({$httpCode}){$suffix}: {$message}");
+            $fullMessage = "Saleshandy API error ({$httpCode}){$suffix}: {$message}";
+            if ((int) $code === 4000 || stripos((string) $message, 'rate limit') !== false) {
+                throw new SaleshandyRateLimitException($fullMessage);
+            }
+            throw new SaleshandyApiException($fullMessage);
         }
 
         return is_array($decoded) ? $decoded : [];
@@ -663,5 +703,15 @@ class SaleshandyClient
 }
 
 class SaleshandyApiException extends RuntimeException
+{
+}
+
+/**
+ * A SaleshandyApiException specifically for a rate-limited response --
+ * caught and retried internally by request(); only escapes to callers
+ * (still as a SaleshandyApiException, so existing catch blocks don't need
+ * to change) if every retry attempt is also rate-limited.
+ */
+class SaleshandyRateLimitException extends SaleshandyApiException
 {
 }
