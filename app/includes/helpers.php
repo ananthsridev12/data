@@ -59,6 +59,7 @@ function render_header(string $title): void
         <?php endif; ?>
       </ul>
       <span class="navbar-text me-3"><?= e($user['name']) ?> (<?= e($user['role']) ?>)</span>
+      <a class="btn btn-outline-light btn-sm me-2" href="change_password.php">Change password</a>
       <a class="btn btn-outline-light btn-sm" href="logout.php">Log out</a>
     </div>
   </div>

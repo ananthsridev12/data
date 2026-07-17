@@ -33,8 +33,9 @@ and import, in order:
 9. `sql/009_delivery_status.sql`
 10. `sql/010_relax_required_fields.sql`
 11. `sql/011_saleshandy_integration.sql`
+12. `sql/012_user_invites.sql`
 
-(If you're setting up a brand-new site, import all eleven in order. If
+(If you're setting up a brand-new site, import all twelve in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -108,10 +109,8 @@ that redirect.
 ## 8. Smoke test
 
 1. Visit your site -- you should land on the login page.
-2. Log in with the seeded admin account and change the password
-   (via **Users** -> deactivate/recreate, or add a "change password" flow
-   later -- there isn't a self-service one yet, so for now recreate the
-   admin user with a new password and deactivate the old one).
+2. Log in with the seeded admin account and change the password via
+   **Change password** in the top nav.
 3. Go to **Import**, upload a small sample file (a handful of rows),
    confirm the column mapping, and watch it process on **Import
    History**.

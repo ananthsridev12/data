@@ -54,18 +54,53 @@ function attempt_login(string $email, string $password): ?array
     $stmt->execute([trim(strtolower($email))]);
     $user = $stmt->fetch();
 
-    if (!$user || !$user['is_active'] || !password_verify($password, $user['password_hash'])) {
+    // password_hash is NULL for a pending invite (see signup.php) -- such
+    // a user simply can't log in yet, same as any other wrong-credentials case.
+    if (!$user || !$user['is_active'] || $user['password_hash'] === null || !password_verify($password, $user['password_hash'])) {
         return null;
     }
 
-    auth_boot();
-    session_regenerate_id(true);
-    $_SESSION['user_id'] = $user['id'];
-
+    session_login($user['id']);
     db()->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?')->execute([$user['id']]);
 
     unset($user['password_hash']);
     return $user;
+}
+
+function session_login(int $userId): void
+{
+    auth_boot();
+    session_regenerate_id(true);
+    $_SESSION['user_id'] = $userId;
+}
+
+/**
+ * @return ?array{id:int,name:string,email:string} the pending user, or null if the token is unknown/expired/already used
+ */
+function find_user_by_invite_token(string $token): ?array
+{
+    if ($token === '') {
+        return null;
+    }
+    $stmt = db()->prepare(
+        'SELECT id, name, email FROM users
+          WHERE invite_token = ? AND invite_expires_at > NOW() AND password_hash IS NULL LIMIT 1'
+    );
+    $stmt->execute([$token]);
+    $user = $stmt->fetch();
+    return $user ?: null;
+}
+
+/**
+ * Sets a pending invitee's password, consumes the invite token, and logs
+ * them in.
+ */
+function complete_signup(int $userId, string $password): void
+{
+    db()->prepare('UPDATE users SET password_hash = ?, invite_token = NULL, invite_expires_at = NULL WHERE id = ?')
+        ->execute([password_hash($password, PASSWORD_DEFAULT), $userId]);
+    session_login($userId);
+    db()->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?')->execute([$userId]);
 }
 
 function logout(): void
