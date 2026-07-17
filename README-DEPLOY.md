@@ -35,8 +35,9 @@ and import, in order:
 11. `sql/011_saleshandy_integration.sql`
 12. `sql/012_user_invites.sql`
 13. `sql/013_pull_from_saleshandy.sql`
+14. `sql/014_saleshandy_sync_tracking.sql`
 
-(If you're setting up a brand-new site, import all thirteen in order. If
+(If you're setting up a brand-new site, import all fourteen in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-

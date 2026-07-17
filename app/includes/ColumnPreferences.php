@@ -35,6 +35,8 @@ class ColumnPreferences
             'email_sent' => 'Email Sent',
             'email_date' => 'Email Date',
             'delivery_status' => 'Delivery Status',
+            'saleshandy_step' => 'Saleshandy Step',
+            'saleshandy_synced' => 'Last Synced',
         ],
     ];
 

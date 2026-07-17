@@ -63,14 +63,18 @@ render_header('Campaign leads');
   <a href="column_settings.php?page=campaign_leads&return_to=<?= urlencode('campaign_leads.php?campaign_id=' . $campaignId) ?>">Manage columns</a>
 </p>
 
-<?php if ($campaign['saleshandy_sequence_id'] && $campaign['saleshandy_step_id']): ?>
+<?php if ($campaign['saleshandy_sequence_id']): ?>
 <div class="card mb-4">
   <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+    <?php if ($campaign['saleshandy_step_id']): ?>
     <form method="post" action="campaign_saleshandy_push.php" onsubmit="return confirm('Push currently-eligible leads for this campaign to Saleshandy?');">
       <?= csrf_field() ?>
       <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
       <button type="submit" class="btn btn-sm btn-primary">Push to Saleshandy</button>
     </form>
+    <?php else: ?>
+      <span class="text-muted small">Push needs a step chosen too (<a href="campaign_saleshandy_settings.php?campaign_id=<?= (int) $campaignId ?>">Configure</a>) -- Refresh/Import below only need the sequence.</span>
+    <?php endif; ?>
     <form method="post" action="campaign_saleshandy_sync.php">
       <?= csrf_field() ?>
       <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
@@ -203,6 +207,12 @@ render_header('Campaign leads');
                   <span class="text-muted small">--</span>
                 <?php endif; ?>
               </td>
+              <?php break;
+          case 'saleshandy_step': ?>
+              <td><?= $a['saleshandy_current_step'] !== null ? 'Step ' . (int) $a['saleshandy_current_step'] : '' ?></td>
+              <?php break;
+          case 'saleshandy_synced': ?>
+              <td class="small text-muted"><?= e($a['saleshandy_synced_at'] ?? '') ?></td>
               <?php break;
       }
   };

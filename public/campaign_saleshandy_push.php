@@ -102,7 +102,7 @@ $groups = TagRepository::groupLeadsByTagSet(db(), array_keys($leadsById));
 
 $pushedCount = 0;
 $errors = [];
-$updateStatus = db()->prepare('UPDATE lead_campaign_assignments SET status = \'pushed\' WHERE id = ?');
+$updateStatus = db()->prepare("UPDATE lead_campaign_assignments SET status = 'pushed', saleshandy_synced_at = NOW() WHERE id = ?");
 
 foreach ($groups as $group) {
     $prospectList = array_map(static fn(int $leadId) => $buildProspect($leadsById[$leadId]), $group['lead_ids']);
