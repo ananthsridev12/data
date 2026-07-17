@@ -176,8 +176,12 @@ everything else in the app works without it.
    existing Saleshandy tags, so leads can be tagged from a known list
    during import or editing (new tags typed in here are created on
    Saleshandy's side automatically the first time they're used in a push).
-5. On **Campaigns**, click **Configure** next to a campaign to link it to
-   a Saleshandy sequence and step.
+5. On **Campaigns**, click **Configure** next to a campaign and pick a
+   Saleshandy sequence -- the step is picked automatically (the
+   sequence's first step, so new leads always start at the beginning);
+   change it under "Change step" only if a campaign genuinely needs to
+   enter partway through. Refresh/Import work as soon as just the
+   sequence is linked; only Push needs a step.
 6. On that campaign's **Campaign Leads** page:
    - **Push to Saleshandy** sends only leads currently eligible under the
      existing wave-1 domain-safety gate.
@@ -206,8 +210,17 @@ hits (e.g. every few hours):
 ```
 wget -q -O /dev/null "https://yoursite.com/cron_saleshandy_sync.php?token=YOUR_CRON_TOKEN"
 ```
-This syncs every campaign that has a Saleshandy sequence linked, as a
-backstop alongside the manual "Refresh statuses" button.
+This runs both directions -- status sync (like "Refresh statuses") and
+pulling in new prospects (like "Import from Saleshandy") -- for every
+campaign that has a Saleshandy sequence linked, as an automatic backstop
+alongside the two manual buttons.
+
+**Note on "Import from Saleshandy" coverage:** Saleshandy's API has no
+endpoint that lists every prospect enrolled in a sequence -- only
+prospects with at least one send/activity event. A prospect still queued
+behind an earlier step (not yet emailed) won't show up here yet, so the
+count pulled in can legitimately be lower than Saleshandy's own prospect
+count for the sequence until those prospects are actually reached.
 
 ## Deploying updates via cPanel Git Version Control
 

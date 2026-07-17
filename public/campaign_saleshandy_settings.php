@@ -25,9 +25,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($sequenceId === '') {
             flash_set('danger', 'Please choose a sequence.');
         } else {
-            db()->prepare('UPDATE campaigns SET saleshandy_sequence_id = ?, saleshandy_step_id = NULL WHERE id = ?')
-                ->execute([$sequenceId, $campaignId]);
-            flash_set('success', "Linked to Saleshandy sequence \"{$sequenceName}\" -- now choose a step.");
+            // New leads pushed to this campaign should always enter the
+            // sequence at the beginning, not partway through -- so the
+            // step is auto-picked as the lowest step number rather than
+            // asking. "Change step" further down can override this if a
+            // campaign genuinely needs to start later in the sequence.
+            $stepId = null;
+            try {
+                $config = require __DIR__ . '/../app/config/config.php';
+                $client = SaleshandyClient::fromConfig($config);
+                $steps = $client->listSequenceSteps($sequenceId);
+                usort($steps, static fn(array $a, array $b) => ($a['number'] ?? 0) <=> ($b['number'] ?? 0));
+                $stepId = $steps[0]['id'] ?? null;
+            } catch (SaleshandyApiException $ex) {
+                // Sequence link still saves below even if the step lookup fails --
+                // Refresh/Import don't need a step, only Push does.
+            }
+
+            db()->prepare('UPDATE campaigns SET saleshandy_sequence_id = ?, saleshandy_step_id = ? WHERE id = ?')
+                ->execute([$sequenceId, $stepId, $campaignId]);
+            flash_set(
+                'success',
+                $stepId
+                    ? "Linked to Saleshandy sequence \"{$sequenceName}\" -- new pushes will start at step 1."
+                    : "Linked to Saleshandy sequence \"{$sequenceName}\", but couldn't look up its steps -- Refresh/Import will work; use \"Change step\" below before using Push."
+            );
         }
     } elseif ($action === 'set_step') {
         $stepId = trim((string) ($_POST['step_id'] ?? ''));
@@ -55,8 +77,9 @@ try {
     $client = SaleshandyClient::fromConfig($config);
     if (!$campaign['saleshandy_sequence_id']) {
         $sequences = $client->listSequences();
-    } elseif (!$campaign['saleshandy_step_id']) {
+    } else {
         $steps = $client->listSequenceSteps($campaign['saleshandy_sequence_id']);
+        usort($steps, static fn(array $a, array $b) => ($a['number'] ?? 0) <=> ($b['number'] ?? 0));
     }
 } catch (SaleshandyApiException $ex) {
     $apiError = $ex->getMessage();
@@ -76,6 +99,9 @@ render_header('Saleshandy settings');
     <p>
       Sequence: <strong><?= e($campaign['saleshandy_sequence_id'] ?? 'not linked') ?></strong><br>
       Step: <strong><?= e($campaign['saleshandy_step_id'] ?? 'not chosen') ?></strong>
+      <?php if ($campaign['saleshandy_sequence_id']): ?>
+        <span class="text-muted small">-- auto-picked as the sequence's first step; new leads pushed here always start at the beginning.</span>
+      <?php endif; ?>
     </p>
     <?php if ($campaign['saleshandy_sequence_id']): ?>
       <form method="post" action="campaign_saleshandy_settings.php" onsubmit="return confirm('Unlink this campaign from Saleshandy?');">
@@ -107,10 +133,11 @@ render_header('Saleshandy settings');
     </form>
   </div>
 </div>
-<?php elseif (!$apiError && $campaign['saleshandy_sequence_id'] && !$campaign['saleshandy_step_id'] && $steps): ?>
+<?php elseif (!$apiError && $campaign['saleshandy_sequence_id'] && $steps): ?>
 <div class="card mb-3">
-  <div class="card-header">Step 2: choose a step</div>
+  <div class="card-header">Change step (optional)</div>
   <div class="card-body">
+    <p class="text-muted small">Only needed if this campaign should push new leads into the sequence somewhere other than the first step -- Refresh and Import don't use this at all.</p>
     <form method="post" action="campaign_saleshandy_settings.php" class="d-flex gap-2 align-items-center">
       <?= csrf_field() ?>
       <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
@@ -118,7 +145,7 @@ render_header('Saleshandy settings');
       <select name="step_id" class="form-select form-select-sm" style="max-width: 360px;" required>
         <option value="">-- choose a step --</option>
         <?php foreach ($steps as $s): ?>
-          <option value="<?= e($s['id']) ?>">Step <?= (int) ($s['number'] ?? 0) ?> -- <?= e($s['type'] ?? '') ?><?= !empty($s['status']) ? ' (' . e($s['status']) . ')' : '' ?></option>
+          <option value="<?= e($s['id']) ?>" <?= $campaign['saleshandy_step_id'] === $s['id'] ? 'selected' : '' ?>>Step <?= (int) ($s['number'] ?? 0) ?> -- <?= e($s['type'] ?? '') ?><?= !empty($s['status']) ? ' (' . e($s['status']) . ')' : '' ?></option>
         <?php endforeach; ?>
       </select>
       <button type="submit" class="btn btn-primary btn-sm">Save</button>

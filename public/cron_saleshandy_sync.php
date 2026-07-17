@@ -1,8 +1,11 @@
 <?php
 /**
- * Scheduled backstop for pulling Saleshandy delivery/reply/bounce activity
- * into every linked campaign -- intended to be hit by a cPanel Cron Job
- * (e.g. `wget -q -O /dev/null "https://yoursite.com/cron_saleshandy_sync.php?token=..."`
+ * Scheduled backstop for both directions of the Saleshandy sync -- pulling
+ * delivery/reply/bounce activity into every linked campaign's already-
+ * assigned leads (syncCampaign) AND pulling in prospects that are enrolled
+ * in Saleshandy but don't exist here yet (pullNewProspects) -- intended to
+ * be hit by a cPanel Cron Job (e.g.
+ * `wget -q -O /dev/null "https://yoursite.com/cron_saleshandy_sync.php?token=..."`
  * every few hours), not a logged-in browser, so it authenticates via a
  * shared-secret token instead of a session. See README-DEPLOY.md.
  */
@@ -45,8 +48,10 @@ if (!$campaigns) {
 
 foreach ($campaigns as $campaign) {
     try {
-        $stats = $client->syncCampaign(db(), $campaign, $systemUserId);
-        echo "\"{$campaign['name']}\": {$stats['matched']} updated ({$stats['bounced']} bounced, {$stats['replied']} replied)\n";
+        $syncStats = $client->syncCampaign(db(), $campaign, $systemUserId);
+        $pullStats = $client->pullNewProspects(db(), $campaign, $systemUserId);
+        echo "\"{$campaign['name']}\": {$syncStats['matched']} updated ({$syncStats['bounced']} bounced, {$syncStats['replied']} replied); "
+            . "{$pullStats['leads_created']} new lead(s), {$pullStats['assignments_created']} new assignment(s) pulled in\n";
     } catch (SaleshandyApiException $ex) {
         echo "\"{$campaign['name']}\": FAILED -- {$ex->getMessage()}\n";
     }
