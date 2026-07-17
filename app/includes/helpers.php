@@ -52,6 +52,7 @@ function render_header(string $title): void
         <li class="nav-item"><a class="nav-link" href="tags.php">Tags</a></li>
         <li class="nav-item"><a class="nav-link" href="custom_fields.php">Custom Fields</a></li>
         <li class="nav-item"><a class="nav-link" href="bounce_import.php">Bounces</a></li>
+        <li class="nav-item"><a class="nav-link" href="bounce_settings.php">Bounce Settings</a></li>
         <li class="nav-item"><a class="nav-link" href="saleshandy_field_mapping.php">SH Field Mapping</a></li>
         <li class="nav-item"><a class="nav-link" href="import_campaign_history.php">Backfill History</a></li>
         <li class="nav-item"><a class="nav-link" href="deleted_leads.php">Deleted Leads</a></li>

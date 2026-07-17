@@ -61,6 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $processed = 0;
     $suppressedDomains = [];
+    $notSuppressedCount = 0;
     $cascaded = 0;
     $skipped = 0;
 
@@ -82,7 +83,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             $result = WaveAssigner::suppressByEmail(db(), $email, $admin['id'], 'Bounce report import', $rowBounceType);
-            $suppressedDomains[$result['domain']] = true;
+            if ($result['suppressed']) {
+                $suppressedDomains[$result['domain']] = true;
+            } else {
+                $notSuppressedCount++;
+            }
             $cascaded += $result['cascaded'];
             $processed++;
         }
@@ -93,11 +98,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'cascaded' => $cascaded,
             'skipped' => $skipped,
         ];
-        flash_set(
-            'success',
-            "{$processed} bounced email(s) processed -- " . count($suppressedDomains) . ' domain(s) suppressed, '
-                . "{$cascaded} held lead(s) cascade-suppressed." . ($skipped > 0 ? " {$skipped} row(s) skipped (not a valid email)." : '')
-        );
+        $message = "{$processed} bounced email(s) processed -- " . count($suppressedDomains) . ' domain(s) suppressed, '
+            . "{$cascaded} held lead(s) cascade-suppressed.";
+        if ($notSuppressedCount > 0) {
+            $message .= " {$notSuppressedCount} row(s) had a bounce type configured not to suppress the domain (see Bounce Settings).";
+        }
+        if ($skipped > 0) {
+            $message .= " {$skipped} row(s) skipped (not a valid email).";
+        }
+        flash_set('success', $message);
     }
 
     fclose($handle);
@@ -112,7 +121,7 @@ $suppressedDomains = db()->query(
 render_header('Bounce import');
 ?>
 <h1 class="h4 mb-3">Bounce report import</h1>
-<p class="text-muted">Upload the bounce export from Saleshandy (a CSV with an "Email" column, or a single-column list of bounced addresses). Every email in the file is treated as bounced: its domain is added to the global suppression list, and if it was a pending wave-1 contact, the rest of its held group is suppressed too. If the file has its own "Bounce Type"/"Reason" column, that's used per row; otherwise the dropdown below applies to the whole file.</p>
+<p class="text-muted">Upload the bounce export from Saleshandy (a CSV with an "Email" column, or a single-column list of bounced addresses). Every email in the file is treated as bounced. Which bounce types actually add the domain to the global suppression list (blocking every persona there from any future campaign) is configurable under <a href="bounce_settings.php">Bounce Settings</a> -- by default all of them do. If it was a pending wave-1 contact, the rest of its held group is suppressed too, regardless of that setting. If the file has its own "Bounce Type"/"Reason" column, that's used per row; otherwise the dropdown below applies to the whole file.</p>
 
 <div class="card mb-4">
   <div class="card-body">

@@ -46,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
     $selectMode = $_POST['select_mode'] ?? 'wave_auto';
 
     if ($selectMode === 'all') {
-        $filtered = WaveAssigner::filterSuppressed(db(), $leadIds);
+        $filtered = WaveAssigner::filterEligibleForCampaign(db(), $leadIds, $campaignId);
         $insert = db()->prepare('INSERT IGNORE INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by) VALUES (?, ?, ?)');
         $assigned = 0;
         $already = 0;
@@ -67,6 +67,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         if ($filtered['suppressed_count'] > 0) {
             $message .= " {$filtered['suppressed_count']} skipped (suppressed domain).";
         }
+        if ($filtered['already_elsewhere_count'] > 0) {
+            $message .= " {$filtered['already_elsewhere_count']} skipped (already assigned to a different campaign -- a lead can only belong to one).";
+        }
     } else {
         if ($selectMode === 'wave_manual') {
             $titlePriority = array_values(array_filter(array_map('trim', $_POST['allowed_titles'] ?? [])));
@@ -84,6 +87,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
             . "{$stats['held']} held pending that outcome.";
         if ($stats['suppressed_skipped'] > 0) {
             $message .= " {$stats['suppressed_skipped']} skipped (suppressed domain).";
+        }
+        if ($stats['already_elsewhere_skipped'] > 0) {
+            $message .= " {$stats['already_elsewhere_skipped']} skipped (already assigned to a different campaign -- a lead can only belong to one).";
         }
         if ($stats['already_in_campaign'] > 0) {
             $message .= " {$stats['already_in_campaign']} were already in this campaign.";

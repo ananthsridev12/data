@@ -35,6 +35,7 @@ $candidates = preg_split('/[\s,;]+/', $rawEmails, -1, PREG_SPLIT_NO_EMPTY);
 $processed = 0;
 $invalid = 0;
 $domains = [];
+$notSuppressedCount = 0;
 $cascaded = 0;
 
 foreach ($candidates as $candidate) {
@@ -44,7 +45,11 @@ foreach ($candidates as $candidate) {
         continue;
     }
     $result = WaveAssigner::suppressByEmail(db(), $email, $user['id'], "Campaign bounce: {$campaignName}", $bounceType);
-    $domains[$result['domain']] = true;
+    if ($result['suppressed']) {
+        $domains[$result['domain']] = true;
+    } else {
+        $notSuppressedCount++;
+    }
     $cascaded += $result['cascaded'];
     $processed++;
 }
@@ -60,6 +65,9 @@ if ($processed === 0 && $released['released_leaders'] === 0) {
 $message = "{$processed} bounced email(s) processed -- " . count($domains) . " domain(s) suppressed"
     . ($cascaded > 0 ? ", {$cascaded} held lead(s) cascade-suppressed" : '') . '. '
     . "{$released['released_leaders']} other pending compan(y/ies) released as the next batch ({$released['released_held']} lead(s)).";
+if ($notSuppressedCount > 0) {
+    $message .= " {$notSuppressedCount} entr(y/ies) had a bounce type configured not to suppress the domain (see Bounce Settings).";
+}
 if ($invalid > 0) {
     $message .= " {$invalid} entr(y/ies) were not valid email addresses and were skipped.";
 }

@@ -26,53 +26,85 @@ class WaveAssigner
     ];
 
     /**
+     * A lead may only ever belong to one campaign -- once its email is
+     * assigned anywhere, it's excluded from being assigned to a
+     * *different* campaign (re-selecting it into the same campaign it's
+     * already in is unaffected, that's just a no-op INSERT IGNORE). Combined
+     * here with the existing suppressed-domain check since every
+     * assignment entry point needs both: if even one persona at a domain
+     * bounced (per the configured bounce-type severity, see
+     * bounceTypeSuppresses()), no persona at that domain can be added to
+     * any campaign; otherwise, any not-yet-assigned persona there remains
+     * free to be assigned to one (and only one) campaign.
+     *
      * @param int[] $leadIds
-     * @return array{eligible:int[], suppressed_count:int}
+     * @return array{eligible:int[], suppressed_count:int, already_elsewhere_count:int}
      */
-    public static function filterSuppressed(PDO $db, array $leadIds): array
+    public static function filterEligibleForCampaign(PDO $db, array $leadIds, int $campaignId): array
     {
+        $stats = ['eligible' => [], 'suppressed_count' => 0, 'already_elsewhere_count' => 0];
         if (!$leadIds) {
-            return ['eligible' => [], 'suppressed_count' => 0];
+            return $stats;
         }
+        $leadIds = array_values(array_unique(array_map('intval', $leadIds)));
+
         $placeholders = implode(',', array_fill(0, count($leadIds), '?'));
-        $stmt = $db->prepare(
+        $suppressedStmt = $db->prepare(
             "SELECT l.id FROM leads l
               WHERE l.id IN ({$placeholders})
-                AND NOT EXISTS (
+                AND EXISTS (
                     SELECT 1 FROM suppressed_domains sd
                      WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)
                 )"
         );
-        $stmt->execute($leadIds);
-        $eligible = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
-        return ['eligible' => $eligible, 'suppressed_count' => count($leadIds) - count($eligible)];
+        $suppressedStmt->execute($leadIds);
+        $suppressedIds = array_map('intval', $suppressedStmt->fetchAll(PDO::FETCH_COLUMN));
+        $stats['suppressed_count'] = count($suppressedIds);
+
+        $remaining = array_values(array_diff($leadIds, $suppressedIds));
+        if (!$remaining) {
+            return $stats;
+        }
+
+        $rPlaceholders = implode(',', array_fill(0, count($remaining), '?'));
+        $elsewhereStmt = $db->prepare(
+            "SELECT DISTINCT a.lead_id FROM lead_campaign_assignments a
+              WHERE a.lead_id IN ({$rPlaceholders}) AND a.campaign_id != ?"
+        );
+        $elsewhereStmt->execute(array_merge($remaining, [$campaignId]));
+        $elsewhereIds = array_map('intval', $elsewhereStmt->fetchAll(PDO::FETCH_COLUMN));
+        $stats['already_elsewhere_count'] = count($elsewhereIds);
+
+        $stats['eligible'] = array_values(array_diff($remaining, $elsewhereIds));
+        return $stats;
     }
 
     /**
      * @param int[] $leadIds
      * @param string[] $titlePriority ordered, case-insensitive substring keywords (e.g. ["VP Engineering", "CTO"])
-     * @return array{leaders:int, held:int, suppressed_skipped:int, already_in_campaign:int, domains:int}
+     * @return array{leaders:int, held:int, suppressed_skipped:int, already_elsewhere_skipped:int, already_in_campaign:int, domains:int}
      */
     public static function assign(PDO $db, array $leadIds, int $campaignId, int $userId, array $titlePriority): array
     {
-        $stats = ['leaders' => 0, 'held' => 0, 'suppressed_skipped' => 0, 'already_in_campaign' => 0, 'domains' => 0];
+        $stats = [
+            'leaders' => 0, 'held' => 0, 'suppressed_skipped' => 0,
+            'already_elsewhere_skipped' => 0, 'already_in_campaign' => 0, 'domains' => 0,
+        ];
         if (!$leadIds) {
             return $stats;
         }
 
-        $placeholders = implode(',', array_fill(0, count($leadIds), '?'));
-        $stmt = $db->prepare(
-            "SELECT l.id, l.email, l.title, l.seniority
-               FROM leads l
-              WHERE l.id IN ({$placeholders})
-                AND NOT EXISTS (
-                    SELECT 1 FROM suppressed_domains sd
-                     WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)
-                )"
-        );
-        $stmt->execute($leadIds);
+        $filtered = self::filterEligibleForCampaign($db, $leadIds, $campaignId);
+        $stats['suppressed_skipped'] = $filtered['suppressed_count'];
+        $stats['already_elsewhere_skipped'] = $filtered['already_elsewhere_count'];
+        if (!$filtered['eligible']) {
+            return $stats;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($filtered['eligible']), '?'));
+        $stmt = $db->prepare("SELECT l.id, l.email, l.title, l.seniority FROM leads l WHERE l.id IN ({$placeholders})");
+        $stmt->execute($filtered['eligible']);
         $eligible = $stmt->fetchAll();
-        $stats['suppressed_skipped'] = count($leadIds) - count($eligible);
 
         $byDomain = [];
         foreach ($eligible as $lead) {
@@ -127,11 +159,35 @@ class WaveAssigner
     }
 
     /**
-     * Wave-1 bounced: suppress the held leads under this leader for this
-     * campaign, and add the whole domain to the global suppression list
-     * so it's excluded from every future campaign/import too.
+     * Whether a given bounce type should trigger the global, account-wide
+     * domain suppression (blocking every persona at that domain from ever
+     * being added to any campaign) -- admin-configurable per bounce type
+     * via bounce_settings.php / bounce_type_suppression_settings. An
+     * unspecified or unrecognized bounce type defaults to "suppresses",
+     * matching this app's original (pre-setting) behavior.
      */
-    public static function suppress(PDO $db, int $leaderAssignmentId, int $userId, string $reason = 'Wave-1 bounce', ?string $bounceType = null): int
+    public static function bounceTypeSuppresses(PDO $db, ?string $bounceType): bool
+    {
+        $bounceType = trim((string) $bounceType);
+        if ($bounceType === '') {
+            return true;
+        }
+        $stmt = $db->prepare('SELECT suppresses FROM bounce_type_suppression_settings WHERE bounce_type = ?');
+        $stmt->execute([$bounceType]);
+        $value = $stmt->fetchColumn();
+        return $value === false ? true : (bool) $value;
+    }
+
+    /**
+     * Wave-1 bounced: suppress the held leads under this leader for this
+     * campaign, and -- if this bounce type is configured to (see
+     * bounceTypeSuppresses()) -- add the whole domain to the global
+     * suppression list so it's excluded from every future campaign/import
+     * too.
+     *
+     * @return array{held_suppressed:int, domain_suppressed:bool}
+     */
+    public static function suppress(PDO $db, int $leaderAssignmentId, int $userId, string $reason = 'Wave-1 bounce', ?string $bounceType = null): array
     {
         $leadStmt = $db->prepare(
             'SELECT l.email FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id WHERE a.id = ?'
@@ -139,28 +195,34 @@ class WaveAssigner
         $leadStmt->execute([$leaderAssignmentId]);
         $email = $leadStmt->fetchColumn();
 
-        if ($email) {
+        $domainSuppressed = false;
+        if ($email && self::bounceTypeSuppresses($db, $bounceType)) {
             self::suppressDomainOf($db, $email, $userId, $reason, $bounceType);
+            $domainSuppressed = true;
         }
 
         $db->prepare("UPDATE lead_campaign_assignments SET bounce_status = 'bounced', bounce_type = ? WHERE id = ?")
             ->execute([$bounceType, $leaderAssignmentId]);
         $stmt = $db->prepare("UPDATE lead_campaign_assignments SET wave_status = 'suppressed' WHERE wave_leader_id = ?");
         $stmt->execute([$leaderAssignmentId]);
-        return $stmt->rowCount();
+        return ['held_suppressed' => $stmt->rowCount(), 'domain_suppressed' => $domainSuppressed];
     }
 
     /**
      * Bounce-report import path: given a bounced email address (not
-     * necessarily a wave-1 leader), suppress its domain globally and, if
-     * that email happens to be a pending wave-1 leader in some campaign,
-     * cascade-suppress its held group there too.
+     * necessarily a wave-1 leader), suppress its domain globally -- if
+     * this bounce type is configured to, see bounceTypeSuppresses() -- and,
+     * if that email happens to be a pending wave-1 leader in some
+     * campaign, cascade-suppress its held group there too.
      *
-     * @return array{domain:string, cascaded:int}
+     * @return array{domain:string, cascaded:int, suppressed:bool}
      */
     public static function suppressByEmail(PDO $db, string $email, int $userId, string $reason, ?string $bounceType = null): array
     {
-        $domain = self::suppressDomainOf($db, $email, $userId, $reason, $bounceType);
+        $suppressed = self::bounceTypeSuppresses($db, $bounceType);
+        $domain = $suppressed
+            ? self::suppressDomainOf($db, $email, $userId, $reason, $bounceType)
+            : strtolower(substr(strrchr($email, '@'), 1));
 
         $leaderStmt = $db->prepare(
             "SELECT a.id FROM lead_campaign_assignments a
@@ -179,7 +241,7 @@ class WaveAssigner
             $cascaded += $stmt->rowCount();
         }
 
-        return ['domain' => $domain, 'cascaded' => $cascaded];
+        return ['domain' => $domain, 'cascaded' => $cascaded, 'suppressed' => $suppressed];
     }
 
     /**

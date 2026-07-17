@@ -37,8 +37,9 @@ and import, in order:
 13. `sql/013_pull_from_saleshandy.sql`
 14. `sql/014_saleshandy_sync_tracking.sql`
 15. `sql/015_email_verification.sql`
+16. `sql/016_bounce_suppression_settings.sql`
 
-(If you're setting up a brand-new site, import all fifteen in order. If
+(If you're setting up a brand-new site, import all sixteen in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -136,6 +137,36 @@ Only once this all works should you import your real provider files.
 Use cPanel's built-in **Backup Wizard** (or your host's equivalent) to
 schedule regular database + file backups, since this setup has no
 SSH/cron access for scripted backups.
+
+## Campaign assignment rules (one campaign per lead, bounce suppression)
+
+Two rules govern whether a lead can be added to a campaign, enforced
+everywhere a new assignment is created (Add leads to campaign, the
+CSV/history import's auto-assign-to-campaign option, and the domain
+suppression flows below) -- `WaveAssigner::filterEligibleForCampaign()` is
+the shared implementation:
+
+1. **A lead's email can only ever belong to one campaign.** Once a lead is
+   assigned anywhere, it's excluded from being added to a *different*
+   campaign (re-adding it to the campaign it's already in is a harmless
+   no-op). This means once a persona has been pushed to Saleshandy for
+   Campaign A, it cannot later be added to Campaign B -- but a *different*,
+   not-yet-assigned persona at the same account remains free to be added to
+   one campaign of its own, as long as the account isn't suppressed (below).
+   This doesn't retroactively touch leads that were already in more than
+   one campaign before this rule existed -- it only guards new assignments
+   going forward.
+2. **If any persona at a domain bounces, the whole domain is blocked from
+   every future campaign** -- not just the one that bounced -- via the
+   existing `suppressed_domains` global list. Which bounce types actually
+   trigger this is configurable under **Bounce Settings** (admin nav): each
+   bounce type (Hard Bounce, Soft Bounce, Spam Complaint, Invalid Address,
+   Other, and the Saleshandy/delivery-status bounce values) can be toggled
+   independently, and all default to "suppresses" so nothing changes until
+   you explicitly opt one out (e.g. treating a soft bounce as non-fatal). A
+   bounce type left unchecked there still gets recorded on that one lead's
+   assignment -- it just doesn't block the rest of the account. See
+   `WaveAssigner::bounceTypeSuppresses()`.
 
 ## Notes on the Saleshandy CSV export
 

@@ -196,8 +196,20 @@ class LeadImporter
             'INSERT INTO import_row_errors (import_batch_id, row_num, email, reason, raw_row_json) VALUES (?, ?, ?, ?, ?)'
         );
 
+        // A lead may only ever belong to one campaign, and a suppressed
+        // domain's leads may never be added to any -- so before
+        // auto-assigning an imported row to $assignCampaignId, check it
+        // isn't already assigned elsewhere and its domain isn't
+        // suppressed (same rule WaveAssigner::filterEligibleForCampaign()
+        // applies on the campaign-selection screen).
         $campaignAssignStmt = $assignCampaignId !== null
             ? $db->prepare('INSERT IGNORE INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by) VALUES (?, ?, ?)')
+            : null;
+        $campaignElsewhereCheckStmt = $assignCampaignId !== null
+            ? $db->prepare('SELECT 1 FROM lead_campaign_assignments WHERE lead_id = ? AND campaign_id != ? LIMIT 1')
+            : null;
+        $campaignSuppressedCheckStmt = $assignCampaignId !== null
+            ? $db->prepare("SELECT 1 FROM suppressed_domains WHERE domain = SUBSTRING_INDEX(?, '@', -1) LIMIT 1")
             : null;
 
         $rowNum = $offset;
@@ -327,7 +339,11 @@ class LeadImporter
             }
 
             if ($campaignAssignStmt !== null) {
-                $campaignAssignStmt->execute([$leadId, $assignCampaignId, $assignedByUserId]);
+                $campaignElsewhereCheckStmt->execute([$leadId, $assignCampaignId]);
+                $campaignSuppressedCheckStmt->execute([$email]);
+                if (!$campaignElsewhereCheckStmt->fetchColumn() && !$campaignSuppressedCheckStmt->fetchColumn()) {
+                    $campaignAssignStmt->execute([$leadId, $assignCampaignId, $assignedByUserId]);
+                }
             }
 
             if ($tagNames) {

@@ -39,8 +39,12 @@ if ($action === 'release') {
     if (!in_array($bounceType, WaveAssigner::BOUNCE_TYPES, true)) {
         $bounceType = null;
     }
-    $count = WaveAssigner::suppress(db(), $leaderAssignmentId, $user['id'], 'Wave-1 bounce', $bounceType);
-    flash_set('success', "{$count} held lead(s) suppressed, and their domain has been added to the global suppression list.");
+    $result = WaveAssigner::suppress(db(), $leaderAssignmentId, $user['id'], 'Wave-1 bounce', $bounceType);
+    $message = "{$result['held_suppressed']} held lead(s) suppressed.";
+    $message .= $result['domain_suppressed']
+        ? ' Their domain has been added to the global suppression list.'
+        : ' This bounce type is configured not to suppress the whole domain (see Bounce Settings), so other personas there remain assignable.';
+    flash_set('success', $message);
 } else {
     flash_set('danger', 'Unknown action.');
 }
