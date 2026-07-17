@@ -67,10 +67,14 @@ render_header('Campaign leads');
 <div class="card mb-4">
   <div class="card-body d-flex flex-wrap gap-2 align-items-center">
     <?php if ($campaign['saleshandy_step_id']): ?>
-    <form method="post" action="campaign_saleshandy_push.php" onsubmit="return confirm('Push currently-eligible leads for this campaign to Saleshandy?');">
+    <form method="post" action="campaign_saleshandy_push.php" class="d-flex gap-2 align-items-center" onsubmit="return confirm('Push currently-eligible leads for this campaign to Saleshandy?');">
       <?= csrf_field() ?>
       <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
       <button type="submit" class="btn btn-sm btn-primary">Push to Saleshandy</button>
+      <span class="form-check form-check-inline mb-0">
+        <input class="form-check-input" type="checkbox" name="include_risky" value="1" id="includeRisky">
+        <label class="form-check-label small" for="includeRisky">Include risky emails</label>
+      </span>
     </form>
     <?php else: ?>
       <span class="text-muted small">Push needs a step chosen too (<a href="campaign_saleshandy_settings.php?campaign_id=<?= (int) $campaignId ?>">Configure</a>) -- Refresh/Import below only need the sequence.</span>
@@ -86,7 +90,8 @@ render_header('Campaign leads');
       <button type="submit" class="btn btn-sm btn-outline-secondary">Import from Saleshandy</button>
     </form>
     <span class="text-muted small">
-      Push only sends leads currently eligible under the wave-1 domain-safety gate.
+      Push only sends leads currently eligible under the wave-1 domain-safety gate, and skips bad emails
+      (verified via Saleshandy) automatically -- risky ones are skipped too unless "Include risky emails" is checked.
       <?= $campaign['saleshandy_last_synced_at'] ? 'Last synced ' . e($campaign['saleshandy_last_synced_at']) . '.' : 'Never synced yet.' ?>
     </span>
   </div>

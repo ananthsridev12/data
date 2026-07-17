@@ -36,8 +36,9 @@ and import, in order:
 12. `sql/012_user_invites.sql`
 13. `sql/013_pull_from_saleshandy.sql`
 14. `sql/014_saleshandy_sync_tracking.sql`
+15. `sql/015_email_verification.sql`
 
-(If you're setting up a brand-new site, import all fourteen in order. If
+(If you're setting up a brand-new site, import all fifteen in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -184,7 +185,14 @@ everything else in the app works without it.
    sequence is linked; only Push needs a step.
 6. On that campaign's **Campaign Leads** page:
    - **Push to Saleshandy** sends only leads currently eligible under the
-     existing wave-1 domain-safety gate.
+     existing wave-1 domain-safety gate, and skips bad emails (verified via
+     Saleshandy's email verification feature) automatically -- risky ones
+     are skipped too unless "Include risky emails" is checked on the push
+     form. Verification results are checked once per lead and cached
+     (`leads.email_verification_status`), so re-pushing doesn't re-spend
+     verification credits on an address already checked. If the
+     verification check itself fails, the push proceeds unfiltered rather
+     than blocking.
    - **Refresh statuses from Saleshandy** pulls delivery/reply/bounce
      activity back into each already-assigned lead's Delivery Status, and
      cascades a bounce into the same domain-suppression logic Bounce

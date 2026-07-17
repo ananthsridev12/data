@@ -115,6 +115,60 @@ class SaleshandyClient
     }
 
     /**
+     * Checks Saleshandy's email verification status for a batch of
+     * addresses. The exact set of status strings Saleshandy returns isn't
+     * documented anywhere accessible while building this (not in their
+     * own CLI's source, which just passes the value through) -- callers
+     * should classify the raw string via classifyVerificationTier() below
+     * rather than comparing it directly, since that method matches
+     * keywords case-insensitively instead of assuming one exact spelling.
+     *
+     * @param array<int,string> $emails
+     * @return array<string,string> email => raw Saleshandy status string
+     */
+    public function checkVerificationStatus(array $emails): array
+    {
+        if (!$emails) {
+            return [];
+        }
+        $data = $this->request('POST', '/prospects/verification-status', ['emails' => array_values($emails)]);
+        $payload = $this->unwrap($data);
+        $results = [];
+        foreach ($payload as $row) {
+            $email = strtolower(trim((string) ($row['email'] ?? '')));
+            if ($email !== '') {
+                $results[$email] = (string) ($row['status'] ?? '');
+            }
+        }
+        return $results;
+    }
+
+    /**
+     * Buckets a raw Saleshandy verification status into one of three
+     * tiers by keyword, since the exact strings Saleshandy uses aren't
+     * confirmed (see checkVerificationStatus()): 'bad' (never send --
+     * invalid/undeliverable/rejected), 'risky' (deliverability uncertain
+     * -- catch-all/accept-all/unknown addresses, admin's call whether to
+     * send), or 'good' (verified deliverable). An unrecognized string is
+     * treated as 'risky' rather than 'good', so an unexpected status
+     * value fails toward caution instead of silently sending to it.
+     */
+    public static function classifyVerificationTier(string $rawStatus): string
+    {
+        $s = mb_strtolower(trim($rawStatus));
+        if ($s === '') {
+            return 'risky';
+        }
+        if (preg_match('/\b(bad|invalid|undeliverable|reject\w*|bounc\w*|block\w*|disposable)\b/', $s)) {
+            return 'bad';
+        }
+        if (preg_match('/\b(good|valid|deliverable|safe|verifi\w*)\b/', $s)) {
+            return 'good';
+        }
+        return 'risky'; // covers risky/catch-all/accept-all/unknown/unverified/anything else
+    }
+
+    /**
      * Per-recipient send/open/reply/bounce activity for a sequence in a
      * date window -- the source for pulling delivery statuses back in,
      * and (via pullNewProspects()) for discovering prospects that were
