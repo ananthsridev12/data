@@ -211,21 +211,25 @@ class SaleshandyClient
             $url .= '?' . http_build_query($params);
         }
 
+        // Content-Type describes a request body -- Saleshandy's API rejects
+        // it outright (406, error_code 1005) on a bodyless GET, so it's
+        // only sent when there's actually a JSON body to describe.
+        $headers = [
+            'Authorization: Bearer ' . $this->apiKey,
+            'Accept: application/json',
+        ];
+        if ($method !== 'GET') {
+            $headers[] = 'Content-Type: application/json';
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($params, JSON_UNESCAPED_UNICODE));
+        }
+
         curl_setopt_array($ch, [
             CURLOPT_URL => $url,
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 30,
-            CURLOPT_HTTPHEADER => [
-                'Authorization: Bearer ' . $this->apiKey,
-                'Content-Type: application/json',
-                'Accept: application/json',
-            ],
+            CURLOPT_HTTPHEADER => $headers,
         ]);
-
-        if ($method !== 'GET') {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($params, JSON_UNESCAPED_UNICODE));
-        }
 
         $body = curl_exec($ch);
         $errno = curl_errno($ch);
@@ -239,8 +243,12 @@ class SaleshandyClient
 
         $decoded = json_decode((string) $body, true);
         if ($httpCode < 200 || $httpCode >= 300) {
-            $message = is_array($decoded) ? ($decoded['message'] ?? $body) : $body;
-            throw new SaleshandyApiException("Saleshandy API error ({$httpCode}): {$message}");
+            // Saleshandy's actual error shape is {"error_code":N,"error_message":"..."}
+            // -- "message" is kept as a fallback in case another endpoint differs.
+            $message = is_array($decoded) ? ($decoded['error_message'] ?? $decoded['message'] ?? $body) : $body;
+            $errorCode = is_array($decoded) ? ($decoded['error_code'] ?? null) : null;
+            $suffix = $errorCode !== null ? " (error_code {$errorCode})" : '';
+            throw new SaleshandyApiException("Saleshandy API error ({$httpCode}){$suffix}: {$message}");
         }
 
         return is_array($decoded) ? $decoded : [];
