@@ -34,8 +34,9 @@ and import, in order:
 10. `sql/010_relax_required_fields.sql`
 11. `sql/011_saleshandy_integration.sql`
 12. `sql/012_user_invites.sql`
+13. `sql/013_pull_from_saleshandy.sql`
 
-(If you're setting up a brand-new site, import all twelve in order. If
+(If you're setting up a brand-new site, import all thirteen in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -176,12 +177,20 @@ everything else in the app works without it.
    Saleshandy's side automatically the first time they're used in a push).
 5. On **Campaigns**, click **Configure** next to a campaign to link it to
    a Saleshandy sequence and step.
-6. On that campaign's **Campaign Leads** page, use **Push to Saleshandy**
-   (sends only leads currently eligible under the existing wave-1
-   domain-safety gate) and **Refresh statuses from Saleshandy** (pulls
-   delivery/reply/bounce activity back into each lead's Delivery Status,
-   and cascades a bounce into the same domain-suppression logic Bounce
-   Import uses).
+6. On that campaign's **Campaign Leads** page:
+   - **Push to Saleshandy** sends only leads currently eligible under the
+     existing wave-1 domain-safety gate.
+   - **Refresh statuses from Saleshandy** pulls delivery/reply/bounce
+     activity back into each already-assigned lead's Delivery Status, and
+     cascades a bounce into the same domain-suppression logic Bounce
+     Import uses.
+   - **Import from Saleshandy** is the reverse direction -- for a
+     sequence that already has prospects enrolled in it (added directly
+     in Saleshandy, or from before this integration existed), this
+     creates the matching lead and campaign assignment here if they
+     don't exist yet. A lead created this way only has an email and a
+     name (Saleshandy's activity data doesn't include company, title,
+     etc.), which is why Company Name is optional.
 
 **Important caveat:** `SaleshandyClient.php`'s endpoint paths were built
 from Saleshandy's documented request/response shapes rather than a full

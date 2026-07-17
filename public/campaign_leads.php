@@ -76,6 +76,11 @@ render_header('Campaign leads');
       <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
       <button type="submit" class="btn btn-sm btn-outline-primary">Refresh statuses from Saleshandy</button>
     </form>
+    <form method="post" action="campaign_saleshandy_import.php" onsubmit="return confirm('Pull in any prospects from this Saleshandy sequence that aren\'t assigned to this campaign here yet? New leads will only have an email and name -- no company, title, etc.');">
+      <?= csrf_field() ?>
+      <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+      <button type="submit" class="btn btn-sm btn-outline-secondary">Import from Saleshandy</button>
+    </form>
     <span class="text-muted small">
       Push only sends leads currently eligible under the wave-1 domain-safety gate.
       <?= $campaign['saleshandy_last_synced_at'] ? 'Last synced ' . e($campaign['saleshandy_last_synced_at']) . '.' : 'Never synced yet.' ?>

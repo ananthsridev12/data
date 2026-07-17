@@ -116,9 +116,12 @@ class SaleshandyClient
 
     /**
      * Per-recipient send/open/reply/bounce activity for a sequence in a
-     * date window -- the source for pulling delivery statuses back in.
+     * date window -- the source for pulling delivery statuses back in,
+     * and (via pullNewProspects()) for discovering prospects that were
+     * added to the sequence directly in Saleshandy rather than pushed
+     * from here.
      *
-     * @return array<int,array{email:string,sentAt:?string,replied:bool,bounced:bool,unsubscribed:bool}>
+     * @return array<int,array{email:string,name:string,sentAt:?string,replied:bool,bounced:bool,unsubscribed:bool}>
      */
     public function fetchSequenceActivity(string $sequenceId, string $startDate, string $endDate): array
     {
@@ -137,6 +140,7 @@ class SaleshandyClient
             foreach ($pageRows as $row) {
                 $rows[] = [
                     'email' => strtolower(trim((string) ($row['Recipient Email'] ?? ''))),
+                    'name' => trim((string) ($row['Recipient name'] ?? $row['Recipient Name'] ?? '')),
                     'sentAt' => $row['Email Sent At'] ?? null,
                     'replied' => ($row['Replied'] ?? 'No') === 'Yes',
                     'bounced' => ($row['Bounced'] ?? 'No') === 'Yes',
@@ -215,6 +219,110 @@ class SaleshandyClient
         }
 
         $db->prepare('UPDATE campaigns SET saleshandy_last_synced_at = NOW() WHERE id = ?')->execute([$campaign['id']]);
+
+        return $stats;
+    }
+
+    /**
+     * Pulls in prospects that are already enrolled in this campaign's
+     * linked Saleshandy sequence but were never pushed from here (added
+     * directly in Saleshandy, or before this integration existed). Unlike
+     * syncCampaign(), which only updates assignments that already exist
+     * locally, this creates the lead (if missing) and the assignment (if
+     * missing) instead of skipping. A lead created this way only has an
+     * email and a name split from Saleshandy's "Recipient name" -- no
+     * company, title, etc. are available from this endpoint, hence
+     * Company Name being optional (see sql/013_pull_from_saleshandy.sql).
+     *
+     * The assignment is marked status='pushed' (not 'exported') so our
+     * own "Push to Saleshandy" never re-sends it -- it's already there.
+     *
+     * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
+     * @return array{leads_created:int,assignments_created:int,already_present:int}
+     */
+    public function pullNewProspects(PDO $db, array $campaign, int $userId): array
+    {
+        $stats = ['leads_created' => 0, 'assignments_created' => 0, 'already_present' => 0];
+        $sequenceId = $campaign['saleshandy_sequence_id'];
+        if (!$sequenceId) {
+            return $stats;
+        }
+
+        // Saleshandy's analytics endpoint refuses a start date older than
+        // 2 years -- use the campaign's own creation date if it's more
+        // recent than that, so a long-lived campaign doesn't fail the call.
+        $twoYearsAgo = date('Y-m-d', strtotime('-2 years'));
+        $campaignCreated = date('Y-m-d', strtotime((string) $campaign['created_at']));
+        $startDate = $campaignCreated > $twoYearsAgo ? $campaignCreated : $twoYearsAgo;
+        $endDate = date('Y-m-d');
+
+        $activity = $this->fetchSequenceActivity($sequenceId, $startDate, $endDate);
+
+        // A recipient can have one row per sequence step, so aggregate
+        // across all of an email's rows before processing it once --
+        // otherwise a reply or bounce recorded on a later step's row would
+        // be silently lost by only looking at that email's first row.
+        $byEmail = [];
+        foreach ($activity as $row) {
+            if ($row['email'] === '') {
+                continue;
+            }
+            if (!isset($byEmail[$row['email']])) {
+                $byEmail[$row['email']] = ['name' => $row['name'], 'sentAt' => $row['sentAt'], 'replied' => false, 'bounced' => false, 'unsubscribed' => false];
+            }
+            $agg = &$byEmail[$row['email']];
+            $agg['replied'] = $agg['replied'] || $row['replied'];
+            $agg['bounced'] = $agg['bounced'] || $row['bounced'];
+            $agg['unsubscribed'] = $agg['unsubscribed'] || $row['unsubscribed'];
+            if ($agg['name'] === '' && $row['name'] !== '') {
+                $agg['name'] = $row['name'];
+            }
+            if ($row['sentAt'] && (!$agg['sentAt'] || $row['sentAt'] < $agg['sentAt'])) {
+                $agg['sentAt'] = $row['sentAt']; // earliest send time
+            }
+            unset($agg);
+        }
+
+        $findLead = $db->prepare('SELECT id FROM leads WHERE email = ?');
+        $insertLead = $db->prepare('INSERT INTO leads (email, first_name, last_name) VALUES (?, ?, ?)');
+        $findAssignment = $db->prepare('SELECT id FROM lead_campaign_assignments WHERE lead_id = ? AND campaign_id = ?');
+        $insertAssignment = $db->prepare(
+            "INSERT INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by, status, exported_at, delivery_status)
+             VALUES (?, ?, ?, 'pushed', ?, ?)"
+        );
+
+        foreach ($byEmail as $email => $row) {
+            $findLead->execute([$email]);
+            $leadId = $findLead->fetchColumn();
+
+            if (!$leadId) {
+                $nameParts = preg_split('/\s+/', $row['name'], 2);
+                $firstName = $nameParts[0] ?? '';
+                $lastName = $nameParts[1] ?? '';
+                $insertLead->execute([$email, $firstName, $lastName]);
+                $leadId = (int) $db->lastInsertId();
+                $stats['leads_created']++;
+            }
+
+            $findAssignment->execute([$leadId, $campaign['id']]);
+            if ($findAssignment->fetchColumn()) {
+                $stats['already_present']++;
+                continue;
+            }
+
+            $deliveryStatus = $row['bounced'] ? 'Bounced'
+                : ($row['replied'] ? 'Replied'
+                : ($row['unsubscribed'] ? 'Paused'
+                : ($row['sentAt'] ? 'Active' : 'Waiting')));
+            $exportedAt = $row['sentAt'] ? date('Y-m-d H:i:s', strtotime((string) $row['sentAt'])) : date('Y-m-d H:i:s');
+
+            $insertAssignment->execute([$leadId, $campaign['id'], $userId, $exportedAt, $deliveryStatus]);
+            $stats['assignments_created']++;
+
+            if ($row['bounced']) {
+                WaveAssigner::suppressByEmail($db, $email, $userId, "Saleshandy pull-in: {$campaign['name']}", 'Bounced');
+            }
+        }
 
         return $stats;
     }

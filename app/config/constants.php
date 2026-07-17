@@ -10,7 +10,7 @@ const ROLE_MEMBER = 'member';
  * filters).
  */
 const LEAD_FIELDS = [
-    'na_company_name'         => ['label' => 'Company Name',               'required' => true],
+    'na_company_name'         => ['label' => 'Company Name',               'required' => false],
     'category'                => ['label' => 'Category',                   'required' => false],
     'products'                => ['label' => 'Products',                   'required' => false],
     'first_name'              => ['label' => 'First Name',                 'required' => true],
