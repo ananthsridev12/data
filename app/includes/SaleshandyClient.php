@@ -7,18 +7,19 @@ require_once __DIR__ . '/WaveAssigner.php';
  * Thin cURL wrapper around Saleshandy's REST API. No SDK/Composer, matching
  * the rest of this app.
  *
- * IMPORTANT -- endpoint paths below are best-effort, based on (a) the one
- * path Saleshandy documents explicitly ("POST /v1/leads/bulk-actions/add-to-sequence")
- * and (b) the request/response shapes of the equivalent tools on the
- * Saleshandy MCP connection used to design this integration, which wraps
- * this same API but doesn't expose literal endpoint URLs. Every method
- * below is a single, clearly-labeled place to correct once real API docs
- * or a support-provided spec are in hand -- do a cheap smoke test
- * (listSequences() is the safest one, read-only) before relying on push/pull.
+ * Endpoint paths, headers, and base URL below are taken directly from the
+ * source of Saleshandy's own official open-source CLI
+ * (@saleshandy/saleshandy-cli on npm, https://github.com/saleshandy/saleshandy-cli),
+ * not guessed -- that package's dist/lib/api-client.js has the header set
+ * (x-api-key, sh-application, Content-Type sent unconditionally) and
+ * dist/lib/base-command.js has the base URL; each dist/commands/**\/*.js
+ * file has its endpoint path and request shape. Re-check that package
+ * (`npm pack @saleshandy/saleshandy-cli`) if a call here ever drifts from
+ * what Saleshandy's API actually expects.
  */
 class SaleshandyClient
 {
-    private const BASE_URL = 'https://api.saleshandy.com/v1';
+    private const BASE_URL = 'https://open-api.saleshandy.com/api/open-api/v1';
 
     private string $apiKey;
 
@@ -39,29 +40,29 @@ class SaleshandyClient
     /** @return array<int,array{id:string,title:string,active:bool}> */
     public function listSequences(): array
     {
-        $data = $this->request('GET', '/sequences', ['pageSize' => 100]);
-        return $data['payload'] ?? [];
+        $data = $this->request('GET', '/sequences', ['pageSize' => 100, 'page' => 1, 'sort' => 'ASC', 'sortBy' => 'sequence.title']);
+        return $this->unwrap($data);
     }
 
-    /** @return array<int,array{id:string,name:string}> */
+    /** @return array<int,array{id:string,number:int,type:string,status:string}> */
     public function listSequenceSteps(string $sequenceId): array
     {
         $data = $this->request('GET', "/sequences/{$sequenceId}/steps");
-        return $data['payload'] ?? [];
+        return $this->unwrap($data);
     }
 
-    /** @return array<int,array{id:string,label:string,fieldType:string}> */
+    /** @return array<int,array{id:string,label:string,fieldType:string,mappingDefaultField:?string}> */
     public function listFields(): array
     {
-        $data = $this->request('GET', '/fields', ['systemFields' => 'true']);
-        return $data['payload'] ?? [];
+        $data = $this->request('GET', '/fields', ['systemFields' => true]);
+        return $this->unwrap($data);
     }
 
     /** @return array<int,array{id:string,name:string}> */
     public function listTags(): array
     {
-        $data = $this->request('GET', '/tags', ['pageSize' => 100]);
-        return $data['payload'] ?? [];
+        $data = $this->request('GET', '/contacts/tags');
+        return $this->unwrap($data);
     }
 
     /**
@@ -71,27 +72,31 @@ class SaleshandyClient
      * @param array<int,array<string,string>> $prospectList each entry keyed by Saleshandy field label
      * @param array<int,string> $tags applied to the whole batch (Saleshandy has no per-prospect tag on this endpoint)
      */
-    public function pushProspects(string $stepId, array $prospectList, array $tags = [], string $conflictAction = 'addMissingFields'): string
+    public function pushProspects(string $stepId, array $prospectList, array $tags = [], string $conflictAction = 'addMissingFields'): ?string
     {
-        $data = $this->request('POST', '/prospects/import-to-step', [
+        $data = $this->request('POST', '/sequences/prospects/import-with-field-name', [
             'stepId' => $stepId,
             'prospectList' => $prospectList,
             'conflictAction' => $conflictAction,
             'tags' => $tags,
             'verifyProspects' => false,
         ]);
-        $requestId = $data['payload']['requestId'] ?? null;
-        if (!$requestId) {
-            throw new SaleshandyApiException('Push accepted but no requestId was returned.');
-        }
-        return $requestId;
+        $payload = $this->unwrap($data);
+        // requestId's exact key isn't confirmed by the CLI source (it never
+        // reads its own response) -- checked defensively, and its absence
+        // isn't fatal since the import call itself already succeeded (2xx).
+        return $payload['requestId'] ?? $payload['request_id'] ?? $payload['id'] ?? null;
     }
 
     /** @return array{isCompleted:bool,failedProspectsURL:?string} */
     public function checkImportStatus(string $requestId): array
     {
-        $data = $this->request('GET', "/prospects/import/{$requestId}/status");
-        return $data['payload'] ?? ['isCompleted' => false, 'failedProspectsURL' => null];
+        $data = $this->request('GET', "/prospects/import-status/{$requestId}");
+        $payload = $this->unwrap($data);
+        return [
+            'isCompleted' => (bool) ($payload['isCompleted'] ?? false),
+            'failedProspectsURL' => $payload['failedProspectsURL'] ?? null,
+        ];
     }
 
     /**
@@ -105,14 +110,15 @@ class SaleshandyClient
         $rows = [];
         $page = 1;
         do {
-            $data = $this->request('GET', '/analytics/consolidated-stats', [
+            $data = $this->request('POST', '/analytics/consolidated-stats', [
                 'sequenceIds' => [$sequenceId],
                 'startDate' => $startDate,
                 'endDate' => $endDate,
                 'pageNum' => $page,
                 'pageLimit' => 100,
             ]);
-            $pageRows = $data['payload']['data'] ?? [];
+            $payload = $this->unwrap($data);
+            $pageRows = $payload['data'] ?? [];
             foreach ($pageRows as $row) {
                 $rows[] = [
                     'email' => strtolower(trim((string) ($row['Recipient Email'] ?? ''))),
@@ -122,7 +128,7 @@ class SaleshandyClient
                     'unsubscribed' => ($row['Unsubscribed'] ?? 'No') === 'Yes',
                 ];
             }
-            $hasMore = !empty($data['payload']['hasMore']);
+            $hasMore = !empty($payload['hasMore']);
             $page++;
         } while ($hasMore);
 
@@ -199,6 +205,20 @@ class SaleshandyClient
     }
 
     /**
+     * Saleshandy wraps every successful response as {..., "payload": ...}
+     * (confirmed via the official CLI's response interceptor, which
+     * unwraps this same key client-side) -- list endpoints return an
+     * array directly under it, others an object.
+     *
+     * @return array<mixed>
+     */
+    private function unwrap(array $data): array
+    {
+        $payload = $data['payload'] ?? [];
+        return is_array($payload) ? $payload : [];
+    }
+
+    /**
      * @param array<string,mixed> $params query params (GET) or JSON body (POST/PUT)
      * @return array<string,mixed>
      */
@@ -211,17 +231,15 @@ class SaleshandyClient
             $url .= '?' . http_build_query($params);
         }
 
-        // Content-Type describes a request body -- Saleshandy's API rejects
-        // it outright (406, error_code 1005) on a bodyless GET, so it's
-        // only sent when there's actually a JSON body to describe.
+        // Header set matches Saleshandy's own official CLI exactly (see
+        // class docblock) -- x-api-key, not Authorization: Bearer, and
+        // Content-Type is sent unconditionally, including on GET.
         $headers = [
-            'Authorization: Bearer ' . $this->apiKey,
+            'x-api-key: ' . $this->apiKey,
+            'sh-application: open-api',
+            'Content-Type: application/json',
             'Accept: application/json',
         ];
-        if ($method !== 'GET') {
-            $headers[] = 'Content-Type: application/json';
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($params, JSON_UNESCAPED_UNICODE));
-        }
 
         curl_setopt_array($ch, [
             CURLOPT_URL => $url,
@@ -230,6 +248,10 @@ class SaleshandyClient
             CURLOPT_TIMEOUT => 30,
             CURLOPT_HTTPHEADER => $headers,
         ]);
+
+        if ($method !== 'GET') {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($params, JSON_UNESCAPED_UNICODE));
+        }
 
         $body = curl_exec($ch);
         $errno = curl_errno($ch);
@@ -243,11 +265,22 @@ class SaleshandyClient
 
         $decoded = json_decode((string) $body, true);
         if ($httpCode < 200 || $httpCode >= 300) {
-            // Saleshandy's actual error shape is {"error_code":N,"error_message":"..."}
-            // -- "message" is kept as a fallback in case another endpoint differs.
-            $message = is_array($decoded) ? ($decoded['error_message'] ?? $decoded['message'] ?? $body) : $body;
-            $errorCode = is_array($decoded) ? ($decoded['error_code'] ?? null) : null;
-            $suffix = $errorCode !== null ? " (error_code {$errorCode})" : '';
+            // Three known error shapes seen across this API: the app-level
+            // envelope {code, type, message}, a NestJS validation envelope
+            // {statusCode, message|messages}, and a gateway-level envelope
+            // {error, error_code, error_message} (seen on a header-validation
+            // rejection, likely from a layer in front of the app itself).
+            if (is_array($decoded)) {
+                $message = $decoded['error_message'] ?? $decoded['message'] ?? $decoded['messages'] ?? $body;
+                if (is_array($message)) {
+                    $message = implode(', ', $message);
+                }
+                $code = $decoded['error_code'] ?? $decoded['code'] ?? $decoded['statusCode'] ?? null;
+            } else {
+                $message = $body;
+                $code = null;
+            }
+            $suffix = $code !== null ? " (code {$code})" : '';
             throw new SaleshandyApiException("Saleshandy API error ({$httpCode}){$suffix}: {$message}");
         }
 

@@ -118,7 +118,7 @@ render_header('Saleshandy settings');
       <select name="step_id" class="form-select form-select-sm" style="max-width: 360px;" required>
         <option value="">-- choose a step --</option>
         <?php foreach ($steps as $s): ?>
-          <option value="<?= e($s['id']) ?>"><?= e($s['name']) ?></option>
+          <option value="<?= e($s['id']) ?>">Step <?= (int) ($s['number'] ?? 0) ?> -- <?= e($s['type'] ?? '') ?><?= !empty($s['status']) ? ' (' . e($s['status']) . ')' : '' ?></option>
         <?php endforeach; ?>
       </select>
       <button type="submit" class="btn btn-primary btn-sm">Save</button>
