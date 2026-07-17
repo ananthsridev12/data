@@ -79,6 +79,75 @@ if ($action === 'mark_imported') {
         'success',
         "{$updated} lead(s) marked \"{$deliveryStatus}\"" . ($suppressedCount > 0 ? " -- {$suppressedCount} domain(s) suppressed." : '.')
     );
+} elseif ($action === 'remove_from_campaign') {
+    // Only un-assigns leads not yet pushed to Saleshandy, and never a
+    // wave-1 leader that still has a held group depending on it (deleting
+    // that row would orphan the held leads with no leader to release/
+    // suppress them via) -- both are silently skipped, counted below.
+    $countStmt = db()->prepare(
+        "SELECT COUNT(*) FROM lead_campaign_assignments a
+          WHERE a.campaign_id = ? AND a.id IN ({$placeholders}) AND a.status = 'pushed'"
+    );
+    $countStmt->execute(array_merge([$campaignId], $ids));
+    $pushedSkipped = (int) $countStmt->fetchColumn();
+
+    $leaderIdsStmt = db()->prepare(
+        "SELECT DISTINCT wave_leader_id FROM lead_campaign_assignments WHERE wave_leader_id IN ({$placeholders})"
+    );
+    $leaderIdsStmt->execute($ids);
+    $protectedLeaderIds = array_map('intval', $leaderIdsStmt->fetchAll(PDO::FETCH_COLUMN));
+
+    $removableIds = array_values(array_diff($ids, $protectedLeaderIds));
+    $removed = 0;
+    if ($removableIds) {
+        $rPlaceholders = implode(',', array_fill(0, count($removableIds), '?'));
+        $stmt = db()->prepare(
+            "DELETE FROM lead_campaign_assignments WHERE campaign_id = ? AND id IN ({$rPlaceholders}) AND status != 'pushed'"
+        );
+        $stmt->execute(array_merge([$campaignId], $removableIds));
+        $removed = $stmt->rowCount();
+    }
+
+    $message = "{$removed} lead(s) removed from this campaign -- they're free to be added to another campaign now.";
+    if ($pushedSkipped > 0) {
+        $message .= " {$pushedSkipped} skipped (already pushed to Saleshandy).";
+    }
+    if ($protectedLeaderIds) {
+        $message .= ' ' . count($protectedLeaderIds) . ' skipped (still a wave-1 leader with a pending held group).';
+    }
+    flash_set('success', $message);
+} elseif ($action === 'delete_lead') {
+    if ($user['role'] !== ROLE_ADMIN) {
+        flash_set('danger', 'Only admins can delete leads.');
+        header('Location: ' . $redirect);
+        exit;
+    }
+
+    $countStmt = db()->prepare(
+        "SELECT COUNT(*) FROM lead_campaign_assignments WHERE campaign_id = ? AND id IN ({$placeholders}) AND status = 'pushed'"
+    );
+    $countStmt->execute(array_merge([$campaignId], $ids));
+    $pushedSkipped = (int) $countStmt->fetchColumn();
+
+    $leadIdsStmt = db()->prepare(
+        "SELECT DISTINCT lead_id FROM lead_campaign_assignments WHERE campaign_id = ? AND id IN ({$placeholders}) AND status != 'pushed'"
+    );
+    $leadIdsStmt->execute(array_merge([$campaignId], $ids));
+    $leadIds = array_map('intval', $leadIdsStmt->fetchAll(PDO::FETCH_COLUMN));
+
+    $deleted = 0;
+    if ($leadIds) {
+        $leadPlaceholders = implode(',', array_fill(0, count($leadIds), '?'));
+        $stmt = db()->prepare("UPDATE leads SET deleted_at = NOW(), deleted_by = ? WHERE id IN ({$leadPlaceholders})");
+        $stmt->execute(array_merge([$user['id']], $leadIds));
+        $deleted = $stmt->rowCount();
+    }
+
+    $message = "{$deleted} lead(s) deleted (hidden everywhere -- its campaign history is kept, and this can be undone from Deleted Leads).";
+    if ($pushedSkipped > 0) {
+        $message .= " {$pushedSkipped} skipped (already pushed to Saleshandy).";
+    }
+    flash_set('success', $message);
 } else {
     flash_set('danger', 'Unknown action.');
 }

@@ -21,7 +21,10 @@ if (!$campaign) {
 $perPage = 50;
 $page = max(1, (int) ($_GET['page'] ?? 1));
 
-$countStmt = db()->prepare('SELECT COUNT(*) FROM lead_campaign_assignments WHERE campaign_id = ?');
+$countStmt = db()->prepare(
+    'SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
+      WHERE a.campaign_id = ? AND l.deleted_at IS NULL'
+);
 $countStmt->execute([$campaignId]);
 $total = (int) $countStmt->fetchColumn();
 $totalPages = max(1, (int) ceil($total / $perPage));
@@ -33,7 +36,7 @@ $stmt = db()->prepare(
        FROM lead_campaign_assignments a
        JOIN leads l ON l.id = a.lead_id
        JOIN users u ON u.id = a.assigned_by
-      WHERE a.campaign_id = :campaign_id
+      WHERE a.campaign_id = :campaign_id AND l.deleted_at IS NULL
       ORDER BY a.assigned_at DESC
       LIMIT {$perPage} OFFSET {$offset}"
 );
@@ -47,7 +50,7 @@ $waveStmt = db()->prepare(
             (SELECT COUNT(*) FROM lead_campaign_assignments h WHERE h.wave_leader_id = a.id AND h.wave_status = 'held') AS still_held
        FROM lead_campaign_assignments a
        JOIN leads l ON l.id = a.lead_id
-      WHERE a.campaign_id = :campaign_id
+      WHERE a.campaign_id = :campaign_id AND l.deleted_at IS NULL
         AND EXISTS (SELECT 1 FROM lead_campaign_assignments h2 WHERE h2.wave_leader_id = a.id)
       ORDER BY a.assigned_at DESC"
 );
@@ -269,6 +272,22 @@ render_header('Campaign leads');
       </select>
       <button type="submit" name="action" value="set_delivery_status" class="btn btn-sm btn-outline-primary" id="setDeliveryStatusBtn">Apply to checked</button>
       <span class="text-muted small">A bounced status also suppresses that lead's domain everywhere, same as Bounce Import.</span>
+    </div>
+  </div>
+
+  <div class="card mb-4 border-danger">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+      <button type="submit" name="action" value="remove_from_campaign" class="btn btn-sm btn-outline-warning"
+              onclick="return confirm('Remove checked leads from this campaign? Only leads not yet pushed to Saleshandy will be removed -- they become free to be added to another campaign. Leads already pushed are skipped.');">
+        Remove checked from this campaign
+      </button>
+      <?php if ($user['role'] === ROLE_ADMIN): ?>
+      <button type="submit" name="action" value="delete_lead" class="btn btn-sm btn-outline-danger"
+              onclick="return confirm('Delete checked leads entirely? This hides them everywhere (not just this campaign), not just removes them from here -- undo from Deleted Leads. Leads already pushed to Saleshandy are skipped.');">
+        Delete checked leads
+      </button>
+      <?php endif; ?>
+      <span class="text-muted small">Both skip any lead already pushed to Saleshandy.</span>
     </div>
   </div>
 </form>

@@ -155,7 +155,9 @@ the shared implementation:
    one campaign of its own, as long as the account isn't suppressed (below).
    This doesn't retroactively touch leads that were already in more than
    one campaign before this rule existed -- it only guards new assignments
-   going forward.
+   going forward. If you need to move a lead to a different campaign, use
+   **Remove checked from this campaign** on the Campaign Leads page first
+   (see below) -- that frees it up for the new assignment.
 2. **If any persona at a domain bounces, the whole domain is blocked from
    every future campaign** -- not just the one that bounced -- via the
    existing `suppressed_domains` global list. Which bounce types actually
@@ -167,6 +169,17 @@ the shared implementation:
    bounce type left unchecked there still gets recorded on that one lead's
    assignment -- it just doesn't block the rest of the account. See
    `WaveAssigner::bounceTypeSuppresses()`.
+
+On the **Campaign Leads** page, the checkbox list at the bottom has two
+extra actions alongside Mark Imported/Email Sent/Delivery Status:
+**Remove checked from this campaign** (un-assigns the lead, keyed off
+`status != 'pushed'` so a lead already pushed to Saleshandy is skipped
+rather than silently detached from the campaign it's actually being
+emailed from -- it also skips a lead that's still a pending wave-1
+leader with a held group under it, to avoid orphaning those held leads)
+and, admin-only, **Delete checked leads** (a full, site-wide soft-delete
+of the underlying lead -- same as the Dashboard's Delete, undoable from
+Deleted Leads -- also skipping anything already pushed).
 
 ## Notes on the Saleshandy CSV export
 
