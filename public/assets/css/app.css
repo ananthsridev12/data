@@ -14,3 +14,26 @@ body {
     background: #fff;
     border-radius: 0.5rem;
 }
+
+.multiselect-filter {
+    position: relative;
+}
+
+.multiselect-filter .ms-toggle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.multiselect-filter .ms-menu {
+    min-width: 240px;
+}
+
+.multiselect-filter .ms-options {
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.multiselect-filter .ms-option-label {
+    cursor: pointer;
+}

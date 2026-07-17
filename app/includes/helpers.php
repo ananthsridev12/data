@@ -75,6 +75,75 @@ function render_header(string $title): void
 <?php
 }
 
+/**
+ * Multi-select checkbox filter, rendered as a Bootstrap dropdown button so
+ * a filter row stays compact. Submits as name="{$name}[]" (one value per
+ * checked box) -- LeadRepository's buildWhere() matches any of them.
+ *
+ * @param array<int,string> $options distinct values to offer
+ * @param array<int,string> $selected currently-checked values
+ */
+function render_multiselect_filter(string $name, string $label, array $options, array $selected): void
+{
+    $selected = array_map('strval', $selected);
+    $checkedCount = count(array_intersect($selected, array_map('strval', $options)));
+    ?>
+    <div class="multiselect-filter">
+      <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle w-100 text-start ms-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+        <?= e($label) ?><?= $checkedCount > 0 ? ' (' . $checkedCount . ')' : ' (all)' ?>
+      </button>
+      <div class="dropdown-menu p-2 ms-menu">
+        <?php if (count($options) > 8): ?>
+        <input type="text" class="form-control form-control-sm mb-2 ms-search" placeholder="Search&hellip;">
+        <?php endif; ?>
+        <div class="ms-options">
+          <?php foreach ($options as $opt): $id = 'ms_' . $name . '_' . md5($opt); ?>
+            <div class="form-check ms-option">
+              <input class="form-check-input" type="checkbox" name="<?= e($name) ?>[]" value="<?= e($opt) ?>" id="<?= e($id) ?>" <?= in_array($opt, $selected, true) ? 'checked' : '' ?>>
+              <label class="form-check-label small ms-option-label" for="<?= e($id) ?>"><?= e($opt) ?></label>
+            </div>
+          <?php endforeach; ?>
+          <?php if (!$options): ?>
+            <div class="text-muted small px-1">No values yet.</div>
+          <?php endif; ?>
+        </div>
+        <?php if ($options): ?>
+        <hr class="my-2">
+        <button type="button" class="btn btn-sm btn-link p-0 ms-clear">Clear</button>
+        <?php endif; ?>
+      </div>
+    </div>
+    <?php
+}
+
+/**
+ * Re-emits a filter array (which may include array-valued multi-select
+ * filters and/or booleans) as hidden form fields, so a filter/selection
+ * can be resubmitted intact to another endpoint. Pass $namePrefix = 'filter'
+ * to emit filter[key]/filter[key][] (matching a $_POST['filter'][...]
+ * reader); leave it '' to emit bare key/key[] fields (matching a plain
+ * $_GET reader).
+ */
+function render_hidden_filter_fields(array $filterValues, string $namePrefix = ''): void
+{
+    foreach ($filterValues as $k => $v) {
+        $name = $namePrefix === '' ? $k : "{$namePrefix}[{$k}]";
+        if (is_array($v)) {
+            foreach ($v as $vv) {
+                if ($vv === '' || $vv === null) {
+                    continue;
+                }
+                ?><input type="hidden" name="<?= e($name) ?>[]" value="<?= e((string) $vv) ?>"><?php
+            }
+            continue;
+        }
+        if (is_bool($v)) {
+            $v = $v ? '1' : '';
+        }
+        ?><input type="hidden" name="<?= e($name) ?>" value="<?= e((string) $v) ?>"><?php
+    }
+}
+
 function render_footer(): void
 {
     ?>

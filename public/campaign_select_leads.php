@@ -24,12 +24,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         'q' => $rawFilters['q'] ?? '',
         'company' => $rawFilters['company'] ?? '',
         'domain' => $rawFilters['domain'] ?? '',
-        'title' => $rawFilters['title'] ?? '',
-        'seniority' => $rawFilters['seniority'] ?? '',
-        'departments' => $rawFilters['departments'] ?? '',
-        'industry' => $rawFilters['industry'] ?? '',
-        'country' => $rawFilters['country'] ?? '',
-        'employee_count' => $rawFilters['employee_count'] ?? '',
+        'title' => (array) ($rawFilters['title'] ?? []),
+        'seniority' => (array) ($rawFilters['seniority'] ?? []),
+        'departments' => (array) ($rawFilters['departments'] ?? []),
+        'industry' => (array) ($rawFilters['industry'] ?? []),
+        'country' => (array) ($rawFilters['country'] ?? []),
+        'employee_count' => (array) ($rawFilters['employee_count'] ?? []),
         'vertical_id' => $rawFilters['vertical_id'] ?? '',
         'service_id' => $rawFilters['service_id'] ?? '',
         'campaign_id' => $campaignId,
@@ -96,16 +96,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
 }
 
 // GET: show the filter + selection-mode form.
+$multiParam = static function (string $key): array {
+    return array_values(array_filter(array_map('trim', (array) ($_GET[$key] ?? []))));
+};
+
 $filters = [
     'q' => trim((string) ($_GET['q'] ?? '')),
     'company' => trim((string) ($_GET['company'] ?? '')),
     'domain' => trim((string) ($_GET['domain'] ?? '')),
-    'title' => trim((string) ($_GET['title'] ?? '')),
-    'seniority' => trim((string) ($_GET['seniority'] ?? '')),
-    'departments' => trim((string) ($_GET['departments'] ?? '')),
-    'industry' => trim((string) ($_GET['industry'] ?? '')),
-    'country' => trim((string) ($_GET['country'] ?? '')),
-    'employee_count' => trim((string) ($_GET['employee_count'] ?? '')),
+    'title' => $multiParam('title'),
+    'seniority' => $multiParam('seniority'),
+    'departments' => $multiParam('departments'),
+    'industry' => $multiParam('industry'),
+    'country' => $multiParam('country'),
+    'employee_count' => $multiParam('employee_count'),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
     'campaign_id' => $campaignId,
@@ -116,7 +120,9 @@ $leadCount = count(LeadRepository::matchingIds(db(), $filters));
 $domainCount = LeadRepository::domainCountForFilter(db(), $filters);
 $titles = LeadRepository::distinctTitlesForFilter(db(), $filters);
 
+$titleOptions = LeadRepository::distinctValues(db(), 'title', 1000);
 $seniorities = LeadRepository::distinctValues(db(), 'seniority');
+$departmentOptions = LeadRepository::distinctValues(db(), 'departments');
 $industries = LeadRepository::distinctValues(db(), 'industry');
 $countries = LeadRepository::distinctValues(db(), 'country');
 $employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
@@ -141,42 +147,22 @@ render_header('Select leads');
       <input type="text" name="domain" class="form-control form-control-sm" placeholder="Email domain" value="<?= e($filters['domain']) ?>">
     </div>
     <div class="col-md-2">
-      <input type="text" name="title" class="form-control form-control-sm" placeholder="Title" value="<?= e($filters['title']) ?>">
+      <?php render_multiselect_filter('title', 'Title', $titleOptions, $filters['title']); ?>
     </div>
     <div class="col-md-2">
-      <select name="seniority" class="form-select form-select-sm">
-        <option value="">Seniority (all)</option>
-        <?php foreach ($seniorities as $v): ?>
-          <option value="<?= e($v) ?>" <?= $filters['seniority'] === $v ? 'selected' : '' ?>><?= e($v) ?></option>
-        <?php endforeach; ?>
-      </select>
+      <?php render_multiselect_filter('seniority', 'Seniority', $seniorities, $filters['seniority']); ?>
     </div>
     <div class="col-md-2">
-      <input type="text" name="departments" class="form-control form-control-sm" placeholder="Department" value="<?= e($filters['departments']) ?>">
+      <?php render_multiselect_filter('departments', 'Department', $departmentOptions, $filters['departments']); ?>
     </div>
     <div class="col-md-2">
-      <select name="industry" class="form-select form-select-sm">
-        <option value="">Industry (all)</option>
-        <?php foreach ($industries as $v): ?>
-          <option value="<?= e($v) ?>" <?= $filters['industry'] === $v ? 'selected' : '' ?>><?= e($v) ?></option>
-        <?php endforeach; ?>
-      </select>
+      <?php render_multiselect_filter('industry', 'Industry', $industries, $filters['industry']); ?>
     </div>
     <div class="col-md-2">
-      <select name="country" class="form-select form-select-sm">
-        <option value="">Country (all)</option>
-        <?php foreach ($countries as $v): ?>
-          <option value="<?= e($v) ?>" <?= $filters['country'] === $v ? 'selected' : '' ?>><?= e($v) ?></option>
-        <?php endforeach; ?>
-      </select>
+      <?php render_multiselect_filter('country', 'Country', $countries, $filters['country']); ?>
     </div>
     <div class="col-md-1">
-      <select name="employee_count" class="form-select form-select-sm">
-        <option value="">Size</option>
-        <?php foreach ($employeeCounts as $v): ?>
-          <option value="<?= e($v) ?>" <?= $filters['employee_count'] === $v ? 'selected' : '' ?>><?= e($v) ?></option>
-        <?php endforeach; ?>
-      </select>
+      <?php render_multiselect_filter('employee_count', 'Size', $employeeCounts, $filters['employee_count']); ?>
     </div>
     <div class="col-md-2">
       <select name="vertical_id" class="form-select form-select-sm">
@@ -212,9 +198,7 @@ render_header('Select leads');
   <?= csrf_field() ?>
   <input type="hidden" name="action" value="select">
   <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
-  <?php foreach ($filters as $k => $v): if (is_bool($v)) { $v = $v ? '1' : ''; } ?>
-    <input type="hidden" name="filter[<?= e($k) ?>]" value="<?= e((string) $v) ?>">
-  <?php endforeach; ?>
+  <?php render_hidden_filter_fields($filters, 'filter'); ?>
 
   <div class="card mb-3">
     <div class="card-header">1 contact per company (wave 1) -- auto by title priority</div>
@@ -265,4 +249,5 @@ render_header('Select leads');
   <button type="submit" class="btn btn-primary" onclick="return confirm('Add these leads to &quot;<?= e($campaign['name']) ?>&quot;?');">Save selection</button>
   <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>" class="btn btn-outline-secondary">Cancel</a>
 </form>
+<script src="assets/js/app.js"></script>
 <?php render_footer(); ?>

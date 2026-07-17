@@ -7,15 +7,19 @@ $user = require_login();
 
 $columns = ColumnPreferences::getForUser(db(), $user['id'], 'dashboard');
 
+$multiParam = static function (string $key): array {
+    return array_values(array_filter(array_map('trim', (array) ($_GET[$key] ?? []))));
+};
+
 $filters = [
     'q' => trim((string) ($_GET['q'] ?? '')),
     'company' => trim((string) ($_GET['company'] ?? '')),
-    'title' => trim((string) ($_GET['title'] ?? '')),
-    'seniority' => trim((string) ($_GET['seniority'] ?? '')),
-    'departments' => trim((string) ($_GET['departments'] ?? '')),
-    'industry' => trim((string) ($_GET['industry'] ?? '')),
-    'country' => trim((string) ($_GET['country'] ?? '')),
-    'employee_count' => trim((string) ($_GET['employee_count'] ?? '')),
+    'title' => $multiParam('title'),
+    'seniority' => $multiParam('seniority'),
+    'departments' => $multiParam('departments'),
+    'industry' => $multiParam('industry'),
+    'country' => $multiParam('country'),
+    'employee_count' => $multiParam('employee_count'),
     'domain' => trim((string) ($_GET['domain'] ?? '')),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
@@ -28,7 +32,9 @@ $page = max(1, (int) ($_GET['page'] ?? 1));
 
 $result = LeadRepository::search(db(), $filters, $page);
 
+$titleOptions = LeadRepository::distinctValues(db(), 'title', 1000);
 $seniorities = LeadRepository::distinctValues(db(), 'seniority');
+$departmentOptions = LeadRepository::distinctValues(db(), 'departments');
 $industries = LeadRepository::distinctValues(db(), 'industry');
 $countries = LeadRepository::distinctValues(db(), 'country');
 $employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
@@ -62,43 +68,23 @@ render_header('Dashboard');
         <input type="text" name="domain" class="form-control form-control-sm" placeholder="Email domain, e.g. acme.com" value="<?= e($filters['domain']) ?>">
       </div>
       <div class="col-md-2">
-        <input type="text" name="title" class="form-control form-control-sm" placeholder="Title" value="<?= e($filters['title']) ?>">
+        <?php render_multiselect_filter('title', 'Title', $titleOptions, $filters['title']); ?>
       </div>
       <div class="col-md-2">
-        <select name="seniority" class="form-select form-select-sm">
-          <option value="">Seniority (all)</option>
-          <?php foreach ($seniorities as $v): ?>
-            <option value="<?= e($v) ?>" <?= $filters['seniority'] === $v ? 'selected' : '' ?>><?= e($v) ?></option>
-          <?php endforeach; ?>
-        </select>
+        <?php render_multiselect_filter('seniority', 'Seniority', $seniorities, $filters['seniority']); ?>
       </div>
       <div class="col-md-2">
-        <input type="text" name="departments" class="form-control form-control-sm" placeholder="Department" value="<?= e($filters['departments']) ?>">
+        <?php render_multiselect_filter('departments', 'Department', $departmentOptions, $filters['departments']); ?>
       </div>
       <div class="col-md-1">
-        <select name="employee_count" class="form-select form-select-sm">
-          <option value="">Size</option>
-          <?php foreach ($employeeCounts as $v): ?>
-            <option value="<?= e($v) ?>" <?= $filters['employee_count'] === $v ? 'selected' : '' ?>><?= e($v) ?></option>
-          <?php endforeach; ?>
-        </select>
+        <?php render_multiselect_filter('employee_count', 'Size', $employeeCounts, $filters['employee_count']); ?>
       </div>
 
       <div class="col-md-2">
-        <select name="industry" class="form-select form-select-sm">
-          <option value="">Industry (all)</option>
-          <?php foreach ($industries as $v): ?>
-            <option value="<?= e($v) ?>" <?= $filters['industry'] === $v ? 'selected' : '' ?>><?= e($v) ?></option>
-          <?php endforeach; ?>
-        </select>
+        <?php render_multiselect_filter('industry', 'Industry', $industries, $filters['industry']); ?>
       </div>
       <div class="col-md-2">
-        <select name="country" class="form-select form-select-sm">
-          <option value="">Country (all)</option>
-          <?php foreach ($countries as $v): ?>
-            <option value="<?= e($v) ?>" <?= $filters['country'] === $v ? 'selected' : '' ?>><?= e($v) ?></option>
-          <?php endforeach; ?>
-        </select>
+        <?php render_multiselect_filter('country', 'Country', $countries, $filters['country']); ?>
       </div>
       <div class="col-md-2">
         <select name="vertical_id" class="form-select form-select-sm">
@@ -262,18 +248,14 @@ $visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c[
 
 <div class="d-flex gap-2 mb-4">
   <form method="get" action="leads_export_csv.php">
-    <?php foreach ($filterQuery as $k => $v): if (is_array($v)) continue; ?>
-      <input type="hidden" name="<?= e($k) ?>" value="<?= e((string) $v) ?>">
-    <?php endforeach; ?>
+    <?php render_hidden_filter_fields($filterQuery); ?>
     <button type="submit" class="btn btn-sm btn-outline-secondary">Export all <?= (int) $result['total'] ?> matching leads as CSV</button>
   </form>
   <?php if ($user['role'] === ROLE_ADMIN): ?>
   <form method="post" action="lead_delete.php" onsubmit="return confirm('Delete ALL <?= (int) $result['total'] ?> leads matching the current filter? They will be hidden but restorable from Deleted Leads.');">
     <?= csrf_field() ?>
     <input type="hidden" name="action" value="bulk_delete">
-    <?php foreach ($filterQuery as $k => $v): if (is_array($v)) continue; ?>
-      <input type="hidden" name="filter[<?= e($k) ?>]" value="<?= e((string) $v) ?>">
-    <?php endforeach; ?>
+    <?php render_hidden_filter_fields($filterQuery, 'filter'); ?>
     <button type="submit" class="btn btn-sm btn-outline-danger">Delete all <?= (int) $result['total'] ?> matching leads</button>
   </form>
   <?php endif; ?>

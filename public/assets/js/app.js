@@ -56,3 +56,50 @@
   bar.classList.add('progress-bar-animated', 'progress-bar-striped');
   tick();
 })();
+
+// Multi-select checkbox filter dropdowns (render_multiselect_filter() in helpers.php).
+(function () {
+  function updateLabel(toggle) {
+    var menu = toggle.nextElementSibling;
+    if (!menu) return;
+    var checked = menu.querySelectorAll('input[type=checkbox]:checked').length;
+    var base = toggle.getAttribute('data-base-label');
+    if (base === null) {
+      base = toggle.textContent.replace(/\s*\(.*\)\s*$/, '').trim();
+      toggle.setAttribute('data-base-label', base);
+    }
+    toggle.textContent = base + (checked > 0 ? ' (' + checked + ')' : ' (all)');
+  }
+
+  document.querySelectorAll('.multiselect-filter').forEach(function (widget) {
+    var toggle = widget.querySelector('.ms-toggle');
+    var menu = widget.querySelector('.ms-menu');
+    if (!toggle || !menu) return;
+
+    menu.addEventListener('change', function (e) {
+      if (e.target.matches('input[type=checkbox]')) {
+        updateLabel(toggle);
+      }
+    });
+
+    var search = menu.querySelector('.ms-search');
+    if (search) {
+      search.addEventListener('click', function (e) { e.stopPropagation(); });
+      search.addEventListener('input', function () {
+        var term = search.value.trim().toLowerCase();
+        menu.querySelectorAll('.ms-option').forEach(function (opt) {
+          var text = opt.textContent.trim().toLowerCase();
+          opt.style.display = text.indexOf(term) === -1 ? 'none' : '';
+        });
+      });
+    }
+
+    var clearBtn = menu.querySelector('.ms-clear');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function () {
+        menu.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) { cb.checked = false; });
+        updateLabel(toggle);
+      });
+    }
+  });
+})();

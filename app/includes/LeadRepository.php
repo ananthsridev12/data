@@ -76,9 +76,24 @@ class LeadRepository
             $clauses[] = "l.{$col} LIKE :" . $col;
             $params[$col] = '%' . $value . '%';
         };
-        $exact = static function (string $col, string $value) use (&$clauses, &$params): void {
-            $clauses[] = "l.{$col} = :" . $col;
-            $params[$col] = $value;
+        // Multi-select filter: matches any of the given exact values (checkbox
+        // dropdown filters on the dashboard / campaign lead-selection pages).
+        // Also accepts a single scalar value for backward compatibility.
+        $in = static function (string $col, array $values) use (&$clauses, &$params): void {
+            $values = array_values(array_unique(array_filter(
+                array_map(static fn($v) => trim((string) $v), $values),
+                static fn($v) => $v !== ''
+            )));
+            if (!$values) {
+                return;
+            }
+            $placeholders = [];
+            foreach ($values as $i => $v) {
+                $key = $col . '_' . $i;
+                $placeholders[] = ':' . $key;
+                $params[$key] = $v;
+            }
+            $clauses[] = "l.{$col} IN (" . implode(',', $placeholders) . ')';
         };
 
         if (!empty($filters['q'])) {
@@ -97,22 +112,22 @@ class LeadRepository
             $params['domain'] = '%' . $filters['domain'] . '%';
         }
         if (!empty($filters['title'])) {
-            $like('title', $filters['title']);
+            $in('title', (array) $filters['title']);
         }
         if (!empty($filters['seniority'])) {
-            $exact('seniority', $filters['seniority']);
+            $in('seniority', (array) $filters['seniority']);
         }
         if (!empty($filters['departments'])) {
-            $like('departments', $filters['departments']);
+            $in('departments', (array) $filters['departments']);
         }
         if (!empty($filters['industry'])) {
-            $exact('industry', $filters['industry']);
+            $in('industry', (array) $filters['industry']);
         }
         if (!empty($filters['country'])) {
-            $exact('country', $filters['country']);
+            $in('country', (array) $filters['country']);
         }
         if (!empty($filters['employee_count'])) {
-            $exact('employee_count', $filters['employee_count']);
+            $in('employee_count', (array) $filters['employee_count']);
         }
         if (!empty($filters['vertical_id'])) {
             $clauses[] = 'l.vertical_id = :vertical_id';
@@ -174,13 +189,19 @@ class LeadRepository
         return (int) $stmt->fetchColumn();
     }
 
-    public static function distinctValues(PDO $db, string $column): array
+    /**
+     * @param int $limit caps the option list for high-cardinality free-text
+     *   columns (e.g. title) used in checkbox-dropdown filters -- 0 means
+     *   no cap.
+     */
+    public static function distinctValues(PDO $db, string $column, int $limit = 0): array
     {
-        $allowed = ['seniority', 'industry', 'country', 'employee_count', 'company_country'];
+        $allowed = ['seniority', 'industry', 'country', 'employee_count', 'company_country', 'title', 'departments'];
         if (!in_array($column, $allowed, true)) {
             throw new InvalidArgumentException("Column not filterable: {$column}");
         }
-        $stmt = $db->query("SELECT DISTINCT {$column} FROM leads WHERE {$column} IS NOT NULL AND {$column} <> '' ORDER BY {$column}");
+        $limitSql = $limit > 0 ? " LIMIT {$limit}" : '';
+        $stmt = $db->query("SELECT DISTINCT {$column} FROM leads WHERE {$column} IS NOT NULL AND {$column} <> '' ORDER BY {$column}{$limitSql}");
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }
 

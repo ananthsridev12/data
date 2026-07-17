@@ -36,16 +36,20 @@ if (!empty($_GET['campaign_export'])) {
 }
 
 // Ad-hoc export of everything matching the dashboard's current filter.
+$multiParam = static function (string $key): array {
+    return array_values(array_filter(array_map('trim', (array) ($_GET[$key] ?? []))));
+};
+
 $filters = [
     'q' => trim((string) ($_GET['q'] ?? '')),
     'company' => trim((string) ($_GET['company'] ?? '')),
     'domain' => trim((string) ($_GET['domain'] ?? '')),
-    'title' => trim((string) ($_GET['title'] ?? '')),
-    'seniority' => trim((string) ($_GET['seniority'] ?? '')),
-    'departments' => trim((string) ($_GET['departments'] ?? '')),
-    'industry' => trim((string) ($_GET['industry'] ?? '')),
-    'country' => trim((string) ($_GET['country'] ?? '')),
-    'employee_count' => trim((string) ($_GET['employee_count'] ?? '')),
+    'title' => $multiParam('title'),
+    'seniority' => $multiParam('seniority'),
+    'departments' => $multiParam('departments'),
+    'industry' => $multiParam('industry'),
+    'country' => $multiParam('country'),
+    'employee_count' => $multiParam('employee_count'),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
