@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
+require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 
 $user = require_login();
 
@@ -15,7 +16,19 @@ $campaignId = (int) ($_POST['campaign_id'] ?? 0);
 $page = (int) ($_POST['page'] ?? 1);
 $action = $_POST['action'] ?? '';
 $ids = array_map('intval', $_POST['assignment_ids'] ?? []);
-$redirect = 'campaign_leads.php?campaign_id=' . $campaignId . '&page=' . $page;
+
+// Carries campaign_leads.php's active filters (if any) back into the
+// redirect so a bulk action doesn't drop the admin back to the unfiltered
+// view. Prefixed filter_* to avoid colliding with this endpoint's own
+// same-named POST fields (e.g. delivery_status, the value to *apply*).
+$filterParams = [];
+foreach (['wave_status', 'email_sent', 'imported', 'delivery_status'] as $fk) {
+    $fv = (string) ($_POST['filter_' . $fk] ?? '');
+    if ($fv !== '') {
+        $filterParams[$fk] = $fv;
+    }
+}
+$redirect = 'campaign_leads.php?' . http_build_query(['campaign_id' => $campaignId, 'page' => $page] + $filterParams);
 
 if (!$campaignId || !$ids) {
     flash_set('danger', 'No leads were selected.');
@@ -148,6 +161,37 @@ if ($action === 'mark_imported') {
         $message .= " {$pushedSkipped} skipped (already pushed to Saleshandy).";
     }
     flash_set('success', $message);
+} elseif ($action === 'sync_fields_to_saleshandy') {
+    $campStmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
+    $campStmt->execute([$campaignId]);
+    $campaign = $campStmt->fetch();
+    if (!$campaign || !$campaign['saleshandy_sequence_id']) {
+        flash_set('danger', 'This campaign is not linked to a Saleshandy sequence.');
+        header('Location: ' . $redirect);
+        exit;
+    }
+
+    $config = require __DIR__ . '/../app/config/config.php';
+    try {
+        $client = SaleshandyClient::fromConfig($config);
+        $result = $client->syncFieldsToSaleshandy(db(), $ids, $campaignId);
+    } catch (SaleshandyApiException $ex) {
+        flash_set('danger', 'Could not reach Saleshandy: ' . $ex->getMessage());
+        header('Location: ' . $redirect);
+        exit;
+    }
+
+    $message = "{$result['updated']} lead(s) had their current details pushed to their existing Saleshandy contact.";
+    if ($result['skipped_not_pushed'] > 0) {
+        $message .= " {$result['skipped_not_pushed']} skipped (not pushed to Saleshandy yet).";
+    }
+    if ($result['not_found'] > 0) {
+        $message .= " {$result['not_found']} skipped (no matching Saleshandy contact found by email).";
+    }
+    if ($result['errors']) {
+        $message .= ' Errors: ' . implode('; ', array_slice($result['errors'], 0, 3));
+    }
+    flash_set($result['errors'] ? 'danger' : 'success', $message);
 } else {
     flash_set('danger', 'Unknown action.');
 }

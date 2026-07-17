@@ -115,6 +115,165 @@ class SaleshandyClient
     }
 
     /**
+     * Looks up a prospect's Saleshandy-internal id by email (GET
+     * /contacts?search=..., a contact-level listing endpoint independent
+     * of any sequence) -- needed for updateProspectAttributes() below,
+     * which addresses a prospect by id rather than email.
+     */
+    public function findProspectId(string $email): ?string
+    {
+        $email = strtolower(trim($email));
+        if ($email === '') {
+            return null;
+        }
+        $data = $this->request('GET', '/contacts', ['search' => $email, 'pageSize' => 10, 'page' => 1]);
+        $payload = $this->unwrap($data);
+        $rows = isset($payload['data']) && is_array($payload['data']) ? $payload['data'] : $payload;
+        foreach ($rows as $row) {
+            if (is_array($row) && strtolower(trim((string) ($row['email'] ?? ''))) === $email) {
+                return isset($row['id']) ? (string) $row['id'] : null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Updates a prospect's field values directly on their Saleshandy
+     * contact record (POST /prospects/{id}/attribute) -- contact level,
+     * not tied to any sequence/campaign. This is the right tool for
+     * refreshing an already-pushed lead's data after it's been edited
+     * here (e.g. via re-import): unlike re-running pushProspects()
+     * against the sequence-import endpoint, it never re-enrolls the
+     * prospect or touches their current step.
+     *
+     * @param array<string,string> $fieldIdToValue Saleshandy field id => new value
+     */
+    public function updateProspectAttributes(string $prospectId, array $fieldIdToValue): void
+    {
+        if (!$fieldIdToValue) {
+            return;
+        }
+        $attributes = [];
+        foreach ($fieldIdToValue as $fieldId => $value) {
+            $attributes[] = ['fieldId' => (string) $fieldId, 'attributeValue' => (string) $value];
+        }
+        $this->request('POST', "/prospects/{$prospectId}/attribute", ['attributes' => $attributes]);
+    }
+
+    /**
+     * Pushes each checked, already-pushed lead's current field values
+     * (per the enabled Saleshandy Field Mapping) to its existing
+     * Saleshandy contact via updateProspectAttributes() -- the answer to
+     * "I updated leads via re-import, how do I get that into Saleshandy":
+     * contact level, not campaign/sequence level, so it can't disturb
+     * anyone's sequence position. Saleshandy's prospect id is resolved by
+     * email once and cached on leads.saleshandy_prospect_id.
+     *
+     * @param int[] $assignmentIds
+     * @return array{updated:int, not_found:int, skipped_not_pushed:int, errors:array<int,string>}
+     */
+    public function syncFieldsToSaleshandy(PDO $db, array $assignmentIds, int $campaignId): array
+    {
+        $stats = ['updated' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'errors' => []];
+        if (!$assignmentIds) {
+            return $stats;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($assignmentIds), '?'));
+        $stmt = $db->prepare(
+            "SELECT a.status, l.*, v.label AS vertical_label, s.label AS service_label
+               FROM lead_campaign_assignments a
+               JOIN leads l ON l.id = a.lead_id
+               LEFT JOIN verticals v ON v.id = l.vertical_id
+               LEFT JOIN services s ON s.id = l.service_id
+              WHERE a.campaign_id = ? AND a.id IN ({$placeholders})"
+        );
+        $stmt->execute(array_merge([$campaignId], $assignmentIds));
+        $rows = $stmt->fetchAll();
+
+        $eligible = array_values(array_filter($rows, static fn(array $r) => $r['status'] === 'pushed'));
+        $stats['skipped_not_pushed'] = count($rows) - count($eligible);
+        if (!$eligible) {
+            return $stats;
+        }
+
+        $enabledMappings = $db->query(
+            'SELECT lead_field_key, saleshandy_label FROM saleshandy_field_mappings WHERE enabled = 1'
+        )->fetchAll();
+
+        $fieldsByLabel = [];
+        foreach ($this->listFields() as $f) {
+            if (isset($f['label'], $f['id'])) {
+                $fieldsByLabel[$f['label']] = (string) $f['id'];
+            }
+        }
+
+        $resolveValue = static function (array $lead, string $key): string {
+            if ($key === 'vertical') {
+                return (string) ($lead['vertical_label'] ?? '');
+            }
+            if ($key === 'service') {
+                return (string) ($lead['service_label'] ?? '');
+            }
+            return (string) ($lead[$key] ?? '');
+        };
+
+        $updateProspectId = $db->prepare('UPDATE leads SET saleshandy_prospect_id = ? WHERE id = ?');
+
+        foreach ($eligible as $lead) {
+            $prospectId = $lead['saleshandy_prospect_id'];
+            if (!$prospectId) {
+                try {
+                    $prospectId = $this->findProspectId($lead['email']);
+                } catch (SaleshandyApiException $ex) {
+                    $stats['errors'][] = "{$lead['email']}: {$ex->getMessage()}";
+                    continue;
+                }
+                if ($prospectId) {
+                    $updateProspectId->execute([$prospectId, $lead['id']]);
+                }
+            }
+            if (!$prospectId) {
+                $stats['not_found']++;
+                continue;
+            }
+
+            $fieldIdToValue = [];
+            foreach ([['First Name', 'first_name'], ['Last Name', 'last_name']] as [$label, $key]) {
+                if (!isset($fieldsByLabel[$label])) {
+                    continue;
+                }
+                $value = $resolveValue($lead, $key);
+                if ($value !== '') {
+                    $fieldIdToValue[$fieldsByLabel[$label]] = $value;
+                }
+            }
+            foreach ($enabledMappings as $m) {
+                if (!isset($fieldsByLabel[$m['saleshandy_label']])) {
+                    continue;
+                }
+                $value = $resolveValue($lead, $m['lead_field_key']);
+                if ($value !== '') {
+                    $fieldIdToValue[$fieldsByLabel[$m['saleshandy_label']]] = $value;
+                }
+            }
+
+            if (!$fieldIdToValue) {
+                continue;
+            }
+
+            try {
+                $this->updateProspectAttributes($prospectId, $fieldIdToValue);
+                $stats['updated']++;
+            } catch (SaleshandyApiException $ex) {
+                $stats['errors'][] = "{$lead['email']}: {$ex->getMessage()}";
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
      * Checks Saleshandy's email verification status for a batch of
      * addresses. The exact set of status strings Saleshandy returns isn't
      * documented anywhere accessible while building this (not in their

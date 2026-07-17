@@ -21,11 +21,40 @@ if (!$campaign) {
 $perPage = 50;
 $page = max(1, (int) ($_GET['page'] ?? 1));
 
-$countStmt = db()->prepare(
-    'SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
-      WHERE a.campaign_id = ? AND l.deleted_at IS NULL'
-);
-$countStmt->execute([$campaignId]);
+// Filters: narrow the table below by wave status, email-sent, imported-to-
+// Saleshandy, and delivery status -- alongside the always-visible,
+// unfiltered count strip further down that answers "how many are active,
+// how many had an email sent" etc. at a glance.
+$filters = [
+    'wave_status' => trim((string) ($_GET['wave_status'] ?? '')),
+    'email_sent' => trim((string) ($_GET['email_sent'] ?? '')),
+    'imported' => trim((string) ($_GET['imported'] ?? '')),
+    'delivery_status' => trim((string) ($_GET['delivery_status'] ?? '')),
+];
+
+$whereClauses = ['a.campaign_id = :campaign_id', 'l.deleted_at IS NULL'];
+$whereParams = ['campaign_id' => $campaignId];
+if (in_array($filters['wave_status'], ['active', 'held', 'suppressed'], true)) {
+    $whereClauses[] = 'a.wave_status = :wave_status';
+    $whereParams['wave_status'] = $filters['wave_status'];
+}
+if ($filters['email_sent'] === '1' || $filters['email_sent'] === '0') {
+    $whereClauses[] = 'a.email_sent = :email_sent';
+    $whereParams['email_sent'] = (int) $filters['email_sent'];
+}
+if ($filters['imported'] === '1') {
+    $whereClauses[] = "a.status IN ('exported', 'pushed')";
+} elseif ($filters['imported'] === '0') {
+    $whereClauses[] = "a.status = 'assigned'";
+}
+if ($filters['delivery_status'] !== '' && in_array($filters['delivery_status'], DELIVERY_STATUSES, true)) {
+    $whereClauses[] = 'a.delivery_status = :delivery_status';
+    $whereParams['delivery_status'] = $filters['delivery_status'];
+}
+$where = 'WHERE ' . implode(' AND ', $whereClauses);
+
+$countStmt = db()->prepare("SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id {$where}");
+$countStmt->execute($whereParams);
 $total = (int) $countStmt->fetchColumn();
 $totalPages = max(1, (int) ceil($total / $perPage));
 $page = min($page, $totalPages);
@@ -36,12 +65,28 @@ $stmt = db()->prepare(
        FROM lead_campaign_assignments a
        JOIN leads l ON l.id = a.lead_id
        JOIN users u ON u.id = a.assigned_by
-      WHERE a.campaign_id = :campaign_id AND l.deleted_at IS NULL
+      {$where}
       ORDER BY a.assigned_at DESC
       LIMIT {$perPage} OFFSET {$offset}"
 );
-$stmt->execute(['campaign_id' => $campaignId]);
+$stmt->execute($whereParams);
 $assignments = $stmt->fetchAll();
+
+$statsStmt = db()->prepare(
+    "SELECT
+        SUM(a.wave_status = 'active') AS wave_active,
+        SUM(a.wave_status = 'held') AS wave_held,
+        SUM(a.wave_status = 'suppressed') AS wave_suppressed,
+        SUM(a.email_sent = 1) AS email_sent_yes,
+        SUM(a.email_sent = 0) AS email_sent_no,
+        SUM(a.status IN ('exported', 'pushed')) AS imported_yes,
+        SUM(a.status = 'assigned') AS imported_no,
+        COUNT(*) AS all_count
+       FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
+      WHERE a.campaign_id = ? AND l.deleted_at IS NULL"
+);
+$statsStmt->execute([$campaignId]);
+$stats = $statsStmt->fetch();
 
 $waveStmt = db()->prepare(
     "SELECT a.id AS leader_assignment_id, a.bounce_status, a.bounce_type, a.assigned_at,
@@ -61,10 +106,54 @@ render_header('Campaign leads');
 ?>
 <h1 class="h4 mb-1">Leads assigned to "<?= e($campaign['name']) ?>"</h1>
 <p class="text-muted">
-  <?= number_format($total) ?> lead(s) assigned (page <?= $page ?> of <?= $totalPages ?>) --
+  <?= number_format($total) ?> lead(s) match<?= array_filter($filters) ? ' this filter' : '' ?> (page <?= $page ?> of <?= $totalPages ?>) --
   <a href="campaign_select_leads.php?campaign_id=<?= (int) $campaignId ?>">Add leads to this campaign</a> --
   <a href="column_settings.php?page=campaign_leads&return_to=<?= urlencode('campaign_leads.php?campaign_id=' . $campaignId) ?>">Manage columns</a>
 </p>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>" class="badge bg-dark text-decoration-none"><?= (int) $stats['all_count'] ?> total</a>
+      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&wave_status=active" class="badge bg-success text-decoration-none"><?= (int) $stats['wave_active'] ?> active</a>
+      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&wave_status=held" class="badge bg-warning text-decoration-none"><?= (int) $stats['wave_held'] ?> held</a>
+      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&wave_status=suppressed" class="badge bg-danger text-decoration-none"><?= (int) $stats['wave_suppressed'] ?> suppressed</a>
+      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&email_sent=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['email_sent_yes'] ?> email sent</a>
+      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&email_sent=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['email_sent_no'] ?> not sent</a>
+      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['imported_yes'] ?> imported to Saleshandy</a>
+      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['imported_no'] ?> not imported</a>
+    </div>
+    <form method="get" action="campaign_leads.php" class="d-flex flex-wrap gap-2 align-items-center">
+      <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+      <select name="wave_status" class="form-select form-select-sm" style="max-width: 170px;">
+        <option value="">Wave status (all)</option>
+        <option value="active" <?= $filters['wave_status'] === 'active' ? 'selected' : '' ?>>Active</option>
+        <option value="held" <?= $filters['wave_status'] === 'held' ? 'selected' : '' ?>>Held</option>
+        <option value="suppressed" <?= $filters['wave_status'] === 'suppressed' ? 'selected' : '' ?>>Suppressed</option>
+      </select>
+      <select name="email_sent" class="form-select form-select-sm" style="max-width: 170px;">
+        <option value="">Email sent (all)</option>
+        <option value="1" <?= $filters['email_sent'] === '1' ? 'selected' : '' ?>>Yes</option>
+        <option value="0" <?= $filters['email_sent'] === '0' ? 'selected' : '' ?>>No</option>
+      </select>
+      <select name="imported" class="form-select form-select-sm" style="max-width: 210px;">
+        <option value="">Imported to Saleshandy (all)</option>
+        <option value="1" <?= $filters['imported'] === '1' ? 'selected' : '' ?>>Yes</option>
+        <option value="0" <?= $filters['imported'] === '0' ? 'selected' : '' ?>>No</option>
+      </select>
+      <select name="delivery_status" class="form-select form-select-sm" style="max-width: 190px;">
+        <option value="">Delivery status (all)</option>
+        <?php foreach (DELIVERY_STATUSES as $ds): ?>
+          <option value="<?= e($ds) ?>" <?= $filters['delivery_status'] === $ds ? 'selected' : '' ?>><?= e($ds) ?></option>
+        <?php endforeach; ?>
+      </select>
+      <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+      <?php if (array_filter($filters)): ?>
+        <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>" class="btn btn-sm btn-outline-secondary">Clear filters</a>
+      <?php endif; ?>
+    </form>
+  </div>
+</div>
 
 <?php if ($campaign['saleshandy_sequence_id']): ?>
 <div class="card mb-4">
@@ -170,6 +259,9 @@ render_header('Campaign leads');
   <?= csrf_field() ?>
   <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
   <input type="hidden" name="page" value="<?= (int) $page ?>">
+  <?php foreach ($filters as $fk => $fv): if ($fv === '') continue; ?>
+    <input type="hidden" name="filter_<?= e($fk) ?>" value="<?= e($fv) ?>">
+  <?php endforeach; ?>
 
   <?php
   $renderAssignmentCell = static function (string $key, array $a) {
@@ -275,6 +367,21 @@ render_header('Campaign leads');
     </div>
   </div>
 
+  <?php if ($campaign['saleshandy_sequence_id']): ?>
+  <div class="card mb-4 border-info">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+      <button type="submit" name="action" value="sync_fields_to_saleshandy" class="btn btn-sm btn-outline-info"
+              onclick="return confirm('Push checked leads\' current field values (per Saleshandy Field Mapping) to their existing Saleshandy contact? Only leads already pushed are updated -- this refreshes their data without touching sequence position or steps.');">
+        Sync updated details to Saleshandy
+      </button>
+      <span class="text-muted small">
+        For leads edited here since being pushed (e.g. via re-import) -- updates the field values on their existing
+        Saleshandy contact directly. Skips anything not yet pushed.
+      </span>
+    </div>
+  </div>
+  <?php endif; ?>
+
   <div class="card mb-4 border-danger">
     <div class="card-body d-flex flex-wrap gap-2 align-items-center">
       <button type="submit" name="action" value="remove_from_campaign" class="btn btn-sm btn-outline-warning"
@@ -306,9 +413,9 @@ render_header('Campaign leads');
 <?php if ($totalPages > 1): ?>
 <nav>
   <ul class="pagination">
-    <?php for ($p = 1; $p <= $totalPages; $p++): ?>
+    <?php for ($p = 1; $p <= $totalPages; $p++): $q = array_filter($filters) + ['campaign_id' => $campaignId, 'page' => $p]; ?>
       <li class="page-item <?= $p === $page ? 'active' : '' ?>">
-        <a class="page-link" href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&page=<?= $p ?>"><?= $p ?></a>
+        <a class="page-link" href="campaign_leads.php?<?= http_build_query($q) ?>"><?= $p ?></a>
       </li>
     <?php endfor; ?>
   </ul>

@@ -38,8 +38,9 @@ and import, in order:
 14. `sql/014_saleshandy_sync_tracking.sql`
 15. `sql/015_email_verification.sql`
 16. `sql/016_bounce_suppression_settings.sql`
+17. `sql/017_saleshandy_prospect_sync.sql`
 
-(If you're setting up a brand-new site, import all sixteen in order. If
+(If you're setting up a brand-new site, import all seventeen in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -248,6 +249,27 @@ everything else in the app works without it.
      don't exist yet. A lead created this way only has an email and a
      name (Saleshandy's activity data doesn't include company, title,
      etc.), which is why Company Name is optional.
+   - **Sync updated details to Saleshandy** (only shown once a sequence is
+     linked) is for a lead you've edited here *after* it was already
+     pushed -- typically by re-importing a CSV/Excel file that upserts by
+     email (see "Notes on the Saleshandy CSV export" and the Import
+     screen; there's no in-app "Edit lead" form for core fields). It
+     pushes the checked leads' current field values straight to their
+     existing Saleshandy **contact** record via `POST
+     /prospects/{id}/attribute` -- contact level, not the sequence-import
+     endpoint -- so it can't re-enroll anyone or disturb their step
+     position. Only leads already pushed are touched; Saleshandy's
+     prospect id is looked up by email once and cached on
+     `leads.saleshandy_prospect_id`. This is manual only (no cron
+     backstop) -- run it after a re-import whenever a pushed lead's data
+     changed.
+
+The **Campaign Leads** page also has a count strip (total/active/held/
+suppressed/email sent/imported) right under the page title, each number
+a clickable link that filters the table below to just that slice -- plus
+a filter form (wave status, email sent, imported to Saleshandy, delivery
+status) for narrowing further or combining filters. Filters carry through
+pagination and through the bulk-action buttons' redirect.
 
 **Important caveat:** `SaleshandyClient.php`'s endpoint paths were built
 from Saleshandy's documented request/response shapes rather than a full
