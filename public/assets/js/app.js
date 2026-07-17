@@ -101,5 +101,21 @@
         updateLabel(toggle);
       });
     }
+
+    var selectAllBtn = menu.querySelector('.ms-select-all');
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', function () {
+        // Only the currently visible options -- if a search term is
+        // narrowing the list, "Select all" means "all of these", not
+        // every hidden option too.
+        menu.querySelectorAll('.ms-option').forEach(function (opt) {
+          if (opt.style.display !== 'none') {
+            var cb = opt.querySelector('input[type=checkbox]');
+            if (cb) cb.checked = true;
+          }
+        });
+        updateLabel(toggle);
+      });
+    }
   });
 })();

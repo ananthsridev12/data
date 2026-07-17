@@ -110,7 +110,10 @@ function render_multiselect_filter(string $name, string $label, array $options, 
         </div>
         <?php if ($options): ?>
         <hr class="my-2">
-        <button type="button" class="btn btn-sm btn-link p-0 ms-clear">Clear</button>
+        <div class="d-flex gap-3">
+          <button type="button" class="btn btn-sm btn-link p-0 ms-select-all">Select all</button>
+          <button type="button" class="btn btn-sm btn-link p-0 ms-clear">Clear</button>
+        </div>
         <?php endif; ?>
       </div>
     </div>

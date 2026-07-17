@@ -182,11 +182,20 @@ the shared implementation:
    Active/Replied/Paused (sent, and not currently flagged as a bounce) --
    at that point B becomes assignable again. A confirmed bounce doesn't
    go through this rule at all -- it's already the stronger, permanent
-   block from rule 2. Visible two ways: the Dashboard shows a **Pending
+   block from rule 2. Visible three ways: the Dashboard shows a **Pending
    elsewhere** badge (hover for which campaign) on any lead whose account
-   has another persona currently in flight, and a skipped selection
-   reports exactly which campaign(s) are holding it up (e.g. "2 in
-   'DM-DT-ESI-US-01'"). See `WaveAssigner::pendingElsewhereCampaigns()`.
+   has another persona currently in flight; a skipped selection reports
+   exactly which campaign(s) are holding it up (e.g. "2 in
+   'DM-DT-ESI-US-01'"); and Add Leads to Campaign has a **Pending
+   elsewhere** filter (all/hide blocked leads/show only blocked leads) to
+   preview what's actually assignable before you save a selection. See
+   `WaveAssigner::pendingElsewhereCampaigns()`.
+
+All six checkbox-dropdown filters (Title, Seniority, Department, Size,
+Industry, Country, on both the Dashboard and Add Leads to Campaign) have
+a **Select all** link next to Clear, at the bottom of the dropdown --
+it selects only the currently visible options, so typing a search term
+first narrows what "Select all" applies to.
 
 On the **Campaign Leads** page, the checkbox list at the bottom has two
 extra actions alongside Mark Imported/Email Sent/Delivery Status:

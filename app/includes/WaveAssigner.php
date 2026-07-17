@@ -45,8 +45,11 @@ class WaveAssigner
      * bounce). A confirmed bounce isn't handled here at all: it already
      * suppresses the whole domain via suppressed_domains, which
      * filterEligibleForCampaign() checks first.
+     *
+     * Public so LeadRepository can reuse it verbatim (dashboard's "Pending
+     * elsewhere" badge/filter) instead of a second hand-kept-in-sync copy.
      */
-    private const PENDING_ASSIGNMENT_SQL = "(
+    public const PENDING_ASSIGNMENT_SQL = "(
         a2.bounce_status != 'delivered'
         AND (a2.delivery_status IS NULL OR a2.delivery_status NOT IN ('Active', 'Replied', 'Paused'))
     )";

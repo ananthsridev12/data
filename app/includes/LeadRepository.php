@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/WaveAssigner.php';
+
 /**
  * Server-side filter/search/pagination for the leads dashboard. All
  * filter values are bound via PDO placeholders -- never string-interpolated
@@ -44,17 +46,15 @@ class LeadRepository
                   (SELECT sd.reason FROM suppressed_domains sd
                     WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)) AS suppressed_reason,
                   -- Which campaign(s) a *different* persona at this lead's domain is
-                  -- currently pending in -- kept in sync by hand with
-                  -- WaveAssigner::PENDING_ASSIGNMENT_SQL, since that constant isn't
-                  -- reachable from a plain SQL string here.
+                  -- currently pending in -- shares WaveAssigner::PENDING_ASSIGNMENT_SQL
+                  -- so the two never drift apart.
                   (SELECT GROUP_CONCAT(DISTINCT c2.name SEPARATOR ', ')
                      FROM lead_campaign_assignments a2
                      JOIN leads l2 ON l2.id = a2.lead_id
                      JOIN campaigns c2 ON c2.id = a2.campaign_id
                     WHERE l2.deleted_at IS NULL AND a2.lead_id != l.id
                       AND SUBSTRING_INDEX(l2.email, '@', -1) = SUBSTRING_INDEX(l.email, '@', -1)
-                      AND a2.bounce_status != 'delivered'
-                      AND (a2.delivery_status IS NULL OR a2.delivery_status NOT IN ('Active', 'Replied', 'Paused'))
+                      AND " . WaveAssigner::PENDING_ASSIGNMENT_SQL . "
                      ) AS pending_elsewhere_campaigns
                 FROM leads l
                 LEFT JOIN verticals v ON v.id = l.vertical_id
@@ -166,10 +166,32 @@ class LeadRepository
             $clauses[] = "NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1))";
         }
 
+        // 'pending_elsewhere': '1' shows only leads whose account has a
+        // *different* persona currently pending in another campaign (see
+        // WaveAssigner::PENDING_ASSIGNMENT_SQL) -- '0' hides them, useful
+        // on the campaign lead-selection screen to preview only what would
+        // actually be assignable right now.
+        if (($filters['pending_elsewhere'] ?? '') === '1') {
+            $clauses[] = self::pendingElsewhereExistsClause();
+        } elseif (($filters['pending_elsewhere'] ?? '') === '0') {
+            $clauses[] = 'NOT ' . self::pendingElsewhereExistsClause();
+        }
+
         $clauses[] = 'l.deleted_at IS NULL';
 
         $where = $clauses ? ('WHERE ' . implode(' AND ', $clauses)) : '';
         return [$where, $params];
+    }
+
+    private static function pendingElsewhereExistsClause(): string
+    {
+        return "EXISTS (
+            SELECT 1 FROM lead_campaign_assignments a2
+            JOIN leads l2 ON l2.id = a2.lead_id
+            WHERE l2.deleted_at IS NULL AND a2.lead_id != l.id
+              AND SUBSTRING_INDEX(l2.email, '@', -1) = SUBSTRING_INDEX(l.email, '@', -1)
+              AND " . WaveAssigner::PENDING_ASSIGNMENT_SQL . '
+        )';
     }
 
     /**

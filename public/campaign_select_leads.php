@@ -34,6 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         'service_id' => $rawFilters['service_id'] ?? '',
         'campaign_id' => $campaignId,
         'hide_used_in_campaign' => !empty($rawFilters['hide_used_in_campaign']),
+        'pending_elsewhere' => $rawFilters['pending_elsewhere'] ?? '',
     ];
     $leadIds = LeadRepository::matchingIds(db(), $filters);
 
@@ -139,6 +140,7 @@ $filters = [
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
     'campaign_id' => $campaignId,
     'hide_used_in_campaign' => !isset($_GET['hide_used_in_campaign']) || $_GET['hide_used_in_campaign'] === '1',
+    'pending_elsewhere' => trim((string) ($_GET['pending_elsewhere'] ?? '')),
 ];
 
 $leadCount = count(LeadRepository::matchingIds(db(), $filters));
@@ -203,6 +205,13 @@ render_header('Select leads');
         <?php foreach ($services as $s): ?>
           <option value="<?= (int) $s['id'] ?>" <?= (string) $filters['service_id'] === (string) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
         <?php endforeach; ?>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="pending_elsewhere" class="form-select form-select-sm">
+        <option value="">Pending elsewhere (all)</option>
+        <option value="0" <?= $filters['pending_elsewhere'] === '0' ? 'selected' : '' ?>>No (hide blocked leads)</option>
+        <option value="1" <?= $filters['pending_elsewhere'] === '1' ? 'selected' : '' ?>>Yes (show only blocked leads)</option>
       </select>
     </div>
     <div class="col-md-4 form-check d-flex align-items-center">
