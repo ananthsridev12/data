@@ -52,10 +52,35 @@ $knownFieldLabels = array_values(array_unique(array_filter(array_map(
 ))));
 sort($knownFieldLabels);
 
+// Enabled mappings whose saved label doesn't match anything in the last
+// fetch -- Saleshandy's push/attribute-update endpoints don't error on an
+// unrecognized label, they just silently drop that field, so this is the
+// only way to catch a stale/mistyped mapping (or one saved as free text
+// before ever fetching) before it costs you a push.
+$staleMappings = [];
+if ($knownFieldLabels) {
+    foreach ($mappingRows as $row) {
+        if ($row['enabled'] && $row['saleshandy_label'] !== '' && !in_array($row['saleshandy_label'], $knownFieldLabels, true)) {
+            $staleMappings[$row['lead_field_key']] = $row['saleshandy_label'];
+        }
+    }
+}
+
 render_header('Saleshandy field mapping');
 ?>
 <h1 class="h4 mb-1">Saleshandy field mapping</h1>
 <p class="text-muted">Choose which fields get sent when you push leads to Saleshandy, and what Saleshandy field label each one maps to. First Name, Last Name, and Email are always sent (Saleshandy requires them) and aren't listed here. Unchecked or blank-label fields are simply left out of the push.</p>
+
+<?php if ($staleMappings): ?>
+<div class="alert alert-danger">
+  <strong><?= count($staleMappings) ?> enabled mapping(s) won't actually be sent</strong> -- their saved label doesn't
+  match any field in the most recent fetch from Saleshandy, so pushes/syncs silently skip them (marked below):
+  <?php foreach ($staleMappings as $key => $label): ?>
+    <span class="badge bg-danger me-1"><?= e((LEAD_FIELDS[$key]['label'] ?? LOOKUP_FIELDS[$key]['label'] ?? $key)) ?> &rarr; "<?= e($label) ?>"</span>
+  <?php endforeach; ?>
+  Pick the correct label from the dropdown for each (fetch again first if Saleshandy's fields have changed).
+</div>
+<?php endif; ?>
 
 <div class="card mb-3">
   <div class="card-body d-flex flex-wrap gap-2 align-items-center">
@@ -110,17 +135,27 @@ render_header('Saleshandy field mapping');
       };
       ?>
       <?php foreach (LEAD_FIELDS as $key => $meta): $row = $mappingByKey[$key] ?? null; ?>
-        <tr>
+        <tr class="<?= isset($staleMappings[$key]) ? 'table-danger' : '' ?>">
           <td><input type="checkbox" name="enabled[<?= e($key) ?>]" value="1" <?= ($row && $row['enabled']) ? 'checked' : '' ?>></td>
           <td><?= e($meta['label']) ?></td>
-          <td><?php $renderLabelField($key, $row['saleshandy_label'] ?? null); ?></td>
+          <td>
+            <?php $renderLabelField($key, $row['saleshandy_label'] ?? null); ?>
+            <?php if (isset($staleMappings[$key])): ?>
+              <div class="small text-danger">Not found in Saleshandy -- won't be sent until re-picked.</div>
+            <?php endif; ?>
+          </td>
         </tr>
       <?php endforeach; ?>
       <?php foreach (LOOKUP_FIELDS as $key => $meta): $row = $mappingByKey[$key] ?? null; ?>
-        <tr>
+        <tr class="<?= isset($staleMappings[$key]) ? 'table-danger' : '' ?>">
           <td><input type="checkbox" name="enabled[<?= e($key) ?>]" value="1" <?= ($row && $row['enabled']) ? 'checked' : '' ?>></td>
           <td><?= e($meta['label']) ?></td>
-          <td><?php $renderLabelField($key, $row['saleshandy_label'] ?? null); ?></td>
+          <td>
+            <?php $renderLabelField($key, $row['saleshandy_label'] ?? null); ?>
+            <?php if (isset($staleMappings[$key])): ?>
+              <div class="small text-danger">Not found in Saleshandy -- won't be sent until re-picked.</div>
+            <?php endif; ?>
+          </td>
         </tr>
       <?php endforeach; ?>
       </tbody>

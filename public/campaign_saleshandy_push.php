@@ -124,6 +124,32 @@ $enabledMappings = db()->query(
     'SELECT lead_field_key, saleshandy_label FROM saleshandy_field_mappings WHERE enabled = 1'
 )->fetchAll();
 
+// A mapping's saleshandy_label must currently match one of Saleshandy's
+// real field labels, or Saleshandy's import-with-field-name endpoint
+// silently drops that key -- it doesn't error, it just doesn't show up
+// on the pushed contact, which previously made a stale/mistyped label
+// (e.g. one saved as free text before ever fetching the field list, or
+// one that no longer exists in Saleshandy) impossible to tell apart from
+// a real bug. Cross-check against a live fetch here so it's visible in
+// the push result instead; if the fetch itself fails, fail open and
+// push with the mappings as configured rather than blocking the push.
+$staleLabels = [];
+try {
+    $knownLabels = array_filter(array_map(
+        static fn(array $f) => trim((string) ($f['label'] ?? '')),
+        $client->listFields()
+    ));
+    $enabledMappings = array_values(array_filter($enabledMappings, static function (array $m) use ($knownLabels, &$staleLabels) {
+        if (in_array($m['saleshandy_label'], $knownLabels, true)) {
+            return true;
+        }
+        $staleLabels[] = $m['saleshandy_label'];
+        return false;
+    }));
+} catch (SaleshandyApiException $ex) {
+    // Fail open -- push with mappings as configured, unvalidated.
+}
+
 $resolveValue = static function (array $lead, string $key): string {
     if ($key === 'vertical') {
         return (string) ($lead['vertical_label'] ?? '');
@@ -173,6 +199,14 @@ if ($pushedCount > 0) {
         ? " ({$skippedBad} skipped -- bad email" . ($skippedRisky ? ", {$skippedRisky} skipped -- risky email" : '') . ')'
         : '';
     flash_set('success', "{$pushedCount} lead(s) queued for push to Saleshandy{$verificationNote} -- run \"Refresh statuses\" in a few minutes to confirm delivery.");
+}
+if ($staleLabels) {
+    flash_set(
+        'danger',
+        'These enabled field mapping(s) were NOT sent, because their Saleshandy label no longer matches a real field there -- '
+            . 'fix them on Saleshandy Field Mapping (fetch the field list, then re-pick the label): '
+            . implode(', ', array_unique($staleLabels))
+    );
 }
 if ($errors) {
     flash_set('danger', 'Some pushes failed: ' . implode('; ', array_unique($errors)));

@@ -243,7 +243,20 @@ everything else in the app works without it.
    your fields get sent on push, and what Saleshandy field label each
    maps to -- everything is opt-in; nothing is sent unless you enable and
    label it here. Use "Fetch field list from Saleshandy" to see the
-   exact label spelling Saleshandy expects.
+   exact label spelling Saleshandy expects -- **always pick from the
+   dropdown, never type a label by hand**: Saleshandy's push and sync
+   endpoints don't error on a label that doesn't match a real field,
+   they silently drop that one field and send everything else, which
+   looks like "only some fields are updating" with no error to explain
+   why. Re-fetch and check this page any time after renaming/removing a
+   field in Saleshandy -- an enabled mapping whose label no longer
+   matches is called out in red, right on this page and in the push
+   result, instead of failing silently. This is also the place to fix a
+   *wrong* label (e.g. a field mapped to a Saleshandy field that turns
+   out to hold something else, like company type/industry, when you
+   meant a different one, like the company's website URL): fetch the
+   list, find the field that's actually right for the value, and re-pick
+   it from the dropdown.
 4. Visit **Tags** (admin nav) and "Sync from Saleshandy" to pull in your
    existing Saleshandy tags, so leads can be tagged from a known list
    during import or editing (new tags typed in here are created on
