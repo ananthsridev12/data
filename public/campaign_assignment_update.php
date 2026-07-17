@@ -181,7 +181,10 @@ if ($action === 'mark_imported') {
         exit;
     }
 
-    $message = "{$result['updated']} lead(s) had their current details pushed to their existing Saleshandy contact.";
+    $message = "{$result['updated']} lead(s) had every field successfully saved to their existing Saleshandy contact.";
+    if ($result['partial'] > 0) {
+        $message .= " {$result['partial']} had SOME fields rejected by Saleshandy (see errors below) -- not fully updated.";
+    }
     if ($result['skipped_not_pushed'] > 0) {
         $message .= " {$result['skipped_not_pushed']} skipped (not pushed to Saleshandy yet).";
     }

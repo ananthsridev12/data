@@ -146,18 +146,37 @@ class SaleshandyClient
      * against the sequence-import endpoint, it never re-enrolls the
      * prospect or touches their current step.
      *
+     * IMPORTANT: a 2xx response here does NOT mean every field was
+     * actually saved -- confirmed via Saleshandy's own CLI
+     * (attribute-set.js), the response is {results: [{fieldId, success},
+     * ...]}, so each field can individually succeed or fail (wrong field
+     * type, a read-only/system field, etc.) inside an overall-successful
+     * call. Callers must check the returned failed-field-id list rather
+     * than assuming success from the absence of a thrown exception.
+     *
      * @param array<string,string> $fieldIdToValue Saleshandy field id => new value
+     * @return array<int,string> field ids Saleshandy reported as failed (empty = every field saved)
      */
-    public function updateProspectAttributes(string $prospectId, array $fieldIdToValue): void
+    public function updateProspectAttributes(string $prospectId, array $fieldIdToValue): array
     {
         if (!$fieldIdToValue) {
-            return;
+            return [];
         }
         $attributes = [];
         foreach ($fieldIdToValue as $fieldId => $value) {
             $attributes[] = ['fieldId' => (string) $fieldId, 'attributeValue' => (string) $value];
         }
-        $this->request('POST', "/prospects/{$prospectId}/attribute", ['attributes' => $attributes]);
+        $data = $this->request('POST', "/prospects/{$prospectId}/attribute", ['attributes' => $attributes]);
+        $payload = $this->unwrap($data);
+        $results = is_array($payload['results'] ?? null) ? $payload['results'] : [];
+
+        $failed = [];
+        foreach ($results as $r) {
+            if (is_array($r) && isset($r['fieldId']) && empty($r['success'])) {
+                $failed[] = (string) $r['fieldId'];
+            }
+        }
+        return $failed;
     }
 
     /**
@@ -170,11 +189,11 @@ class SaleshandyClient
      * email once and cached on leads.saleshandy_prospect_id.
      *
      * @param int[] $assignmentIds
-     * @return array{updated:int, not_found:int, skipped_not_pushed:int, errors:array<int,string>}
+     * @return array{updated:int, partial:int, not_found:int, skipped_not_pushed:int, errors:array<int,string>}
      */
     public function syncFieldsToSaleshandy(PDO $db, array $assignmentIds, int $campaignId): array
     {
-        $stats = ['updated' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'errors' => []];
+        $stats = ['updated' => 0, 'partial' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'errors' => []];
         if (!$assignmentIds) {
             return $stats;
         }
@@ -207,6 +226,7 @@ class SaleshandyClient
                 $fieldsByLabel[$f['label']] = (string) $f['id'];
             }
         }
+        $labelByFieldId = array_flip($fieldsByLabel);
 
         $resolveValue = static function (array $lead, string $key): string {
             if ($key === 'vertical') {
@@ -271,8 +291,20 @@ class SaleshandyClient
             }
 
             try {
-                $this->updateProspectAttributes($prospectId, $fieldIdToValue);
-                $stats['updated']++;
+                $failedFieldIds = $this->updateProspectAttributes($prospectId, $fieldIdToValue);
+                if (!$failedFieldIds) {
+                    $stats['updated']++;
+                } else {
+                    $stats['partial']++;
+                    $failedLabels = array_map(
+                        static fn(string $fieldId) => $labelByFieldId[$fieldId] ?? $fieldId,
+                        $failedFieldIds
+                    );
+                    $succeededCount = count($fieldIdToValue) - count($failedFieldIds);
+                    $stats['errors'][] = "{$lead['email']}: Saleshandy rejected " . count($failedFieldIds)
+                        . ' of ' . count($fieldIdToValue) . " field(s) ({$succeededCount} saved) -- failed: "
+                        . implode(', ', $failedLabels);
+                }
             } catch (SaleshandyApiException $ex) {
                 $stats['errors'][] = "{$lead['email']}: {$ex->getMessage()}";
             }
