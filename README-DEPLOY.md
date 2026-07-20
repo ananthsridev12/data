@@ -261,6 +261,17 @@ has two parts:
   and email-sent date (`lead_campaign_assignments.email_sent_at`). Blank/
   unknown Company Country groups as literal "NA", matching how the source
   data is usually reported. See `AnalyticsRepository::pivotByDimension()`.
+- **Charts (optional, on top of the same data)** -- two doughnut charts
+  under Campaign Summary (Imported vs. Not Imported, Email Sent vs. Not
+  Sent, using the current filter's overall totals), plus a **Table /
+  Chart** tab on each of the four breakdown cards that switches to a
+  stacked horizontal bar chart (Imported vs. Not Imported per group
+  value). Pure presentation on top of `pivotByDimension()`'s existing
+  output -- no new queries. Uses Chart.js loaded from the same CDN as
+  Bootstrap (`cdn.jsdelivr.net`, see `render_header()`/`render_footer()`
+  in `helpers.php`) plus `public/assets/js/analytics_charts.js`; each
+  section's rows are embedded as a JSON `<script>` block and a chart is
+  only built the first time its tab is opened.
 
 Since **a campaign now pitches one particular Vertical/Service** (not
 just individual leads), both are set per-campaign on the **Campaigns**
