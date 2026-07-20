@@ -153,17 +153,29 @@ class LeadRepository
         if (!empty($filters['employee_count'])) {
             $in('employee_count', (array) $filters['employee_count']);
         }
-        if (!empty($filters['vertical_id'])) {
-            $clauses[] = 'l.vertical_id = :vertical_id';
-            $params['vertical_id'] = (int) $filters['vertical_id'];
+        // 'none' is a sentinel (never a real id) for "no vertical/service
+        // set" -- matches AnalyticsRepository::groupExpr()'s '(none)'
+        // group, so an Analytics drill-through link can reproduce that
+        // row's leads exactly.
+        if (($filters['vertical_id'] ?? '') !== '') {
+            if ($filters['vertical_id'] === 'none') {
+                $clauses[] = 'l.vertical_id IS NULL';
+            } else {
+                $clauses[] = 'l.vertical_id = :vertical_id';
+                $params['vertical_id'] = (int) $filters['vertical_id'];
+            }
         }
         if (!empty($filters['imported_by'])) {
             $clauses[] = 'EXISTS (SELECT 1 FROM import_batches ib2 WHERE ib2.id = l.last_import_batch_id AND ib2.uploaded_by = :imported_by)';
             $params['imported_by'] = (int) $filters['imported_by'];
         }
-        if (!empty($filters['service_id'])) {
-            $clauses[] = 'l.service_id = :service_id';
-            $params['service_id'] = (int) $filters['service_id'];
+        if (($filters['service_id'] ?? '') !== '') {
+            if ($filters['service_id'] === 'none') {
+                $clauses[] = 'l.service_id IS NULL';
+            } else {
+                $clauses[] = 'l.service_id = :service_id';
+                $params['service_id'] = (int) $filters['service_id'];
+            }
         }
         if (!empty($filters['campaign_id'])) {
             $campaignId = (int) $filters['campaign_id'];
@@ -171,6 +183,77 @@ class LeadRepository
                 $clauses[] = 'NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.campaign_id = :hide_campaign_id)';
                 $params['hide_campaign_id'] = $campaignId;
             }
+        }
+        // Company Country (distinct from the personal-contact 'country'
+        // filter above) -- 'NA' is the same blank/unknown sentinel
+        // AnalyticsRepository::groupExpr() displays for an empty value,
+        // so a drill-through link can pass a row's group value straight
+        // through unchanged.
+        if (!empty($filters['company_country'])) {
+            $values = array_values(array_unique(array_filter(
+                array_map(static fn($v) => trim((string) $v), (array) $filters['company_country']),
+                static fn($v) => $v !== ''
+            )));
+            if ($values) {
+                $subClauses = [];
+                $realValues = [];
+                foreach ($values as $v) {
+                    if ($v === 'NA') {
+                        $subClauses[] = "(l.company_country IS NULL OR l.company_country = '')";
+                    } else {
+                        $realValues[] = $v;
+                    }
+                }
+                if ($realValues) {
+                    $placeholders = [];
+                    foreach ($realValues as $i => $v) {
+                        $key = 'company_country_' . $i;
+                        $placeholders[] = ':' . $key;
+                        $params[$key] = $v;
+                    }
+                    $subClauses[] = 'l.company_country IN (' . implode(',', $placeholders) . ')';
+                }
+                $clauses[] = '(' . implode(' OR ', $subClauses) . ')';
+            }
+        }
+        // 'assigned_campaign_id': positive "show only leads currently
+        // assigned to campaign X" filter, distinct from campaign_id above
+        // (which only ever *excludes*, for the wave-safety candidate-
+        // preview screens) -- 'none' means "no campaign assignment at
+        // all", matching the By Campaign breakdown's "(Unassigned)" row.
+        // Exists mainly so an Analytics drill-through link can reproduce
+        // a By Campaign row's leads exactly.
+        if (($filters['assigned_campaign_id'] ?? '') !== '') {
+            if ($filters['assigned_campaign_id'] === 'none') {
+                $clauses[] = 'NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id)';
+            } else {
+                // Latest-assignment-only, same reasoning as imported/
+                // email_sent below -- matches which single campaign
+                // AnalyticsRepository's By Campaign breakdown attributes
+                // this lead to.
+                $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.campaign_id = :assigned_campaign_id AND a.id = (SELECT MAX(a2.id) FROM lead_campaign_assignments a2 WHERE a2.lead_id = l.id))";
+                $params['assigned_campaign_id'] = (int) $filters['assigned_campaign_id'];
+            }
+        }
+        // 'imported'/'email_sent' both check only the lead's *latest*
+        // assignment row (highest id), not "any assignment ever" -- a
+        // lead can have more than one historical row (e.g. re-assigned
+        // after being removed from an earlier campaign), and checking
+        // "any" would wrongly count a lead as imported/emailed off a
+        // stale row even though its current assignment says otherwise.
+        // Mirrors AnalyticsRepository::ASSIGNMENT_JOIN's same "latest
+        // assignment per lead" dedup, so drill-through links from
+        // Analytics reproduce its counts exactly.
+        $latestAssignment = '(SELECT MAX(a2.id) FROM lead_campaign_assignments a2 WHERE a2.lead_id = l.id)';
+        if (($filters['imported'] ?? '') === '1') {
+            $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.status = 'pushed' AND a.id = {$latestAssignment})";
+        } elseif (($filters['imported'] ?? '') === '0') {
+            $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.status = 'pushed' AND a.id = {$latestAssignment})";
+        }
+        if (($filters['email_sent'] ?? '') === '1') {
+            $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.email_sent = 1 AND a.id = {$latestAssignment})";
+        } elseif (($filters['email_sent'] ?? '') === '0') {
+            $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.email_sent = 1 AND a.id = {$latestAssignment})";
         }
 
         if (empty($filters['show_suppressed'])) {

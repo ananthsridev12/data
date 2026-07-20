@@ -209,6 +209,13 @@ leads" mode could assign every eligible lead system-wide from a single
 click. Apply any filter (company, domain, title, industry, country,
 etc.) to proceed.
 
+**The Dashboard has the same requirement** -- opening it with no filter
+applied no longer loads and displays the entire leads table; it shows a
+prompt to filter first instead. Every filter narrows it as before, and
+a `campaign_id` alone (without checking "Hide leads already used") still
+counts as a real filter even though it doesn't currently narrow anything
+by itself.
+
 All six checkbox-dropdown filters (Title, Seniority, Department, Size,
 Industry, Country, on both the Dashboard and Add Leads to Campaign) have
 a **Select all** link next to Clear, at the bottom of the dropdown --
@@ -261,6 +268,28 @@ has two parts:
   and email-sent date (`lead_campaign_assignments.email_sent_at`). Blank/
   unknown Company Country groups as literal "NA", matching how the source
   data is usually reported. See `AnalyticsRepository::pivotByDimension()`.
+- **Every number is a drill-through link** -- clicking any Prospects/
+  Imported/Not Imported/Email Sent/Email Not Sent count (including a
+  Grand Total) opens the Dashboard pre-filtered to exactly the leads
+  that number counted, so "12 imported in Germany" is one click away
+  from the actual list rather than just a count. This needed a few new
+  `LeadRepository` filters that only exist to make this work (not shown
+  on the Dashboard's own filter form, but valid to type into the URL by
+  hand): `company_country`, `imported` (0/1), `email_sent` (0/1, distinct
+  from the existing per-assignment bulk-action field of the same name
+  elsewhere), and `assigned_campaign_id` (0/1/an id/`none` for "no
+  campaign at all" -- a *positive* "show only leads in campaign X"
+  filter, unlike the existing `campaign_id` param which only ever
+  *excludes*, for the wave-safety candidate-preview screens). All three
+  of `imported`/`email_sent`/`assigned_campaign_id` check only a lead's
+  *latest* assignment row, matching `pivotByDimension()`'s own dedup, so
+  the drill-through count is always exactly what was just clicked --
+  verified end to end against the dev DB, including against a lead with
+  two historical assignment rows where a naive "any row matches" check
+  would have disagreed with Analytics by one. Every drill-through link
+  also forces `show_suppressed=1`, since Analytics counts every lead
+  including suppressed-domain ones but the Dashboard hides those by
+  default -- without it the linked count would come up short.
 - **Charts (optional, on top of the same data)** -- two doughnut charts
   under Campaign Summary (Imported vs. Not Imported, Email Sent vs. Not
   Sent, using the current filter's overall totals), plus a **Table /

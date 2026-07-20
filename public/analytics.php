@@ -38,6 +38,75 @@ $filterQuery = $_GET;
 // top summary charts instead of computing anything new.
 $overallTotal = $sections['company_country']['pivot']['total'];
 
+// Every number in every breakdown table links to the Dashboard, pre-
+// filtered to exactly the leads that number counts -- so "12 imported in
+// Germany" is a click away from the actual list, not just a count.
+// Resolving a row's *label* (all AnalyticsRepository::pivotByDimension()
+// gives us) back to an id for the vertical_id/service_id/
+// assigned_campaign_id filters LeadRepository actually needs.
+$campaignIdByName = array_column($campaigns, 'id', 'name');
+$verticalIdByLabel = array_column($verticals, 'id', 'label');
+$serviceIdByLabel = array_column($services, 'id', 'label');
+
+/**
+ * @param string $sectionKey one of AnalyticsRepository::GROUP_DIMENSIONS' keys
+ * @param ?string $grp a row's group label, or null for the Grand Total row
+ *   (no dimension-specific filter -- just this section's other active filters)
+ * @param ?string $metricKey 'imported' or 'email_sent', or null for the
+ *   Prospects column (no extra metric filter)
+ */
+$drillLink = function (string $sectionKey, ?string $grp, ?string $metricKey, ?string $metricValue) use ($filters, $campaignIdByName, $verticalIdByLabel, $serviceIdByLabel): string {
+    // Analytics counts every non-deleted lead, suppressed domains
+    // included -- Dashboard's own default filter *hides* suppressed
+    // leads, so without this override a drill-through link would show
+    // fewer leads than the number just clicked.
+    $params = ['show_suppressed' => '1'];
+
+    // Carry over Analytics' own active filters first...
+    if ($filters['campaign_id'] !== '') {
+        $params['assigned_campaign_id'] = $filters['campaign_id'];
+    }
+    if ($filters['vertical_id'] !== '') {
+        $params['vertical_id'] = $filters['vertical_id'];
+    }
+    if ($filters['service_id'] !== '') {
+        $params['service_id'] = $filters['service_id'];
+    }
+    if ($filters['industry'] !== '') {
+        $params['industry'] = [$filters['industry']];
+    }
+
+    // ...then overlay this row's own dimension, which always wins since
+    // it's what actually produced this specific number.
+    if ($grp !== null) {
+        switch ($sectionKey) {
+            case 'company_country':
+                $params['company_country'] = [$grp];
+                break;
+            case 'campaign':
+                $params['assigned_campaign_id'] = $campaignIdByName[$grp] ?? 'none';
+                break;
+            case 'vertical':
+                $params['vertical_id'] = $verticalIdByLabel[$grp] ?? 'none';
+                break;
+            case 'service':
+                $params['service_id'] = $serviceIdByLabel[$grp] ?? 'none';
+                break;
+        }
+    }
+
+    if ($metricKey !== null) {
+        $params[$metricKey] = $metricValue;
+    }
+
+    // A Grand Total "Prospects" link with no other Analytics filters
+    // active ends up as just show_suppressed=1 -- not itself "real" by
+    // Dashboard's own gate, so it lands on the "apply a filter" prompt
+    // rather than an unfiltered dump. That's by design: "every lead in
+    // the system" is exactly the load Dashboard's gate exists to avoid.
+    return 'dashboard.php?' . http_build_query($params);
+};
+
 render_header('Analytics');
 ?>
 <h1 class="h4 mb-3">Analytics</h1>
@@ -183,11 +252,11 @@ render_header('Analytics');
               <?php foreach ($pivot['rows'] as $row): ?>
                 <tr>
                   <td><?= e($row['grp']) ?></td>
-                  <td class="text-end"><?= number_format((int) $row['prospects']) ?></td>
-                  <td class="text-end"><?= number_format((int) $row['imported']) ?></td>
-                  <td class="text-end"><?= number_format((int) $row['not_imported']) ?></td>
-                  <td class="text-end"><?= number_format((int) $row['email_sent']) ?></td>
-                  <td class="text-end"><?= number_format((int) $row['email_not_sent']) ?></td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], null, null)) ?>"><?= number_format((int) $row['prospects']) ?></a></td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'imported', '1')) ?>"><?= number_format((int) $row['imported']) ?></a></td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'imported', '0')) ?>"><?= number_format((int) $row['not_imported']) ?></a></td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'email_sent', '1')) ?>"><?= number_format((int) $row['email_sent']) ?></a></td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'email_sent', '0')) ?>"><?= number_format((int) $row['email_not_sent']) ?></a></td>
                 </tr>
               <?php endforeach; ?>
               <?php if (!$pivot['rows']): ?>
@@ -198,11 +267,11 @@ render_header('Analytics');
             <tfoot>
               <tr class="fw-bold table-light">
                 <td>Grand Total</td>
-                <td class="text-end"><?= number_format($pivot['total']['prospects']) ?></td>
-                <td class="text-end"><?= number_format($pivot['total']['imported']) ?></td>
-                <td class="text-end"><?= number_format($pivot['total']['not_imported']) ?></td>
-                <td class="text-end"><?= number_format($pivot['total']['email_sent']) ?></td>
-                <td class="text-end"><?= number_format($pivot['total']['email_not_sent']) ?></td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, null, null)) ?>"><?= number_format($pivot['total']['prospects']) ?></a></td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, 'imported', '1')) ?>"><?= number_format($pivot['total']['imported']) ?></a></td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, 'imported', '0')) ?>"><?= number_format($pivot['total']['not_imported']) ?></a></td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, 'email_sent', '1')) ?>"><?= number_format($pivot['total']['email_sent']) ?></a></td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, 'email_sent', '0')) ?>"><?= number_format($pivot['total']['email_not_sent']) ?></a></td>
               </tr>
             </tfoot>
             <?php endif; ?>

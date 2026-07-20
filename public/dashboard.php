@@ -28,10 +28,38 @@ $filters = [
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
     'hide_used_in_campaign' => !empty($_GET['hide_used_in_campaign']),
     'show_suppressed' => !empty($_GET['show_suppressed']),
+    // Not exposed on this page's own filter form -- these exist so an
+    // Analytics drill-through link (see analytics.php) can land here with
+    // the exact slice it showed a number for. Still fully valid to type
+    // into the URL by hand.
+    'company_country' => $multiParam('company_country'),
+    'assigned_campaign_id' => trim((string) ($_GET['assigned_campaign_id'] ?? '')),
+    'imported' => trim((string) ($_GET['imported'] ?? '')),
+    'email_sent' => trim((string) ($_GET['email_sent'] ?? '')),
 ];
 $page = max(1, (int) ($_GET['page'] ?? 1));
 
-$result = LeadRepository::search(db(), $filters, $page);
+// A completely unfiltered load would COUNT(*) and render page 1 of the
+// *entire* leads table on every single visit -- slow on a large table,
+// and "every lead in the system" is rarely what's actually wanted.
+// Same protective gate as campaign_select_leads.php: require at least
+// one real filter before running the query, prompting instead. A
+// campaign_id alone (without hide_used_in_campaign, which currently
+// makes it a no-op) still counts as "real" -- picking a campaign in the
+// dropdown is clearly an intentional filter attempt even though it
+// doesn't yet narrow anything by itself.
+$hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
+    || $filters['title'] || $filters['seniority'] || $filters['departments']
+    || $filters['industry'] || $filters['country'] || $filters['employee_count']
+    || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['imported_by'] !== ''
+    || $filters['campaign_id'] !== '' || $filters['company_country']
+    || $filters['assigned_campaign_id'] !== '' || $filters['imported'] !== '' || $filters['email_sent'] !== '';
+
+if ($hasRealFilter) {
+    $result = LeadRepository::search(db(), $filters, $page);
+} else {
+    $result = ['rows' => [], 'total' => 0, 'page' => 1, 'perPage' => 0, 'totalPages' => 1];
+}
 
 $titleOptions = LeadRepository::distinctValues(db(), 'title', 1000);
 $seniorities = LeadRepository::distinctValues(db(), 'seniority');
@@ -140,6 +168,12 @@ render_header('Dashboard');
   </div>
 </div>
 
+<?php if (!$hasRealFilter): ?>
+<div class="alert alert-warning">
+  Apply at least one filter above (company, domain, title, industry, country, etc.) to load leads -- this page
+  won't scan and display the whole leads table unfiltered.
+</div>
+<?php else: ?>
 <div class="d-flex justify-content-between align-items-center mb-2">
   <div class="text-muted small"><?= number_format($result['total']) ?> leads match this filter (page <?= $result['page'] ?> of <?= $result['totalPages'] ?>)</div>
   <a href="column_settings.php?page=dashboard&return_to=<?= urlencode($returnTo) ?>" class="btn btn-sm btn-outline-secondary">Manage columns</a>
@@ -290,6 +324,7 @@ $visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c[
   </ul>
 </nav>
 <?php endif; ?>
+<?php endif; // $hasRealFilter ?>
 
 <script src="assets/js/app.js"></script>
 <?php render_footer(); ?>
