@@ -37,6 +37,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         'pending_elsewhere' => $rawFilters['pending_elsewhere'] ?? '',
         'account_used_elsewhere' => $rawFilters['account_used_elsewhere'] ?? '',
     ];
+
+    // Same reasoning as the GET-side gate below: without at least one
+    // real narrowing filter, this would run an unfiltered scan and (in
+    // "all" mode especially, which has no per-company limit) could
+    // assign every eligible lead in the whole system to this campaign
+    // from a single click. Require a filter rather than allow that.
+    $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
+        || $filters['title'] || $filters['seniority'] || $filters['departments']
+        || $filters['industry'] || $filters['country'] || $filters['employee_count']
+        || $filters['vertical_id'] !== '' || $filters['service_id'] !== ''
+        || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
+    if (!$hasRealFilter) {
+        flash_set('danger', 'Apply at least one filter before saving a selection -- an unfiltered selection would match every lead in the system.');
+        header('Location: campaign_select_leads.php?campaign_id=' . $campaignId);
+        exit;
+    }
+
     $leadIds = LeadRepository::matchingIds(db(), $filters);
 
     if (!$leadIds) {
@@ -145,12 +162,31 @@ $filters = [
     'account_used_elsewhere' => trim((string) ($_GET['account_used_elsewhere'] ?? '')),
 ];
 
-$leadCount = count(LeadRepository::matchingIds(db(), $filters));
-$domainCount = LeadRepository::domainCountForFilter(db(), $filters);
-$titles = LeadRepository::distinctTitlesForFilter(db(), $filters);
+// A completely unfiltered load (first click into this page) would run
+// matchingIds()/domainCountForFilter()/search() over the whole leads
+// table -- slow, and mostly useless since "every lead in the system"
+// isn't a real candidate pool for one campaign. Require at least one
+// real narrowing filter before running any of that; hide_used_in_campaign
+// doesn't count since it's on by default and doesn't meaningfully shrink
+// an otherwise-unfiltered scan.
+$hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
+    || $filters['title'] || $filters['seniority'] || $filters['departments']
+    || $filters['industry'] || $filters['country'] || $filters['employee_count']
+    || $filters['vertical_id'] !== '' || $filters['service_id'] !== ''
+    || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
 
-$previewPage = max(1, (int) ($_GET['page'] ?? 1));
-$preview = LeadRepository::search(db(), $filters, $previewPage);
+if ($hasRealFilter) {
+    $leadCount = count(LeadRepository::matchingIds(db(), $filters));
+    $domainCount = LeadRepository::domainCountForFilter(db(), $filters);
+    $titles = LeadRepository::distinctTitlesForFilter(db(), $filters);
+    $previewPage = max(1, (int) ($_GET['page'] ?? 1));
+    $preview = LeadRepository::search(db(), $filters, $previewPage);
+} else {
+    $leadCount = null;
+    $domainCount = null;
+    $titles = [];
+    $preview = ['rows' => [], 'total' => 0, 'page' => 1, 'totalPages' => 1];
+}
 
 $titleOptions = LeadRepository::distinctValues(db(), 'title', 1000);
 $seniorities = LeadRepository::distinctValues(db(), 'seniority');
@@ -236,6 +272,13 @@ render_header('Select leads');
   </div>
 </form>
 
+<?php if (!$hasRealFilter): ?>
+<div class="alert alert-warning">
+  Apply at least one filter above (company, domain, title, industry, country, etc.) to preview and select leads --
+  this page won't scan the whole leads table unfiltered, since "every lead in the system" is almost never the
+  actual candidate pool for one campaign.
+</div>
+<?php else: ?>
 <div class="alert alert-info">
   <strong><?= number_format($leadCount) ?></strong> lead(s) across <strong><?= number_format($domainCount) ?></strong> compan(y/ies) match this filter.
 </div>
@@ -307,6 +350,7 @@ $previewFilterQuery['campaign_id'] = $campaignId;
   </ul>
 </nav>
 <?php endif; ?>
+<?php endif; // $hasRealFilter ?>
 
 <form method="post" action="campaign_select_leads.php">
   <?= csrf_field() ?>

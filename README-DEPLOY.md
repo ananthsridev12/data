@@ -200,6 +200,14 @@ account has a *different* persona in *any* campaign at all, resolved or
 not, for finding backup contacts at companies you're already engaging
 with rather than only ones currently blocked from being added.
 
+This screen requires **at least one filter** before it previews or lets
+you save a selection -- an unfiltered click would otherwise scan the
+whole leads table (slow, and "every lead in the system" is essentially
+never the real candidate pool for one campaign), and in "all matching
+leads" mode could assign every eligible lead system-wide from a single
+click. Apply any filter (company, domain, title, industry, country,
+etc.) to proceed.
+
 All six checkbox-dropdown filters (Title, Seniority, Department, Size,
 Industry, Country, on both the Dashboard and Add Leads to Campaign) have
 a **Select all** link next to Clear, at the bottom of the dropdown --
@@ -310,7 +318,12 @@ everything else in the app works without it.
      prospect id is looked up by email once and cached on
      `leads.saleshandy_prospect_id`. This is manual only (no cron
      backstop) -- run it after a re-import whenever a pushed lead's data
-     changed.
+     changed. The result message accounts for every selected lead one way
+     or another -- skipped (not pushed yet / no matching Saleshandy
+     contact / no enabled mapping had a non-empty value to send),
+     partially updated (Saleshandy rejected some but not all fields), or
+     fully updated -- so "nothing happened and no error either" shouldn't
+     occur; if it does, that's a bug.
 
 The **Campaign Leads** page also has a count strip (total/active/held/
 suppressed/email sent/imported) right under the page title, each number

@@ -70,7 +70,14 @@ class SaleshandyClient
     public function listFields(): array
     {
         $data = $this->request('GET', '/fields', ['systemFields' => true]);
-        return $this->unwrap($data);
+        $payload = $this->unwrap($data);
+        // Defensive, same as findProspectId()'s /contacts handling: if this
+        // list endpoint turns out to wrap its array under a nested "data"
+        // key rather than returning it directly under payload (confirmed
+        // for /contacts, not independently confirmed for /fields), fall
+        // back to that instead of returning a single malformed row that
+        // silently makes every field lookup fail.
+        return isset($payload['data']) && is_array($payload['data']) ? $payload['data'] : $payload;
     }
 
     /** @return array<int,array{id:string,name:string}> */
@@ -189,11 +196,11 @@ class SaleshandyClient
      * email once and cached on leads.saleshandy_prospect_id.
      *
      * @param int[] $assignmentIds
-     * @return array{updated:int, partial:int, not_found:int, skipped_not_pushed:int, errors:array<int,string>}
+     * @return array{updated:int, partial:int, not_found:int, skipped_not_pushed:int, no_fields:int, errors:array<int,string>}
      */
     public function syncFieldsToSaleshandy(PDO $db, array $assignmentIds, int $campaignId): array
     {
-        $stats = ['updated' => 0, 'partial' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'errors' => []];
+        $stats = ['updated' => 0, 'partial' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'no_fields' => 0, 'errors' => []];
         if (!$assignmentIds) {
             return $stats;
         }
@@ -227,6 +234,15 @@ class SaleshandyClient
             }
         }
         $labelByFieldId = array_flip($fieldsByLabel);
+        if (!$fieldsByLabel) {
+            // Every lead below will otherwise fail silently (no matching
+            // label for anything, not even First/Last Name) -- surface
+            // this loudly instead, since it means Saleshandy's field list
+            // came back empty or in an unexpected shape.
+            $stats['errors'][] = 'Could not retrieve any fields from Saleshandy (listFields() returned none) -- nothing was sent. Check the API key and try again.';
+            $stats['no_fields'] = count($eligible);
+            return $stats;
+        }
 
         $resolveValue = static function (array $lead, string $key): string {
             if ($key === 'vertical') {
@@ -287,6 +303,12 @@ class SaleshandyClient
             }
 
             if (!$fieldIdToValue) {
+                // Every enabled mapping's label matched a real Saleshandy
+                // field (or $fieldsByLabel would already have been empty
+                // and returned above), but this lead had no non-empty
+                // value for any of them -- previously fell through
+                // silently with nothing to show for it.
+                $stats['no_fields']++;
                 continue;
             }
 

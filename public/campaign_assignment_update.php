@@ -191,10 +191,19 @@ if ($action === 'mark_imported') {
     if ($result['not_found'] > 0) {
         $message .= " {$result['not_found']} skipped (no matching Saleshandy contact found by email).";
     }
+    if ($result['no_fields'] > 0) {
+        $message .= " {$result['no_fields']} had no enabled/mapped field with a value to send (check Saleshandy Field Mapping).";
+    }
     if ($result['errors']) {
         $message .= ' Errors: ' . implode('; ', array_slice($result['errors'], 0, 3));
     }
-    flash_set($result['errors'] ? 'danger' : 'success', $message);
+    // "danger" whenever there's an actual failure reason to look at --
+    // either explicit errors, or nothing succeeded and it wasn't simply
+    // because every selected lead was skipped_not_pushed (that's a normal
+    // filtering outcome, not a problem).
+    $nothingSucceeded = $result['updated'] === 0 && $result['partial'] === 0;
+    $hadAProblem = $result['errors'] || ($nothingSucceeded && ($result['not_found'] > 0 || $result['no_fields'] > 0));
+    flash_set($hadAProblem ? 'danger' : 'success', $message);
 } else {
     flash_set('danger', 'Unknown action.');
 }
