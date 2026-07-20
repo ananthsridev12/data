@@ -95,9 +95,13 @@ render_header('Saleshandy field mapping');
   </div>
   <?php if ($knownFields): ?>
   <div class="card-body pt-0">
-    <div class="small text-muted">Known Saleshandy field labels:</div>
+    <div class="small text-muted">
+      Known Saleshandy field labels (type shown in parentheses -- a dropdown/select-type field may silently
+      reject or blank out a value that isn't one of its predefined options, even though the API call itself
+      still reports success):
+    </div>
     <?php foreach ($knownFields as $f): ?>
-      <span class="badge bg-light text-dark border me-1 mb-1"><?= e($f['label'] ?? '') ?></span>
+      <span class="badge bg-light text-dark border me-1 mb-1"><?= e($f['label'] ?? '') ?><?= !empty($f['fieldType']) ? ' (' . e($f['fieldType']) . ')' : '' ?></span>
     <?php endforeach; ?>
   </div>
   <?php endif; ?>

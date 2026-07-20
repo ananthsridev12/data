@@ -196,11 +196,11 @@ class SaleshandyClient
      * email once and cached on leads.saleshandy_prospect_id.
      *
      * @param int[] $assignmentIds
-     * @return array{updated:int, partial:int, not_found:int, skipped_not_pushed:int, no_fields:int, errors:array<int,string>}
+     * @return array{updated:int, partial:int, not_found:int, skipped_not_pushed:int, no_fields:int, errors:array<int,string>, details:array<int,string>}
      */
     public function syncFieldsToSaleshandy(PDO $db, array $assignmentIds, int $campaignId): array
     {
-        $stats = ['updated' => 0, 'partial' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'no_fields' => 0, 'errors' => []];
+        $stats = ['updated' => 0, 'partial' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'no_fields' => 0, 'errors' => [], 'details' => []];
         if (!$assignmentIds) {
             return $stats;
         }
@@ -312,10 +312,23 @@ class SaleshandyClient
                 continue;
             }
 
+            // Which labels/values were actually attempted for this lead --
+            // surfaced back to the admin (prospect id + field list) so a
+            // "Saleshandy confirmed success but I don't see the change"
+            // report can be checked against the *exact* record and fields
+            // touched, rather than however Saleshandy's UI search happens
+            // to resolve that email (which may not be the same record if
+            // there's more than one contact with it).
+            $sentLabels = array_map(
+                static fn(string $fieldId) => $labelByFieldId[$fieldId] ?? $fieldId,
+                array_keys($fieldIdToValue)
+            );
+
             try {
                 $failedFieldIds = $this->updateProspectAttributes($prospectId, $fieldIdToValue);
                 if (!$failedFieldIds) {
                     $stats['updated']++;
+                    $stats['details'][] = "{$lead['email']} -> Saleshandy prospect {$prospectId}: sent " . implode(', ', $sentLabels);
                 } else {
                     $stats['partial']++;
                     $failedLabels = array_map(
@@ -326,6 +339,7 @@ class SaleshandyClient
                     $stats['errors'][] = "{$lead['email']}: Saleshandy rejected " . count($failedFieldIds)
                         . ' of ' . count($fieldIdToValue) . " field(s) ({$succeededCount} saved) -- failed: "
                         . implode(', ', $failedLabels);
+                    $stats['details'][] = "{$lead['email']} -> Saleshandy prospect {$prospectId}: sent " . implode(', ', $sentLabels);
                 }
             } catch (SaleshandyApiException $ex) {
                 $stats['errors'][] = "{$lead['email']}: {$ex->getMessage()}";

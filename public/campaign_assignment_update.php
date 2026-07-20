@@ -197,6 +197,13 @@ if ($action === 'mark_imported') {
     if ($result['errors']) {
         $message .= ' Errors: ' . implode('; ', array_slice($result['errors'], 0, 3));
     }
+    if ($result['details']) {
+        // Exact Saleshandy prospect id + which labels were sent, per lead --
+        // so "Saleshandy said success but I don't see it" can be checked
+        // against the precise record, not however email-search happens to
+        // resolve it in Saleshandy's own UI.
+        $message .= ' | ' . implode(' | ', array_slice($result['details'], 0, 5));
+    }
     // "danger" whenever there's an actual failure reason to look at --
     // either explicit errors, or nothing succeeded and it wasn't simply
     // because every selected lead was skipped_not_pushed (that's a normal
