@@ -15,10 +15,6 @@ $filters = [
     'email_sent_from' => trim((string) ($_GET['email_sent_from'] ?? '')),
     'email_sent_to' => trim((string) ($_GET['email_sent_to'] ?? '')),
 ];
-$groupBy = (string) ($_GET['group_by'] ?? 'company_country');
-if (!array_key_exists($groupBy, AnalyticsRepository::GROUP_DIMENSIONS)) {
-    $groupBy = 'company_country';
-}
 
 $campaigns = db()->query('SELECT id, name FROM campaigns ORDER BY name')->fetchAll();
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
@@ -26,7 +22,14 @@ $services = LeadRepository::activeLookupOptions(db(), 'services');
 $industries = LeadRepository::distinctValues(db(), 'industry');
 
 $campaignSummary = AnalyticsRepository::campaignSummary(db());
-$pivot = AnalyticsRepository::countryPivot(db(), $groupBy, $filters);
+
+// All four breakdowns shown together, same filters applied to each --
+// no "group by" dropdown to click through, so country/vertical/service/
+// campaign are all visible on one screen at once.
+$sections = [];
+foreach (AnalyticsRepository::GROUP_DIMENSIONS as $key => $label) {
+    $sections[$key] = ['label' => $label, 'pivot' => AnalyticsRepository::pivotByDimension(db(), $key, $filters)];
+}
 
 $filterQuery = $_GET;
 
@@ -60,15 +63,7 @@ render_header('Analytics');
 
 <form method="get" action="analytics.php" class="card filter-card mb-4">
   <div class="card-body row g-2 align-items-end">
-    <div class="col-md-2">
-      <label class="form-label small mb-0">Group by</label>
-      <select name="group_by" class="form-select form-select-sm">
-        <?php foreach (AnalyticsRepository::GROUP_DIMENSIONS as $key => $label): ?>
-          <option value="<?= e($key) ?>" <?= $groupBy === $key ? 'selected' : '' ?>><?= e($label) ?></option>
-        <?php endforeach; ?>
-      </select>
-    </div>
-    <div class="col-md-2">
+    <div class="col-md-3">
       <label class="form-label small mb-0">Campaign</label>
       <select name="campaign_id" class="form-select form-select-sm">
         <option value="">All</option>
@@ -77,7 +72,7 @@ render_header('Analytics');
         <?php endforeach; ?>
       </select>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-3">
       <label class="form-label small mb-0">Vertical</label>
       <select name="vertical_id" class="form-select form-select-sm">
         <option value="">All</option>
@@ -86,7 +81,7 @@ render_header('Analytics');
         <?php endforeach; ?>
       </select>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-3">
       <label class="form-label small mb-0">Service</label>
       <select name="service_id" class="form-select form-select-sm">
         <option value="">All</option>
@@ -95,7 +90,7 @@ render_header('Analytics');
         <?php endforeach; ?>
       </select>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-3">
       <label class="form-label small mb-0">Industry</label>
       <select name="industry" class="form-select form-select-sm">
         <option value="">All</option>
@@ -104,66 +99,71 @@ render_header('Analytics');
         <?php endforeach; ?>
       </select>
     </div>
-    <div class="col-md-2">
-      <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
-    </div>
 
-    <div class="col-md-3">
+    <div class="col-md-4">
       <label class="form-label small mb-0">Lead imported between</label>
       <div class="d-flex gap-1">
         <input type="date" name="created_from" class="form-control form-control-sm" value="<?= e($filters['created_from']) ?>">
         <input type="date" name="created_to" class="form-control form-control-sm" value="<?= e($filters['created_to']) ?>">
       </div>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-4">
       <label class="form-label small mb-0">Email sent between</label>
       <div class="d-flex gap-1">
         <input type="date" name="email_sent_from" class="form-control form-control-sm" value="<?= e($filters['email_sent_from']) ?>">
         <input type="date" name="email_sent_to" class="form-control form-control-sm" value="<?= e($filters['email_sent_to']) ?>">
       </div>
-      <div class="form-text">Leaves rows with no email sent yet out of the count for this range (expected).</div>
+    </div>
+    <div class="col-md-2">
+      <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
     </div>
     <?php if (array_filter($filterQuery)): ?>
-      <div class="col-md-2 align-self-end">
+      <div class="col-md-2">
         <a href="analytics.php" class="btn btn-outline-secondary btn-sm w-100">Clear filters</a>
       </div>
     <?php endif; ?>
   </div>
 </form>
 
-<?php foreach ($pivot as $slice => $section): ?>
+<?php foreach ($sections as $section): $pivot = $section['pivot']; ?>
   <div class="card mb-4">
-    <div class="card-header"><?= e($section['label']) ?></div>
+    <div class="card-header">By <?= e($section['label']) ?></div>
     <div class="table-responsive">
       <table class="table table-sm mb-0 align-middle">
         <thead>
           <tr>
-            <th><?= e(AnalyticsRepository::GROUP_DIMENSIONS[$groupBy]) ?></th>
+            <th><?= e($section['label']) ?></th>
             <th class="text-end">Prospects</th>
-            <th class="text-end">Imported Saleshandy</th>
+            <th class="text-end">Imported to Saleshandy</th>
+            <th class="text-end">Not imported</th>
             <th class="text-end">Email sent</th>
+            <th class="text-end">Email not sent</th>
           </tr>
         </thead>
         <tbody>
-          <?php foreach ($section['rows'] as $row): ?>
+          <?php foreach ($pivot['rows'] as $row): ?>
             <tr>
               <td><?= e($row['grp']) ?></td>
               <td class="text-end"><?= number_format((int) $row['prospects']) ?></td>
               <td class="text-end"><?= number_format((int) $row['imported']) ?></td>
+              <td class="text-end"><?= number_format((int) $row['not_imported']) ?></td>
               <td class="text-end"><?= number_format((int) $row['email_sent']) ?></td>
+              <td class="text-end"><?= number_format((int) $row['email_not_sent']) ?></td>
             </tr>
           <?php endforeach; ?>
-          <?php if (!$section['rows']): ?>
-            <tr><td colspan="4" class="text-center text-muted py-3">No leads match this filter.</td></tr>
+          <?php if (!$pivot['rows']): ?>
+            <tr><td colspan="6" class="text-center text-muted py-3">No leads match this filter.</td></tr>
           <?php endif; ?>
         </tbody>
-        <?php if ($section['rows']): ?>
+        <?php if ($pivot['rows']): ?>
         <tfoot>
           <tr class="fw-bold table-light">
             <td>Grand Total</td>
-            <td class="text-end"><?= number_format($section['total']['prospects']) ?></td>
-            <td class="text-end"><?= number_format($section['total']['imported']) ?></td>
-            <td class="text-end"><?= number_format($section['total']['email_sent']) ?></td>
+            <td class="text-end"><?= number_format($pivot['total']['prospects']) ?></td>
+            <td class="text-end"><?= number_format($pivot['total']['imported']) ?></td>
+            <td class="text-end"><?= number_format($pivot['total']['not_imported']) ?></td>
+            <td class="text-end"><?= number_format($pivot['total']['email_sent']) ?></td>
+            <td class="text-end"><?= number_format($pivot['total']['email_not_sent']) ?></td>
           </tr>
         </tfoot>
         <?php endif; ?>

@@ -1,11 +1,11 @@
 <?php
 
 /**
- * Country/campaign/vertical/service/industry pivot reporting for the
- * Analytics page -- "how many prospects, how many pushed to Saleshandy,
- * how many actually emailed, broken down by X" across four fixed slices
- * of the lead base (all leads, leads queued but not yet pushed, leads
- * already pushed, leads not yet emailed).
+ * Country/campaign/vertical/service pivot reporting for the Analytics
+ * page -- one row per group value, with self-consistent counts
+ * (imported + not_imported = prospects; email_sent + email_not_sent =
+ * prospects) so the numbers can be sanity-checked at a glance instead of
+ * needing to be cross-referenced across several near-duplicate tables.
  *
  * A lead has at most one *current* campaign assignment in practice
  * (WaveAssigner enforces one-campaign-ever; a removed, not-yet-pushed
@@ -23,14 +23,6 @@ class AnalyticsRepository
         'campaign' => 'Campaign',
         'vertical' => 'Vertical',
         'service' => 'Service',
-        'industry' => 'Industry',
-    ];
-
-    public const SLICES = [
-        'all' => 'All Data',
-        'not_imported' => 'Saleshandy - Not Imported',
-        'imported' => 'Saleshandy - Imported',
-        'emails_not_sent' => 'Emails Not Sent',
     ];
 
     private const ASSIGNMENT_JOIN = "
@@ -45,48 +37,52 @@ class AnalyticsRepository
     ";
 
     /**
+     * One consolidated table for a single dimension: Prospects / Imported
+     * to Saleshandy / Not Imported / Email Sent / Email Not Sent, each
+     * row's Imported+Not Imported (and Email Sent+Email Not Sent) always
+     * adding back up to Prospects -- "not imported"/"email not sent" both
+     * mean "everyone else", not a narrower in-flight-pipeline subset, so
+     * the numbers need no extra explanation.
+     *
      * @param array<string,mixed> $filters campaign_id, vertical_id, service_id, industry,
      *   created_from, created_to (leads.created_at date range, Y-m-d),
      *   email_sent_from, email_sent_to (assignment email_sent_at date range, Y-m-d)
-     * @return array<string,array{label:string, rows: array<int,array{grp:string,prospects:int,imported:int,email_sent:int}>, total: array{prospects:int,imported:int,email_sent:int}}>
+     * @return array{
+     *   rows: array<int,array{grp:string,prospects:int,imported:int,not_imported:int,email_sent:int,email_not_sent:int}>,
+     *   total: array{prospects:int,imported:int,not_imported:int,email_sent:int,email_not_sent:int}
+     * }
      */
-    public static function countryPivot(PDO $db, string $groupBy, array $filters): array
+    public static function pivotByDimension(PDO $db, string $groupBy, array $filters): array
     {
         $groupExpr = self::groupExpr($groupBy);
-        [$baseClauses, $params] = self::buildBaseClauses($filters);
+        [$clauses, $params] = self::buildBaseClauses($filters);
+        $where = 'WHERE ' . implode(' AND ', $clauses);
 
-        $results = [];
-        foreach (self::SLICES as $slice => $label) {
-            $clauses = $baseClauses;
-            $sliceCondition = self::sliceCondition($slice);
-            if ($sliceCondition !== null) {
-                $clauses[] = $sliceCondition;
-            }
-            $where = 'WHERE ' . implode(' AND ', $clauses);
+        $sql = "SELECT {$groupExpr} AS grp,
+                   COUNT(*) AS prospects,
+                   SUM(CASE WHEN a.status = 'pushed' THEN 1 ELSE 0 END) AS imported,
+                   SUM(CASE WHEN a.status IS NULL OR a.status != 'pushed' THEN 1 ELSE 0 END) AS not_imported,
+                   SUM(CASE WHEN a.email_sent = 1 THEN 1 ELSE 0 END) AS email_sent,
+                   SUM(CASE WHEN a.email_sent IS NULL OR a.email_sent = 0 THEN 1 ELSE 0 END) AS email_not_sent
+                 FROM leads l "
+                . self::ASSIGNMENT_JOIN .
+                " {$where}
+                 GROUP BY grp
+                 ORDER BY grp";
 
-            $sql = "SELECT {$groupExpr} AS grp,
-                       COUNT(*) AS prospects,
-                       SUM(CASE WHEN a.status = 'pushed' THEN 1 ELSE 0 END) AS imported,
-                       SUM(CASE WHEN a.email_sent = 1 THEN 1 ELSE 0 END) AS email_sent
-                     FROM leads l "
-                    . self::ASSIGNMENT_JOIN .
-                    " {$where}
-                     GROUP BY grp
-                     ORDER BY grp";
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll();
 
-            $stmt = $db->prepare($sql);
-            $stmt->execute($params);
-            $rows = $stmt->fetchAll();
-
-            $total = ['prospects' => 0, 'imported' => 0, 'email_sent' => 0];
-            foreach ($rows as $r) {
-                $total['prospects'] += (int) $r['prospects'];
-                $total['imported'] += (int) $r['imported'];
-                $total['email_sent'] += (int) $r['email_sent'];
-            }
-            $results[$slice] = ['label' => $label, 'rows' => $rows, 'total' => $total];
+        $total = ['prospects' => 0, 'imported' => 0, 'not_imported' => 0, 'email_sent' => 0, 'email_not_sent' => 0];
+        foreach ($rows as $r) {
+            $total['prospects'] += (int) $r['prospects'];
+            $total['imported'] += (int) $r['imported'];
+            $total['not_imported'] += (int) $r['not_imported'];
+            $total['email_sent'] += (int) $r['email_sent'];
+            $total['email_not_sent'] += (int) $r['email_not_sent'];
         }
-        return $results;
+        return ['rows' => $rows, 'total' => $total];
     }
 
     /**
@@ -158,16 +154,6 @@ class AnalyticsRepository
         return [$clauses, $params];
     }
 
-    private static function sliceCondition(string $slice): ?string
-    {
-        return match ($slice) {
-            'not_imported' => "a.id IS NOT NULL AND a.status != 'pushed'",
-            'imported' => "a.status = 'pushed'",
-            'emails_not_sent' => '(a.email_sent IS NULL OR a.email_sent = 0)',
-            default => null,
-        };
-    }
-
     /** Whitelisted SQL fragments only -- $groupBy is never interpolated directly. */
     private static function groupExpr(string $groupBy): string
     {
@@ -175,7 +161,6 @@ class AnalyticsRepository
             'campaign' => "COALESCE(c.name, '(Unassigned)')",
             'vertical' => "COALESCE(v.label, '(none)')",
             'service' => "COALESCE(s.label, '(none)')",
-            'industry' => "COALESCE(NULLIF(l.industry, ''), '(none)')",
             default => "COALESCE(NULLIF(l.company_country, ''), 'NA')",
         };
     }

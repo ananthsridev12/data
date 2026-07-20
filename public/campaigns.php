@@ -161,7 +161,7 @@ render_header('Campaigns');
       <td class="d-flex gap-1">
         <a class="btn btn-sm btn-outline-secondary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>">Manage leads</a>
         <a class="btn btn-sm btn-outline-secondary" href="leads_export_csv.php?campaign_export=<?= (int) $c['id'] ?>">Export CSV</a>
-        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#renameCampaign<?= (int) $c['id'] ?>">Rename</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#renameCampaign<?= (int) $c['id'] ?>">Edit</button>
         <form method="post" action="campaigns.php" onsubmit="return confirm('Toggle active status for <?= e($c['name']) ?>?');">
           <?= csrf_field() ?>
           <input type="hidden" name="action" value="toggle_active">
@@ -176,7 +176,7 @@ render_header('Campaigns');
                 <input type="hidden" name="action" value="rename">
                 <input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
                 <div class="modal-header">
-                  <h5 class="modal-title">Rename campaign</h5>
+                  <h5 class="modal-title">Edit campaign</h5>
                   <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">

@@ -246,25 +246,36 @@ has two parts:
 - **Campaign summary** -- one row per campaign: Vertical, Service Pitched
   (set on the campaign itself, see below), total Prospects assigned, and
   First Email Date (the earliest `email_sent_at` across its assignments).
-- **Pivot tables** -- Prospects / Imported to Saleshandy / Email Sent,
-  grouped by Company Country, Campaign, Vertical, Service, or Industry
-  (the **Group by** dropdown), across four fixed slices: **All Data**,
-  **Saleshandy - Not Imported** (assigned to a campaign but not yet
-  pushed), **Saleshandy - Imported** (pushed), and **Emails Not Sent**.
-  Filterable by campaign, vertical, service, industry, and two independent
+- **Four breakdown tables, always shown together** -- By Company Country,
+  By Campaign, By Vertical, By Service -- no dropdown to click through.
+  Each is a single table, one row per group value, with five
+  self-consistent columns: Prospects, Imported to Saleshandy, Not
+  Imported, Email Sent, Email Not Sent. "Not Imported" and "Email Not
+  Sent" both mean *everyone else in that row* (Imported + Not Imported
+  always equals Prospects, same for Email Sent + Email Not Sent), not a
+  narrower "still in the pipeline" subset -- deliberately simple so the
+  numbers can be sanity-checked at a glance instead of needing to be
+  cross-referenced across several tables. All four sections share one
+  filter bar: campaign, vertical, service, industry, and two independent
   optional date ranges -- lead imported-into-app date (`leads.created_at`)
-  and email-sent date (`lead_campaign_assignments.email_sent_at`).
-  Blank/unknown Company Country groups as literal "NA", matching how the
-  source data is usually reported. See `AnalyticsRepository.php`.
+  and email-sent date (`lead_campaign_assignments.email_sent_at`). Blank/
+  unknown Company Country groups as literal "NA", matching how the source
+  data is usually reported. See `AnalyticsRepository::pivotByDimension()`.
 
 Since **a campaign now pitches one particular Vertical/Service** (not
 just individual leads), both are set per-campaign on the **Campaigns**
-page (create form and the Rename modal) -- `campaigns.vertical_id` /
-`campaigns.service_id`, added by `sql/018_campaign_vertical_service.sql`.
-This is separate from the existing per-*lead* Vertical/Service fields
-(set on import or the Dashboard's lead-edit modal), which the pivot's
-Vertical/Service group-by dimensions still read from -- the campaign-level
-fields only feed the Campaign Summary table above.
+page -- the **Edit** button (was "Rename") on each row, or the new-
+campaign form -- via `campaigns.vertical_id` / `campaigns.service_id`,
+added by `sql/018_campaign_vertical_service.sql`. **This migration must
+be run before Edit will save a Vertical/Service on an existing
+campaign** -- without it, the `UPDATE` fails against columns that don't
+exist yet on your live database and you'll see a generic "Could not
+rename campaign" error (or, if creating a new campaign, "Could not
+create campaign"). This is separate from the existing per-*lead*
+Vertical/Service fields (set on import or the Dashboard's lead-edit
+modal), which the By Vertical/By Service breakdowns above still read
+from for their grouping -- the campaign-level fields only feed the
+Campaign Summary table.
 
 ## Notes on the Saleshandy CSV export
 
