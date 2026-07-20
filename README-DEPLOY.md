@@ -323,7 +323,18 @@ everything else in the app works without it.
      contact / no enabled mapping had a non-empty value to send),
      partially updated (Saleshandy rejected some but not all fields), or
      fully updated -- so "nothing happened and no error either" shouldn't
-     occur; if it does, that's a bug.
+     occur; if it does, that's a bug. Saleshandy's per-field attribute
+     endpoint has been observed to reject an entire batch at once
+     (including fields that succeed fine on their own) when just one
+     field's value is invalid -- typically a dropdown/select field (e.g.
+     Company Size, Industry, Vertical) whose value isn't one of
+     Saleshandy's predefined options for that field. When a batch comes
+     back 100% failed, the sync automatically retries each field
+     individually so the genuinely valid fields still get saved and the
+     error message names the actual offending field(s) by label instead
+     of reporting an opaque "N of N failed" for everything. If a specific
+     field keeps failing, check its allowed values on the Saleshandy side
+     (or leave it unmapped here).
 
 The **Campaign Leads** page also has a count strip (total/active/held/
 suppressed/email sent/imported) right under the page title, each number

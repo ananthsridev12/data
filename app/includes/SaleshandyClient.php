@@ -161,6 +161,16 @@ class SaleshandyClient
      * call. Callers must check the returned failed-field-id list rather
      * than assuming success from the absence of a thrown exception.
      *
+     * Observed in practice: a full batch can also come back with EVERY
+     * field failed at once, including fields (First Name, Last Name) that
+     * saved fine on their own moments earlier -- one poisoned value (e.g. a
+     * dropdown/select field rejecting a value outside its predefined
+     * options) appears to take the whole batch down rather than failing
+     * independently. When that all-or-nothing signature shows up, retry
+     * one field at a time so the genuinely valid fields still get saved
+     * and the actual culprit is pinned down precisely instead of reporting
+     * an opaque "N of N failed" for the whole batch.
+     *
      * @param array<string,string> $fieldIdToValue Saleshandy field id => new value
      * @return array<int,string> field ids Saleshandy reported as failed (empty = every field saved)
      */
@@ -169,6 +179,34 @@ class SaleshandyClient
         if (!$fieldIdToValue) {
             return [];
         }
+
+        $failed = $this->sendAttributeBatch($prospectId, $fieldIdToValue);
+
+        if (count($fieldIdToValue) > 1 && count($failed) === count($fieldIdToValue)) {
+            $failed = [];
+            foreach ($fieldIdToValue as $fieldId => $value) {
+                if ($this->sendAttributeBatch($prospectId, [$fieldId => $value])) {
+                    $failed[] = (string) $fieldId;
+                }
+                usleep(150_000);
+            }
+        }
+
+        return $failed;
+    }
+
+    /**
+     * Raw single-call implementation of the attribute update -- issues one
+     * POST /prospects/{id}/attribute request for the given fields and
+     * returns the field ids Saleshandy reported as failed. Split out from
+     * updateProspectAttributes() so that method can retry field-by-field
+     * without duplicating the request/response handling.
+     *
+     * @param array<string,string> $fieldIdToValue Saleshandy field id => new value
+     * @return array<int,string> field ids Saleshandy reported as failed
+     */
+    private function sendAttributeBatch(string $prospectId, array $fieldIdToValue): array
+    {
         $attributes = [];
         foreach ($fieldIdToValue as $fieldId => $value) {
             $attributes[] = ['fieldId' => (string) $fieldId, 'attributeValue' => (string) $value];
@@ -694,7 +732,7 @@ class SaleshandyClient
      * @param array<string,mixed> $params query params (GET) or JSON body (POST/PUT)
      * @return array<string,mixed>
      */
-    private function request(string $method, string $path, array $params = []): array
+    protected function request(string $method, string $path, array $params = []): array
     {
         $delayMicroseconds = 1_000_000;
         for ($attempt = 1; ; $attempt++) {
