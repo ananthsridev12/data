@@ -35,6 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         'campaign_id' => $campaignId,
         'hide_used_in_campaign' => !empty($rawFilters['hide_used_in_campaign']),
         'pending_elsewhere' => $rawFilters['pending_elsewhere'] ?? '',
+        'account_used_elsewhere' => $rawFilters['account_used_elsewhere'] ?? '',
     ];
     $leadIds = LeadRepository::matchingIds(db(), $filters);
 
@@ -141,11 +142,15 @@ $filters = [
     'campaign_id' => $campaignId,
     'hide_used_in_campaign' => !isset($_GET['hide_used_in_campaign']) || $_GET['hide_used_in_campaign'] === '1',
     'pending_elsewhere' => trim((string) ($_GET['pending_elsewhere'] ?? '')),
+    'account_used_elsewhere' => trim((string) ($_GET['account_used_elsewhere'] ?? '')),
 ];
 
 $leadCount = count(LeadRepository::matchingIds(db(), $filters));
 $domainCount = LeadRepository::domainCountForFilter(db(), $filters);
 $titles = LeadRepository::distinctTitlesForFilter(db(), $filters);
+
+$previewPage = max(1, (int) ($_GET['page'] ?? 1));
+$preview = LeadRepository::search(db(), $filters, $previewPage);
 
 $titleOptions = LeadRepository::distinctValues(db(), 'title', 1000);
 $seniorities = LeadRepository::distinctValues(db(), 'seniority');
@@ -214,6 +219,13 @@ render_header('Select leads');
         <option value="1" <?= $filters['pending_elsewhere'] === '1' ? 'selected' : '' ?>>Yes (show only blocked leads)</option>
       </select>
     </div>
+    <div class="col-md-2">
+      <select name="account_used_elsewhere" class="form-select form-select-sm">
+        <option value="">Account used elsewhere (all)</option>
+        <option value="1" <?= $filters['account_used_elsewhere'] === '1' ? 'selected' : '' ?>>Yes (backup contacts at engaged accounts)</option>
+        <option value="0" <?= $filters['account_used_elsewhere'] === '0' ? 'selected' : '' ?>>No (accounts never touched)</option>
+      </select>
+    </div>
     <div class="col-md-4 form-check d-flex align-items-center">
       <input class="form-check-input me-2" type="checkbox" name="hide_used_in_campaign" value="1" id="hideUsed" <?= $filters['hide_used_in_campaign'] ? 'checked' : '' ?>>
       <label class="form-check-label" for="hideUsed">Only leads not already in this campaign</label>
@@ -227,6 +239,74 @@ render_header('Select leads');
 <div class="alert alert-info">
   <strong><?= number_format($leadCount) ?></strong> lead(s) across <strong><?= number_format($domainCount) ?></strong> compan(y/ies) match this filter.
 </div>
+
+<?php
+// Built by hand rather than a blind array_filter(): hide_used_in_campaign
+// must always be included explicitly as '1'/'0' -- omitting it when false
+// would silently flip back to the default (true) on the next page, since
+// the GET reader treats an *absent* param as "checked".
+$previewFilterQuery = [];
+foreach ($filters as $k => $v) {
+    if ($k === 'campaign_id') {
+        continue;
+    }
+    if ($k === 'hide_used_in_campaign') {
+        $previewFilterQuery[$k] = $v ? '1' : '0';
+        continue;
+    }
+    if ($v === '' || $v === []) {
+        continue;
+    }
+    $previewFilterQuery[$k] = $v;
+}
+$previewFilterQuery['campaign_id'] = $campaignId;
+?>
+<div class="table-responsive card mb-4">
+  <table class="table table-sm table-hover mb-0 align-middle">
+    <thead>
+      <tr><th>Company</th><th>Contact</th><th>Email</th><th>Title</th><th>Seniority</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <?php foreach ($preview['rows'] as $lead): ?>
+        <tr>
+          <td><?= e($lead['na_company_name']) ?></td>
+          <td><?= e($lead['first_name'] . ' ' . $lead['last_name']) ?></td>
+          <td class="small"><?= e($lead['email']) ?></td>
+          <td><?= e($lead['title']) ?></td>
+          <td><?= e($lead['seniority']) ?></td>
+          <td>
+            <?php if ($lead['used_in_campaigns']): ?>
+              <span class="badge badge-used" title="<?= e($lead['used_in_campaigns']) ?>">Used</span>
+            <?php endif; ?>
+            <?php if ($lead['suppressed_reason'] !== null): ?>
+              <span class="badge bg-danger" title="<?= e($lead['suppressed_reason']) ?>">Suppressed</span>
+            <?php endif; ?>
+            <?php if ($lead['pending_elsewhere_campaigns']): ?>
+              <span class="badge bg-warning text-dark" title="Another persona at this account is pending delivery in: <?= e($lead['pending_elsewhere_campaigns']) ?>">Pending elsewhere</span>
+            <?php elseif ($lead['account_used_elsewhere_campaigns']): ?>
+              <span class="badge bg-info text-dark" title="Another persona at this account is already in: <?= e($lead['account_used_elsewhere_campaigns']) ?>">Account used elsewhere</span>
+            <?php endif; ?>
+          </td>
+        </tr>
+      <?php endforeach; ?>
+      <?php if (!$preview['rows']): ?>
+        <tr><td colspan="6" class="text-center text-muted py-4">No leads match this filter.</td></tr>
+      <?php endif; ?>
+    </tbody>
+  </table>
+</div>
+
+<?php if ($preview['totalPages'] > 1): ?>
+<nav class="mb-4">
+  <ul class="pagination">
+    <?php for ($p = 1; $p <= $preview['totalPages']; $p++): $q = $previewFilterQuery; $q['page'] = $p; ?>
+      <li class="page-item <?= $p === $preview['page'] ? 'active' : '' ?>">
+        <a class="page-link" href="campaign_select_leads.php?<?= http_build_query($q) ?>"><?= $p ?></a>
+      </li>
+    <?php endfor; ?>
+  </ul>
+</nav>
+<?php endif; ?>
 
 <form method="post" action="campaign_select_leads.php">
   <?= csrf_field() ?>

@@ -191,6 +191,15 @@ the shared implementation:
    preview what's actually assignable before you save a selection. See
    `WaveAssigner::pendingElsewhereCampaigns()`.
 
+**Add Leads to Campaign** shows an actual preview table (company, contact,
+email, title, seniority, status badges), not just the match counts --
+paginated, with the same filters as the Dashboard plus two more specific
+to this screen: **Pending elsewhere** (above) and **Account used
+elsewhere** (all/yes/no), which is broader -- it flags a lead whose
+account has a *different* persona in *any* campaign at all, resolved or
+not, for finding backup contacts at companies you're already engaging
+with rather than only ones currently blocked from being added.
+
 All six checkbox-dropdown filters (Title, Seniority, Department, Size,
 Industry, Country, on both the Dashboard and Add Leads to Campaign) have
 a **Select all** link next to Clear, at the bottom of the dropdown --

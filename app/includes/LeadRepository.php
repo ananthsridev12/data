@@ -55,7 +55,18 @@ class LeadRepository
                     WHERE l2.deleted_at IS NULL AND a2.lead_id != l.id
                       AND SUBSTRING_INDEX(l2.email, '@', -1) = SUBSTRING_INDEX(l.email, '@', -1)
                       AND " . WaveAssigner::PENDING_ASSIGNMENT_SQL . "
-                     ) AS pending_elsewhere_campaigns
+                     ) AS pending_elsewhere_campaigns,
+                  -- Which campaign(s) a *different* persona at this lead's domain is
+                  -- in at all, any status (resolved or not) -- broader than
+                  -- pending_elsewhere_campaigns above; a \"backup contact at an
+                  -- account already in the pipeline\" indicator.
+                  (SELECT GROUP_CONCAT(DISTINCT c3.name SEPARATOR ', ')
+                     FROM lead_campaign_assignments a3
+                     JOIN leads l3 ON l3.id = a3.lead_id
+                     JOIN campaigns c3 ON c3.id = a3.campaign_id
+                    WHERE l3.deleted_at IS NULL AND a3.lead_id != l.id
+                      AND SUBSTRING_INDEX(l3.email, '@', -1) = SUBSTRING_INDEX(l.email, '@', -1)
+                     ) AS account_used_elsewhere_campaigns
                 FROM leads l
                 LEFT JOIN verticals v ON v.id = l.vertical_id
                 LEFT JOIN services s ON s.id = l.service_id
@@ -177,6 +188,17 @@ class LeadRepository
             $clauses[] = 'NOT ' . self::pendingElsewhereExistsClause();
         }
 
+        // 'account_used_elsewhere': '1' shows only leads whose account has a
+        // *different* persona in some campaign already, any status --
+        // broader than pending_elsewhere (includes already-resolved
+        // sends too), for finding backup contacts at accounts already in
+        // the pipeline rather than only ones currently blocked.
+        if (($filters['account_used_elsewhere'] ?? '') === '1') {
+            $clauses[] = self::accountUsedElsewhereExistsClause();
+        } elseif (($filters['account_used_elsewhere'] ?? '') === '0') {
+            $clauses[] = 'NOT ' . self::accountUsedElsewhereExistsClause();
+        }
+
         $clauses[] = 'l.deleted_at IS NULL';
 
         $where = $clauses ? ('WHERE ' . implode(' AND ', $clauses)) : '';
@@ -192,6 +214,16 @@ class LeadRepository
               AND SUBSTRING_INDEX(l2.email, '@', -1) = SUBSTRING_INDEX(l.email, '@', -1)
               AND " . WaveAssigner::PENDING_ASSIGNMENT_SQL . '
         )';
+    }
+
+    private static function accountUsedElsewhereExistsClause(): string
+    {
+        return "EXISTS (
+            SELECT 1 FROM lead_campaign_assignments a3
+            JOIN leads l3 ON l3.id = a3.lead_id
+            WHERE l3.deleted_at IS NULL AND a3.lead_id != l.id
+              AND SUBSTRING_INDEX(l3.email, '@', -1) = SUBSTRING_INDEX(l.email, '@', -1)
+        )";
     }
 
     /**
