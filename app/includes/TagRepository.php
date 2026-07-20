@@ -118,6 +118,33 @@ class TagRepository
     }
 
     /**
+     * Adds one tag (by name, created if new) to every lead in the given id
+     * list, without touching any lead's existing tags -- the bulk
+     * counterpart of addTagsToLead(), for "tag everything matching this
+     * filter" on the Dashboard and Add Leads to Campaign screens.
+     *
+     * @param array<int,int> $leadIds
+     * @return int how many leads actually gained the tag (excludes ones
+     *   that already had it, since INSERT IGNORE is a no-op there)
+     */
+    public static function addTagToLeadIds(PDO $db, array $leadIds, string $tagName): int
+    {
+        $leadIds = array_values(array_unique(array_filter(array_map('intval', $leadIds))));
+        $tagName = trim($tagName);
+        if (!$leadIds || $tagName === '') {
+            return 0;
+        }
+        $tagId = self::findOrCreateByName($db, $tagName);
+        $insert = $db->prepare('INSERT IGNORE INTO lead_tags (lead_id, tag_id) VALUES (?, ?)');
+        $count = 0;
+        foreach ($leadIds as $leadId) {
+            $insert->execute([$leadId, $tagId]);
+            $count += $insert->rowCount();
+        }
+        return $count;
+    }
+
+    /**
      * Groups lead ids by their tag signature (sorted, comma-joined tag
      * names), for batching a Saleshandy push -- that API applies tags to
      * a whole import call, not per-prospect, so leads with different tag

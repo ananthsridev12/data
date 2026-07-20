@@ -39,8 +39,9 @@ and import, in order:
 15. `sql/015_email_verification.sql`
 16. `sql/016_bounce_suppression_settings.sql`
 17. `sql/017_saleshandy_prospect_sync.sql`
+18. `sql/018_campaign_vertical_service.sql`
 
-(If you're setting up a brand-new site, import all seventeen in order. If
+(If you're setting up a brand-new site, import all eighteen in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -224,6 +225,46 @@ leader with a held group under it, to avoid orphaning those held leads)
 and, admin-only, **Delete checked leads** (a full, site-wide soft-delete
 of the underlying lead -- same as the Dashboard's Delete, undoable from
 Deleted Leads -- also skipping anything already pushed).
+
+## Bulk tagging (Dashboard and Add Leads to Campaign)
+
+Both the Dashboard and Add Leads to Campaign screens have a **Tag all N
+matching leads** field next to their filters -- type a tag name (existing
+tags autocomplete via a datalist) and it's added to every lead currently
+matching the filter, via `public/lead_bulk_tag.php` ->
+`TagRepository::addTagToLeadIds()`. This only *adds* the tag -- it never
+removes a lead's existing tags, so it's safe to run repeatedly with
+different filters to build up a lead's tag set incrementally. The flash
+message always accounts for the whole filtered set: how many gained the
+tag vs. how many already had it.
+
+## Analytics
+
+The **Analytics** nav item (`public/analytics.php`, all logged-in users)
+has two parts:
+
+- **Campaign summary** -- one row per campaign: Vertical, Service Pitched
+  (set on the campaign itself, see below), total Prospects assigned, and
+  First Email Date (the earliest `email_sent_at` across its assignments).
+- **Pivot tables** -- Prospects / Imported to Saleshandy / Email Sent,
+  grouped by Company Country, Campaign, Vertical, Service, or Industry
+  (the **Group by** dropdown), across four fixed slices: **All Data**,
+  **Saleshandy - Not Imported** (assigned to a campaign but not yet
+  pushed), **Saleshandy - Imported** (pushed), and **Emails Not Sent**.
+  Filterable by campaign, vertical, service, industry, and two independent
+  optional date ranges -- lead imported-into-app date (`leads.created_at`)
+  and email-sent date (`lead_campaign_assignments.email_sent_at`).
+  Blank/unknown Company Country groups as literal "NA", matching how the
+  source data is usually reported. See `AnalyticsRepository.php`.
+
+Since **a campaign now pitches one particular Vertical/Service** (not
+just individual leads), both are set per-campaign on the **Campaigns**
+page (create form and the Rename modal) -- `campaigns.vertical_id` /
+`campaigns.service_id`, added by `sql/018_campaign_vertical_service.sql`.
+This is separate from the existing per-*lead* Vertical/Service fields
+(set on import or the Dashboard's lead-edit modal), which the pivot's
+Vertical/Service group-by dimensions still read from -- the campaign-level
+fields only feed the Campaign Summary table above.
 
 ## Notes on the Saleshandy CSV export
 

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
+require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $admin = require_admin();
 
@@ -11,13 +12,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'create') {
         $name = trim((string) ($_POST['name'] ?? ''));
         $description = trim((string) ($_POST['description'] ?? ''));
+        $verticalId = (int) ($_POST['vertical_id'] ?? 0) ?: null;
+        $serviceId = (int) ($_POST['service_id'] ?? 0) ?: null;
 
         if ($name === '') {
             flash_set('danger', 'Campaign name is required.');
         } else {
             try {
-                db()->prepare('INSERT INTO campaigns (name, description, created_by) VALUES (?, ?, ?)')
-                    ->execute([$name, $description ?: null, $admin['id']]);
+                db()->prepare('INSERT INTO campaigns (name, description, vertical_id, service_id, created_by) VALUES (?, ?, ?, ?, ?)')
+                    ->execute([$name, $description ?: null, $verticalId, $serviceId, $admin['id']]);
                 flash_set('success', "Campaign \"{$name}\" created.");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'A campaign with that name already exists.' : 'Could not create campaign.');
@@ -31,13 +34,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = (int) ($_POST['id'] ?? 0);
         $name = trim((string) ($_POST['name'] ?? ''));
         $description = trim((string) ($_POST['description'] ?? ''));
+        $verticalId = (int) ($_POST['vertical_id'] ?? 0) ?: null;
+        $serviceId = (int) ($_POST['service_id'] ?? 0) ?: null;
 
         if ($name === '') {
             flash_set('danger', 'Campaign name is required.');
         } else {
             try {
-                db()->prepare('UPDATE campaigns SET name = ?, description = ? WHERE id = ?')
-                    ->execute([$name, $description ?: null, $id]);
+                db()->prepare('UPDATE campaigns SET name = ?, description = ?, vertical_id = ?, service_id = ? WHERE id = ?')
+                    ->execute([$name, $description ?: null, $verticalId, $serviceId, $id]);
                 flash_set('success', "Campaign renamed to \"{$name}\".");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'A campaign with that name already exists.' : 'Could not rename campaign.');
@@ -50,13 +55,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $campaigns = db()->query(
-    "SELECT c.*, u.name AS created_by_name,
+    "SELECT c.*, u.name AS created_by_name, v.label AS vertical_label, s.label AS service_label,
        (SELECT COUNT(*) FROM lead_campaign_assignments a WHERE a.campaign_id = c.id) AS lead_count,
        (SELECT COUNT(*) FROM lead_campaign_assignments a WHERE a.campaign_id = c.id AND a.status = 'exported') AS exported_count
      FROM campaigns c
      JOIN users u ON u.id = c.created_by
+     LEFT JOIN verticals v ON v.id = c.vertical_id
+     LEFT JOIN services s ON s.id = c.service_id
      ORDER BY c.created_at DESC"
 )->fetchAll();
+$verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
+$services = LeadRepository::activeLookupOptions(db(), 'services');
 
 // Live Saleshandy sequence status (active/paused) for linked campaigns --
 // one listSequences() call covers every linked campaign on this page, so
@@ -86,11 +95,27 @@ render_header('Campaigns');
     <form method="post" action="campaigns.php" class="row g-2">
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="create">
-      <div class="col-md-4">
+      <div class="col-md-3">
         <input type="text" name="name" class="form-control form-control-sm" placeholder="Campaign / Saleshandy sequence name" required>
       </div>
-      <div class="col-md-5">
+      <div class="col-md-3">
         <input type="text" name="description" class="form-control form-control-sm" placeholder="Description (optional)">
+      </div>
+      <div class="col-md-2">
+        <select name="vertical_id" class="form-select form-select-sm">
+          <option value="">Vertical...</option>
+          <?php foreach ($verticals as $v): ?>
+            <option value="<?= (int) $v['id'] ?>"><?= e($v['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <select name="service_id" class="form-select form-select-sm">
+          <option value="">Service pitched...</option>
+          <?php foreach ($services as $s): ?>
+            <option value="<?= (int) $s['id'] ?>"><?= e($s['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
       </div>
       <div class="col-md-2">
         <button type="submit" class="btn btn-primary btn-sm w-100">Create</button>
@@ -101,13 +126,15 @@ render_header('Campaigns');
 
 <table class="table table-striped bg-white">
   <thead>
-    <tr><th>Name</th><th>Description</th><th>Leads assigned</th><th>Exported</th><th>Created by</th><th>Status</th><th>Saleshandy</th><th></th></tr>
+    <tr><th>Name</th><th>Description</th><th>Vertical</th><th>Service pitched</th><th>Leads assigned</th><th>Exported</th><th>Created by</th><th>Status</th><th>Saleshandy</th><th></th></tr>
   </thead>
   <tbody>
   <?php foreach ($campaigns as $c): ?>
     <tr>
       <td><?= e($c['name']) ?></td>
       <td><?= e($c['description'] ?? '') ?></td>
+      <td><?= e($c['vertical_label'] ?? '') ?></td>
+      <td><?= e($c['service_label'] ?? '') ?></td>
       <td><a href="dashboard.php?campaign_id=<?= (int) $c['id'] ?>"><?= (int) $c['lead_count'] ?></a></td>
       <td><?= (int) $c['exported_count'] ?></td>
       <td><?= e($c['created_by_name']) ?></td>
@@ -161,6 +188,24 @@ render_header('Campaigns');
                     <label class="form-label">Description</label>
                     <input type="text" name="description" class="form-control form-control-sm" value="<?= e($c['description'] ?? '') ?>">
                   </div>
+                  <div class="mb-3">
+                    <label class="form-label">Vertical</label>
+                    <select name="vertical_id" class="form-select form-select-sm">
+                      <option value="">--</option>
+                      <?php foreach ($verticals as $v): ?>
+                        <option value="<?= (int) $v['id'] ?>" <?= (int) $c['vertical_id'] === (int) $v['id'] ? 'selected' : '' ?>><?= e($v['label']) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Service pitched</label>
+                    <select name="service_id" class="form-select form-select-sm">
+                      <option value="">--</option>
+                      <?php foreach ($services as $s): ?>
+                        <option value="<?= (int) $s['id'] ?>" <?= (int) $c['service_id'] === (int) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
                   <?php if ($c['saleshandy_sequence_id']): ?>
                     <p class="text-muted small mb-0">This only renames the campaign here -- it doesn't rename the linked Saleshandy sequence.</p>
                   <?php endif; ?>
@@ -177,7 +222,7 @@ render_header('Campaigns');
     </tr>
   <?php endforeach; ?>
   <?php if (!$campaigns): ?>
-    <tr><td colspan="8" class="text-center text-muted py-4">No campaigns yet.</td></tr>
+    <tr><td colspan="10" class="text-center text-muted py-4">No campaigns yet.</td></tr>
   <?php endif; ?>
   </tbody>
 </table>

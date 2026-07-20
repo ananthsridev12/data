@@ -2,6 +2,7 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/ColumnPreferences.php';
+require_once __DIR__ . '/../app/includes/TagRepository.php';
 
 $user = require_login();
 
@@ -44,6 +45,7 @@ $campaigns = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORD
 $importers = db()->query(
     "SELECT DISTINCT u.id, u.name FROM users u JOIN import_batches ib ON ib.uploaded_by = u.id ORDER BY u.name"
 )->fetchAll();
+$existingTags = TagRepository::all(db());
 
 // Rebuild the current filter query string (minus `page`) for pagination links
 // and for the "export/assign everything matching this filter" hidden fields.
@@ -54,6 +56,11 @@ $returnTo = 'dashboard.php' . ($filterQuery ? '?' . http_build_query($filterQuer
 render_header('Dashboard');
 ?>
 <h1 class="h4 mb-3">Leads</h1>
+<datalist id="existingTagNames">
+  <?php foreach ($existingTags as $t): ?>
+    <option value="<?= e($t['name']) ?>">
+  <?php endforeach; ?>
+</datalist>
 
 <div class="card filter-card mb-4">
   <div class="card-body">
@@ -249,10 +256,18 @@ $visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c[
 
   <p class="text-muted small mb-4">To assign leads to a campaign, open the campaign from <a href="campaigns.php">Campaigns</a> and use "Add leads to this campaign" -- filtering and persona selection now happen there so the whole wave-1/bounce workflow lives in one place.</p>
 
-<div class="d-flex gap-2 mb-4">
+<div class="d-flex gap-2 mb-4 align-items-start flex-wrap">
   <form method="get" action="leads_export_csv.php">
     <?php render_hidden_filter_fields($filterQuery); ?>
     <button type="submit" class="btn btn-sm btn-outline-secondary">Export all <?= (int) $result['total'] ?> matching leads as CSV</button>
+  </form>
+  <form method="post" action="lead_bulk_tag.php" class="d-flex gap-1"
+        onsubmit="return confirm('Add this tag to all <?= (int) $result['total'] ?> leads matching the current filter?');">
+    <?= csrf_field() ?>
+    <input type="hidden" name="return_to" value="<?= e($returnTo) ?>">
+    <?php render_hidden_filter_fields($filterQuery, 'filter'); ?>
+    <input type="text" name="tag_name" class="form-control form-control-sm" list="existingTagNames" placeholder="Tag name" required style="max-width: 160px;">
+    <button type="submit" class="btn btn-sm btn-outline-secondary">Tag all <?= (int) $result['total'] ?> matching leads</button>
   </form>
   <?php if ($user['role'] === ROLE_ADMIN): ?>
   <form method="post" action="lead_delete.php" onsubmit="return confirm('Delete ALL <?= (int) $result['total'] ?> leads matching the current filter? They will be hidden but restorable from Deleted Leads.');">

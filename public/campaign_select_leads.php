@@ -2,6 +2,7 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
+require_once __DIR__ . '/../app/includes/TagRepository.php';
 
 $user = require_login();
 
@@ -196,11 +197,17 @@ $countries = LeadRepository::distinctValues(db(), 'country');
 $employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
+$existingTags = TagRepository::all(db());
 
 render_header('Select leads');
 ?>
 <h1 class="h4 mb-1">Add leads to "<?= e($campaign['name']) ?>"</h1>
 <p class="text-muted"><a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>">&laquo; Back to this campaign</a></p>
+<datalist id="existingTagNames">
+  <?php foreach ($existingTags as $t): ?>
+    <option value="<?= e($t['name']) ?>">
+  <?php endforeach; ?>
+</datalist>
 
 <form method="get" action="campaign_select_leads.php" class="card filter-card mb-4">
   <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
@@ -279,8 +286,16 @@ render_header('Select leads');
   actual candidate pool for one campaign.
 </div>
 <?php else: ?>
-<div class="alert alert-info">
-  <strong><?= number_format($leadCount) ?></strong> lead(s) across <strong><?= number_format($domainCount) ?></strong> compan(y/ies) match this filter.
+<div class="alert alert-info d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <span><strong><?= number_format($leadCount) ?></strong> lead(s) across <strong><?= number_format($domainCount) ?></strong> compan(y/ies) match this filter.</span>
+  <form method="post" action="lead_bulk_tag.php" class="d-flex gap-1"
+        onsubmit="return confirm('Add this tag to all <?= (int) $leadCount ?> leads matching the current filter?');">
+    <?= csrf_field() ?>
+    <input type="hidden" name="return_to" value="campaign_select_leads.php?<?= http_build_query(array_merge($filters, ['campaign_id' => $campaignId])) ?>">
+    <?php render_hidden_filter_fields($filters, 'filter'); ?>
+    <input type="text" name="tag_name" class="form-control form-control-sm" list="existingTagNames" placeholder="Tag name" required style="max-width: 160px;">
+    <button type="submit" class="btn btn-sm btn-outline-secondary">Tag all <?= (int) $leadCount ?> matching leads</button>
+  </form>
 </div>
 
 <?php
