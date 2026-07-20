@@ -196,11 +196,14 @@ class SaleshandyClient
      * email once and cached on leads.saleshandy_prospect_id.
      *
      * @param int[] $assignmentIds
-     * @return array{updated:int, partial:int, not_found:int, skipped_not_pushed:int, no_fields:int, errors:array<int,string>, details:array<int,string>}
+     * @return array{updated:int, partial:int, not_found:int, skipped_not_pushed:int, no_fields:int, errors:array<int,string>, details:array<int,string>, stale_mapping_labels:array<int,string>}
      */
     public function syncFieldsToSaleshandy(PDO $db, array $assignmentIds, int $campaignId): array
     {
-        $stats = ['updated' => 0, 'partial' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'no_fields' => 0, 'errors' => [], 'details' => []];
+        $stats = [
+            'updated' => 0, 'partial' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'no_fields' => 0,
+            'errors' => [], 'details' => [], 'stale_mapping_labels' => [],
+        ];
         if (!$assignmentIds) {
             return $stats;
         }
@@ -242,6 +245,17 @@ class SaleshandyClient
             $stats['errors'][] = 'Could not retrieve any fields from Saleshandy (listFields() returned none) -- nothing was sent. Check the API key and try again.';
             $stats['no_fields'] = count($eligible);
             return $stats;
+        }
+
+        // Which enabled mappings don't currently match a real Saleshandy
+        // field -- reported once here (mapping-level, not per-lead) so
+        // "only First/Last Name went out, none of my other mapped fields"
+        // has a specific, visible reason instead of just quietly sending
+        // a smaller payload than configured.
+        foreach ($enabledMappings as $m) {
+            if (!isset($fieldsByLabel[$m['saleshandy_label']])) {
+                $stats['stale_mapping_labels'][] = $m['saleshandy_label'];
+            }
         }
 
         $resolveValue = static function (array $lead, string $key): string {

@@ -194,6 +194,11 @@ if ($action === 'mark_imported') {
     if ($result['no_fields'] > 0) {
         $message .= " {$result['no_fields']} had no enabled/mapped field with a value to send (check Saleshandy Field Mapping).";
     }
+    if ($result['stale_mapping_labels']) {
+        $message .= ' These enabled field mapping(s) do NOT match a real Saleshandy field, so they were left out of every send -- '
+            . 'fix them on Saleshandy Field Mapping (fetch the field list, then re-pick the label): '
+            . implode(', ', array_unique($result['stale_mapping_labels']));
+    }
     if ($result['errors']) {
         $message .= ' Errors: ' . implode('; ', array_slice($result['errors'], 0, 3));
     }
@@ -205,11 +210,13 @@ if ($action === 'mark_imported') {
         $message .= ' | ' . implode(' | ', array_slice($result['details'], 0, 5));
     }
     // "danger" whenever there's an actual failure reason to look at --
-    // either explicit errors, or nothing succeeded and it wasn't simply
-    // because every selected lead was skipped_not_pushed (that's a normal
-    // filtering outcome, not a problem).
+    // either explicit errors, a stale mapping quietly shrinking every
+    // payload, or nothing succeeded and it wasn't simply because every
+    // selected lead was skipped_not_pushed (that's a normal filtering
+    // outcome, not a problem).
     $nothingSucceeded = $result['updated'] === 0 && $result['partial'] === 0;
-    $hadAProblem = $result['errors'] || ($nothingSucceeded && ($result['not_found'] > 0 || $result['no_fields'] > 0));
+    $hadAProblem = $result['errors'] || $result['stale_mapping_labels']
+        || ($nothingSucceeded && ($result['not_found'] > 0 || $result['no_fields'] > 0));
     flash_set($hadAProblem ? 'danger' : 'success', $message);
 } else {
     flash_set('danger', 'Unknown action.');
