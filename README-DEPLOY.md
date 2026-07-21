@@ -41,8 +41,9 @@ and import, in order:
 17. `sql/017_saleshandy_prospect_sync.sql`
 18. `sql/018_campaign_vertical_service.sql`
 19. `sql/019_saleshandy_pushed_at.sql`
+20. `sql/020_campaign_step_notes.sql`
 
-(If you're setting up a brand-new site, import all nineteen in order. If
+(If you're setting up a brand-new site, import all twenty in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -300,6 +301,23 @@ as a best-effort proxy -- never overwrites a real value). Heavier than
 the normal sync, so it's a separate, deliberately-triggered action --
 run it once after upgrading, not routinely. See
 `SaleshandyClient::backfillHistoricalDates()`.
+
+## Campaign flow (`public/campaign_flow.php`)
+
+A simple T1&rarr;T2&rarr;T3... visual of a campaign's real Saleshandy
+sequence steps, for understanding a campaign's structure at a glance
+without opening it in Saleshandy -- linked from Campaigns ("View flow")
+and Campaign Leads ("Campaign flow"). Each step card shows real,
+live-fetched data (`SaleshandyClient::listSequenceSteps()` -- number,
+type, day offset, status) plus an editable **Purpose** text box (e.g.
+"Pain point", "Tool intro"). Purpose is purely our own annotation --
+Saleshandy has no such field -- stored in the new `campaign_step_notes`
+table (`sql/020`, one row per campaign+step, upserted on save; a blank
+box clears that step's note rather than leaving a stale one). Requires
+the campaign to already be linked to a Saleshandy sequence
+(`campaign_saleshandy_settings.php`); shows a clear prompt to link one
+first otherwise, and the usual "could not reach Saleshandy" alert if
+the API call itself fails.
 
 ## Bulk tagging (Dashboard and Add Leads to Campaign)
 

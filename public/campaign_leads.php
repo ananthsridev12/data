@@ -144,6 +144,7 @@ render_header('Campaign leads');
 <p class="text-muted">
   <?= number_format($total) ?> lead(s) match<?= array_filter($filters) ? ' this filter' : '' ?><?= $showByWaveStatus ? ' (page ' . $page . ' of ' . $totalPages . ')' : ' -- grouped by Wave status below' ?> --
   <a href="campaign_select_leads.php?campaign_id=<?= (int) $campaignId ?>">Add leads to this campaign</a> --
+  <a href="campaign_flow.php?campaign_id=<?= (int) $campaignId ?>">Campaign flow</a> --
   <a href="column_settings.php?page=campaign_leads&return_to=<?= urlencode('campaign_leads.php?campaign_id=' . $campaignId) ?>">Manage columns</a>
 </p>
 

@@ -160,6 +160,7 @@ render_header('Campaigns');
       </td>
       <td class="d-flex gap-1">
         <a class="btn btn-sm btn-outline-secondary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>">Manage leads</a>
+        <a class="btn btn-sm btn-outline-secondary" href="campaign_flow.php?campaign_id=<?= (int) $c['id'] ?>">View flow</a>
         <a class="btn btn-sm btn-outline-secondary" href="leads_export_csv.php?campaign_export=<?= (int) $c['id'] ?>">Export CSV</a>
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#renameCampaign<?= (int) $c['id'] ?>">Edit</button>
         <form method="post" action="campaigns.php" onsubmit="return confirm('Toggle active status for <?= e($c['name']) ?>?');">
