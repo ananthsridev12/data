@@ -32,45 +32,73 @@ $filters = [
     'delivery_status' => trim((string) ($_GET['delivery_status'] ?? '')),
 ];
 
-$whereClauses = ['a.campaign_id = :campaign_id', 'l.deleted_at IS NULL'];
-$whereParams = ['campaign_id' => $campaignId];
-if (in_array($filters['wave_status'], ['active', 'held', 'suppressed'], true)) {
-    $whereClauses[] = 'a.wave_status = :wave_status';
-    $whereParams['wave_status'] = $filters['wave_status'];
-}
+// Base filter (email_sent/imported/delivery_status only -- wave_status is
+// applied separately below, either as one explicit clause when the admin
+// picked a status, or per-bucket when showing all three side by side).
+$baseWhereClauses = ['a.campaign_id = :campaign_id', 'l.deleted_at IS NULL'];
+$baseWhereParams = ['campaign_id' => $campaignId];
 if ($filters['email_sent'] === '1' || $filters['email_sent'] === '0') {
-    $whereClauses[] = 'a.email_sent = :email_sent';
-    $whereParams['email_sent'] = (int) $filters['email_sent'];
+    $baseWhereClauses[] = 'a.email_sent = :email_sent';
+    $baseWhereParams['email_sent'] = (int) $filters['email_sent'];
 }
 if ($filters['imported'] === '1') {
-    $whereClauses[] = "a.status IN ('exported', 'pushed')";
+    $baseWhereClauses[] = "a.status IN ('exported', 'pushed')";
 } elseif ($filters['imported'] === '0') {
-    $whereClauses[] = "a.status = 'assigned'";
+    $baseWhereClauses[] = "a.status = 'assigned'";
 }
 if ($filters['delivery_status'] !== '' && in_array($filters['delivery_status'], DELIVERY_STATUSES, true)) {
-    $whereClauses[] = 'a.delivery_status = :delivery_status';
-    $whereParams['delivery_status'] = $filters['delivery_status'];
+    $baseWhereClauses[] = 'a.delivery_status = :delivery_status';
+    $baseWhereParams['delivery_status'] = $filters['delivery_status'];
 }
-$where = 'WHERE ' . implode(' AND ', $whereClauses);
 
-$countStmt = db()->prepare("SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id {$where}");
-$countStmt->execute($whereParams);
-$total = (int) $countStmt->fetchColumn();
-$totalPages = max(1, (int) ceil($total / $perPage));
-$page = min($page, $totalPages);
-$offset = ($page - 1) * $perPage;
+$fetchAssignments = static function (array $whereClauses, array $whereParams, ?int $limit, int $offset = 0): array {
+    $where = 'WHERE ' . implode(' AND ', $whereClauses);
+    $countStmt = db()->prepare("SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id {$where}");
+    $countStmt->execute($whereParams);
+    $total = (int) $countStmt->fetchColumn();
 
-$stmt = db()->prepare(
-    "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email, u.name AS assigned_by_name
-       FROM lead_campaign_assignments a
-       JOIN leads l ON l.id = a.lead_id
-       JOIN users u ON u.id = a.assigned_by
-      {$where}
-      ORDER BY a.assigned_at DESC
-      LIMIT {$perPage} OFFSET {$offset}"
-);
-$stmt->execute($whereParams);
-$assignments = $stmt->fetchAll();
+    $limitSql = $limit !== null ? "LIMIT {$limit} OFFSET {$offset}" : '';
+    $stmt = db()->prepare(
+        "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email, u.name AS assigned_by_name
+           FROM lead_campaign_assignments a
+           JOIN leads l ON l.id = a.lead_id
+           JOIN users u ON u.id = a.assigned_by
+          {$where}
+          ORDER BY a.assigned_at DESC
+          {$limitSql}"
+    );
+    $stmt->execute($whereParams);
+    return ['rows' => $stmt->fetchAll(), 'total' => $total];
+};
+
+// Explicit wave_status filter (via the filter form or a count-strip badge)
+// keeps today's single filtered/paginated table. Otherwise -- same
+// treatment as Wave 1 groups -- three collapsible sections (Active/Held/
+// Suppressed), each a capped preview with a link to the full paginated
+// view for that one status, instead of one flat table mixing all three.
+$showByWaveStatus = in_array($filters['wave_status'], ['active', 'held', 'suppressed'], true);
+if ($showByWaveStatus) {
+    $whereClauses = array_merge($baseWhereClauses, ['a.wave_status = :wave_status']);
+    $whereParams = $baseWhereParams + ['wave_status' => $filters['wave_status']];
+    $countStmt = db()->prepare('SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id WHERE ' . implode(' AND ', $whereClauses));
+    $countStmt->execute($whereParams);
+    $total = (int) $countStmt->fetchColumn();
+    $totalPages = max(1, (int) ceil($total / $perPage));
+    $page = min($page, $totalPages);
+    $result = $fetchAssignments($whereClauses, $whereParams, $perPage, ($page - 1) * $perPage);
+    $assignments = $result['rows'];
+} else {
+    $totalPages = 1;
+    $assignmentsByWaveStatus = [];
+    foreach (['active', 'held', 'suppressed'] as $ws) {
+        $assignmentsByWaveStatus[$ws] = $fetchAssignments(
+            array_merge($baseWhereClauses, ['a.wave_status = :wave_status']),
+            $baseWhereParams + ['wave_status' => $ws],
+            50
+        );
+    }
+    $total = array_sum(array_column($assignmentsByWaveStatus, 'total'));
+}
 
 $statsStmt = db()->prepare(
     "SELECT
@@ -114,7 +142,7 @@ render_header('Campaign leads');
 ?>
 <h1 class="h4 mb-1">Leads assigned to "<?= e($campaign['name']) ?>"</h1>
 <p class="text-muted">
-  <?= number_format($total) ?> lead(s) match<?= array_filter($filters) ? ' this filter' : '' ?> (page <?= $page ?> of <?= $totalPages ?>) --
+  <?= number_format($total) ?> lead(s) match<?= array_filter($filters) ? ' this filter' : '' ?><?= $showByWaveStatus ? ' (page ' . $page . ' of ' . $totalPages . ')' : ' -- grouped by Wave status below' ?> --
   <a href="campaign_select_leads.php?campaign_id=<?= (int) $campaignId ?>">Add leads to this campaign</a> --
   <a href="column_settings.php?page=campaign_leads&return_to=<?= urlencode('campaign_leads.php?campaign_id=' . $campaignId) ?>">Manage columns</a>
 </p>
@@ -189,10 +217,17 @@ render_header('Campaign leads');
       <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
       <button type="submit" class="btn btn-sm btn-outline-secondary">Import from Saleshandy</button>
     </form>
+    <form method="post" action="campaign_saleshandy_backfill_dates.php" onsubmit="return confirm('Re-check this campaign against Saleshandy\'s full 2-year history to fix any wrong/missing Email Date or First Pushed values? This is slower than Refresh statuses -- run it once, not on every visit.');">
+      <?= csrf_field() ?>
+      <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+      <button type="submit" class="btn btn-sm btn-outline-warning">Backfill Email/Pushed dates</button>
+    </form>
     <span class="text-muted small">
       Push only sends leads currently eligible under the wave-1 domain-safety gate, and skips bad emails
       (verified via Saleshandy) automatically -- risky ones are skipped too unless "Include risky emails" is checked.
       <?= $campaign['saleshandy_last_synced_at'] ? 'Last synced ' . e($campaign['saleshandy_last_synced_at']) . '.' : 'Never synced yet.' ?>
+      Backfill re-checks the full history (slower) to fix Email Date/First Pushed values Refresh statuses can no
+      longer reach once its sync window has moved past them -- run it once, not routinely.
     </span>
   </div>
 </div>
@@ -336,32 +371,75 @@ render_header('Campaign leads');
       }
   };
   $visibleAssignmentColumns = array_values(array_filter($columns, static fn(array $c) => $c['visible']));
+
+  $renderAssignmentsTable = static function (array $rows) use ($visibleAssignmentColumns, $renderAssignmentCell) {
+      ?>
+      <div class="table-responsive card mb-3">
+        <table class="table table-hover mb-0 align-middle">
+          <thead>
+            <tr>
+              <th><input type="checkbox" class="selectAllInTable"></th>
+              <?php foreach ($visibleAssignmentColumns as $col): ?>
+                <th><?= e($col['label']) ?></th>
+              <?php endforeach; ?>
+            </tr>
+          </thead>
+          <tbody>
+          <?php foreach ($rows as $a): ?>
+            <tr>
+              <td><input type="checkbox" name="assignment_ids[]" value="<?= (int) $a['id'] ?>" class="lead-checkbox"></td>
+              <?php foreach ($visibleAssignmentColumns as $col): ?>
+                <?php $renderAssignmentCell($col['key'], $a); ?>
+              <?php endforeach; ?>
+            </tr>
+          <?php endforeach; ?>
+          <?php if (!$rows): ?>
+            <tr><td colspan="<?= count($visibleAssignmentColumns) + 1 ?>" class="text-center text-muted py-4">No leads.</td></tr>
+          <?php endif; ?>
+          </tbody>
+        </table>
+      </div>
+      <?php
+  };
   ?>
-  <div class="table-responsive card mb-3">
-    <table class="table table-hover mb-0 align-middle">
-      <thead>
-        <tr>
-          <th><input type="checkbox" id="selectAllOnPage"></th>
-          <?php foreach ($visibleAssignmentColumns as $col): ?>
-            <th><?= e($col['label']) ?></th>
-          <?php endforeach; ?>
-        </tr>
-      </thead>
-      <tbody>
-      <?php foreach ($assignments as $a): ?>
-        <tr>
-          <td><input type="checkbox" name="assignment_ids[]" value="<?= (int) $a['id'] ?>" class="lead-checkbox"></td>
-          <?php foreach ($visibleAssignmentColumns as $col): ?>
-            <?php $renderAssignmentCell($col['key'], $a); ?>
-          <?php endforeach; ?>
-        </tr>
+
+  <?php if ($showByWaveStatus): ?>
+    <?php $renderAssignmentsTable($assignments); ?>
+  <?php else: ?>
+    <?php
+    $waveStatusBadge = ['active' => 'success', 'held' => 'warning', 'suppressed' => 'danger'];
+    ?>
+    <div class="card mb-3">
+      <div class="card-header">Contacts, grouped by Wave status</div>
+      <div class="card-body d-flex flex-wrap gap-2">
+        <?php foreach ($assignmentsByWaveStatus as $ws => $result): ?>
+          <button type="button" class="btn btn-sm btn-outline-<?= $waveStatusBadge[$ws] ?>" data-bs-toggle="collapse" data-bs-target="#contactsGroup-<?= e($ws) ?>">
+            <?= number_format($result['total']) ?> <?= e($ws) ?>
+          </button>
+        <?php endforeach; ?>
+      </div>
+      <?php foreach ($assignmentsByWaveStatus as $ws => $result): ?>
+        <?php
+        $fullListParams = ['campaign_id' => $campaignId, 'wave_status' => $ws];
+        foreach (['email_sent', 'imported', 'delivery_status'] as $fk) {
+            if ($filters[$fk] !== '') {
+                $fullListParams[$fk] = $filters[$fk];
+            }
+        }
+        ?>
+        <div class="collapse" id="contactsGroup-<?= e($ws) ?>">
+          <div class="card-body pt-0">
+            <?php $renderAssignmentsTable($result['rows']); ?>
+            <?php if ($result['total'] > count($result['rows'])): ?>
+              <a href="campaign_leads.php?<?= http_build_query($fullListParams) ?>" class="btn btn-sm btn-outline-secondary">
+                See all <?= number_format($result['total']) ?> <?= e($ws) ?> (paginated) &raquo;
+              </a>
+            <?php endif; ?>
+          </div>
+        </div>
       <?php endforeach; ?>
-      <?php if (!$assignments): ?>
-        <tr><td colspan="<?= count($visibleAssignmentColumns) + 1 ?>" class="text-center text-muted py-4">No leads assigned to this campaign yet.</td></tr>
-      <?php endif; ?>
-      </tbody>
-    </table>
-  </div>
+    </div>
+  <?php endif; ?>
 
   <div class="card mb-4">
     <div class="card-body d-flex flex-wrap gap-2 align-items-center">

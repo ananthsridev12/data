@@ -245,14 +245,25 @@ group's table (Bootstrap collapse, `#waveGroup-{status}`). The Release/
 Suppress actions per leader are unchanged, just inside the expanded
 panel now.
 
+The **contact list itself** (bottom of Campaign Leads) gets the same
+treatment whenever no explicit Wave status filter is applied: instead of
+one flat table mixing Active/Held/Suppressed, it's three compact status
+buttons ("6 active", "38 held", "3 suppressed") that each expand a
+capped preview (50 rows) with a "See all N (paginated) &raquo;" link
+into the existing single-status filtered/paginated view for the full
+list. Picking a Wave status from the filter dropdown (or a count-strip
+badge) bypasses this entirely and goes straight to that familiar single
+paginated table, unchanged. The "select all" checkbox in each table
+header is scoped to just that table (`.selectAllInTable`, see
+`assets/js/app.js`) now that more than one can be on screen at once.
+
 A **First Pushed** column is available on Campaign Leads (Manage
 columns) showing `saleshandy_pushed_at` -- when a lead was first pushed
 to Saleshandy, set once by `campaign_saleshandy_push.php`
 (`COALESCE`-guarded so a later re-push/re-sync never overwrites it) and
 distinct from **Last Synced** (`saleshandy_synced_at`), which updates on
 every push or "Refresh statuses" run and so can't answer "when did this
-first go out." Leads pushed before this column existed (`sql/019`) show
-blank -- there's no way to backfill a timestamp that was never recorded.
+first go out."
 
 **"Email Date" showing 1970-01-01** was a real bug, now fixed: Saleshandy's
 `Email Sent At` field comes back as JavaScript's `Date.toString()` format
@@ -270,6 +281,25 @@ fixed a latent bug in picking a prospect's *earliest* send time across
 multiple sequence steps, which previously compared the raw date
 *strings* lexicographically (unreliable for real chronological order)
 instead of parsed timestamps.
+
+**But leads already synced before that fix stayed broken** -- the normal
+sync's `email_sent_at = COALESCE(email_sent_at, ?)` only fills in a
+*NULL* value, so a column already holding the bad 1970-01-01 date (or a
+lead pushed before `saleshandy_pushed_at` existed) never self-heals, no
+matter how many times "Refresh statuses" runs afterward -- by the time
+you re-sync, the narrower [last-synced, now) window has usually already
+moved past the real send event anyway, so there's nothing left to
+re-trigger a fix from even if the column *were* NULL. **Backfill
+Email/Pushed dates** (next to Refresh statuses on Campaign Leads, admin-
+only) exists specifically for this: it re-fetches the sequence's full
+2-year history (same lookback `pullNewProspects()` already uses, not
+bounded by the last sync) and fixes both `email_sent_at` (only if it's
+currently NULL or the literal `1970-01-01` marker) and
+`saleshandy_pushed_at` (only if NULL, using the earliest known send time
+as a best-effort proxy -- never overwrites a real value). Heavier than
+the normal sync, so it's a separate, deliberately-triggered action --
+run it once after upgrading, not routinely. See
+`SaleshandyClient::backfillHistoricalDates()`.
 
 ## Bulk tagging (Dashboard and Add Leads to Campaign)
 

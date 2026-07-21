@@ -794,6 +794,77 @@ class SaleshandyClient
     }
 
     /**
+     * Repairs two things the normal "Refresh statuses" sync (syncCampaign())
+     * can never reach once already set once, because it only fetches
+     * activity in the window since saleshandy_last_synced_at -- once that
+     * window has moved past a lead's actual send event, the event never
+     * reappears in a later sync:
+     *  - email_sent_at stuck at the 1970-01-01 epoch bug (see
+     *    parseSaleshandyDate()) from before that fix existed, or never
+     *    set at all for a lead whose sync ran before Saleshandy actually
+     *    had activity for it.
+     *  - saleshandy_pushed_at left NULL for a lead pushed before
+     *    sql/019 added that column -- backfilled with its earliest known
+     *    send time as a best-effort proxy (never overwrites a real value).
+     *
+     * Deliberately separate from the regular sync and manually triggered:
+     * it re-fetches the FULL 2-year lookback (same as pullNewProspects()),
+     * a much heavier call than the normal incremental one, meant to be run
+     * once after upgrading (or whenever historical dates look wrong)
+     * rather than on every "Refresh statuses" click.
+     *
+     * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
+     * @return array{checked:int, email_date_fixed:int, pushed_at_fixed:int}
+     */
+    public function backfillHistoricalDates(PDO $db, array $campaign): array
+    {
+        $stats = ['checked' => 0, 'email_date_fixed' => 0, 'pushed_at_fixed' => 0];
+        $sequenceId = $campaign['saleshandy_sequence_id'];
+        if (!$sequenceId) {
+            return $stats;
+        }
+
+        $startDate = date('Y-m-d', strtotime('-2 years'));
+        $endDate = date('Y-m-d');
+        $activity = $this->fetchSequenceActivity($sequenceId, $startDate, $endDate);
+        $byEmail = $this->aggregateActivityByEmail($activity);
+        if (!$byEmail) {
+            return $stats;
+        }
+
+        $findStmt = $db->prepare(
+            "SELECT a.id, a.email_sent_at, a.saleshandy_pushed_at FROM lead_campaign_assignments a
+               JOIN leads l ON l.id = a.lead_id
+              WHERE a.campaign_id = ? AND l.email = ?"
+        );
+        $updateEmailDate = $db->prepare('UPDATE lead_campaign_assignments SET email_sent = 1, email_sent_at = ? WHERE id = ?');
+        $updatePushedAt = $db->prepare('UPDATE lead_campaign_assignments SET saleshandy_pushed_at = ? WHERE id = ?');
+
+        foreach ($byEmail as $email => $row) {
+            if ($row['sentAt'] === null) {
+                continue;
+            }
+            $findStmt->execute([$campaign['id'], $email]);
+            $assignment = $findStmt->fetch();
+            if (!$assignment) {
+                continue; // activity for an email not assigned to this campaign locally
+            }
+            $stats['checked']++;
+
+            if ($assignment['email_sent_at'] === null || $assignment['email_sent_at'] === '1970-01-01') {
+                $updateEmailDate->execute([date('Y-m-d', $row['sentAt']), $assignment['id']]);
+                $stats['email_date_fixed']++;
+            }
+            if ($assignment['saleshandy_pushed_at'] === null) {
+                $updatePushedAt->execute([date('Y-m-d H:i:s', $row['sentAt']), $assignment['id']]);
+                $stats['pushed_at_fixed']++;
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
      * Saleshandy wraps every successful response as {..., "payload": ...}
      * (confirmed via the official CLI's response interceptor, which
      * unwraps this same key client-side) -- list endpoints return an

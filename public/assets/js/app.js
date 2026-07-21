@@ -1,12 +1,16 @@
+// "Select all" checkbox in a table header -- scoped to just that table's
+// own rows, since campaign_leads.php can render more than one of these
+// tables at once (one per Wave status group).
 (function () {
-  var selectAll = document.getElementById('selectAllOnPage');
-  if (selectAll) {
+  document.querySelectorAll('.selectAllInTable').forEach(function (selectAll) {
+    var table = selectAll.closest('table');
+    if (!table) return;
     selectAll.addEventListener('change', function () {
-      document.querySelectorAll('.lead-checkbox').forEach(function (cb) {
+      table.querySelectorAll('.lead-checkbox').forEach(function (cb) {
         cb.checked = selectAll.checked;
       });
     });
-  }
+  });
 })();
 
 (function () {
