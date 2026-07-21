@@ -262,15 +262,23 @@ render_header('Select leads');
       </select>
     </div>
     <div class="col-md-2">
+      <label class="form-label small text-muted mb-0">
+        Pending elsewhere
+        <?= info_icon('Checks every campaign a same-company contact is in -- including this one. "Blocked" leads have a different contact at their company still awaiting a delivered/bounced outcome anywhere, so they\'d be held for wave-1 safety if added now.') ?>
+      </label>
       <select name="pending_elsewhere" class="form-select form-select-sm">
-        <option value="">Pending elsewhere (all)</option>
+        <option value="">All</option>
         <option value="0" <?= $filters['pending_elsewhere'] === '0' ? 'selected' : '' ?>>No (hide blocked leads)</option>
         <option value="1" <?= $filters['pending_elsewhere'] === '1' ? 'selected' : '' ?>>Yes (show only blocked leads)</option>
       </select>
     </div>
     <div class="col-md-2">
+      <label class="form-label small text-muted mb-0">
+        Account used elsewhere
+        <?= info_icon('Checks every campaign a same-company contact is in -- including this one, and any outcome (not just pending). Use "Yes" to find backup contacts at companies you\'re already engaging anywhere; "No" for genuinely untouched companies.') ?>
+      </label>
       <select name="account_used_elsewhere" class="form-select form-select-sm">
-        <option value="">Account used elsewhere (all)</option>
+        <option value="">All</option>
         <option value="1" <?= $filters['account_used_elsewhere'] === '1' ? 'selected' : '' ?>>Yes (backup contacts at engaged accounts)</option>
         <option value="0" <?= $filters['account_used_elsewhere'] === '0' ? 'selected' : '' ?>>No (accounts never touched)</option>
       </select>
@@ -346,9 +354,9 @@ $previewFilterQuery['campaign_id'] = $campaignId;
               <span class="badge bg-danger" title="<?= e($lead['suppressed_reason']) ?>">Suppressed</span>
             <?php endif; ?>
             <?php if ($lead['pending_elsewhere_campaigns']): ?>
-              <span class="badge bg-warning text-dark" title="Another persona at this account is pending delivery in: <?= e($lead['pending_elsewhere_campaigns']) ?>">Pending elsewhere</span>
+              <span class="badge bg-warning text-dark" title="Another persona at this account is pending delivery in: <?= e($lead['pending_elsewhere_campaigns']) ?> (campaign name(s) listed here may include this campaign itself, not just other ones).">Pending elsewhere</span>
             <?php elseif ($lead['account_used_elsewhere_campaigns']): ?>
-              <span class="badge bg-info text-dark" title="Another persona at this account is already in: <?= e($lead['account_used_elsewhere_campaigns']) ?>">Account used elsewhere</span>
+              <span class="badge bg-info text-dark" title="Another persona at this account is already in: <?= e($lead['account_used_elsewhere_campaigns']) ?> (campaign name(s) listed here may include this campaign itself, not just other ones).">Account used elsewhere</span>
             <?php endif; ?>
           </td>
         </tr>
