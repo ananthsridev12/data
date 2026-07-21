@@ -314,21 +314,40 @@ so many boxes. Now:
   clear at a glance whether an action applies campaign-wide or only to
   ticked rows.
 - All bulk actions on checked leads (Mark Imported, Mark Email Sent,
-  Delivery Status, Sync to Saleshandy, Remove/Delete) now live in one
-  **"Actions on checked leads"** card directly under the contact table,
-  grouped into rows by `<hr>` dividers instead of four separate cards
-  scattered around the page. Remove/Delete are visually marked as a
-  "Danger zone" within that same card rather than getting their own
-  red-bordered box.
+  Delivery Status, Sync to Saleshandy, Remove/Delete) were merged into
+  one card directly under the contact table, grouped into rows by
+  `<hr>` dividers instead of four separate cards scattered around the
+  page.
 - Every button that isn't self-explanatory gets a small (&#9432;) info
   icon next to it -- hover or tap for a one-line explanation of exactly
   what that button does (`info_icon()` in `app/includes/helpers.php`,
   a Bootstrap tooltip; initialized globally in `assets/js/app.js` so any
   page can use `data-bs-toggle="tooltip"` without extra wiring).
 
-No form field names, action values, or endpoints changed -- this is a
-pure layout/labeling pass, every button still posts to the same place
-it always did.
+**Follow-up pass -- collapse the rarely-used, split the rest:**
+
+- **Overview** (click-to-filter count badges) and **Filters** (the
+  dropdown form) are now two separate cards instead of one combined
+  "Overview & filters" card, since they're two different things people
+  reach for at different times.
+- **Paste bounced emails** is now collapsed by default (Bootstrap
+  collapse, click the card header to expand) -- an occasional bulk
+  action, not something that needs to occupy space on every visit. The
+  info icon explaining what it does stays visible in the header either
+  way.
+- **Sync updated details to Saleshandy** was pulled out of the bulk
+  actions card into its own small always-visible row just above it
+  (still requires ticking leads in the table first) -- important/
+  frequently used enough that it shouldn't be hidden behind a click.
+- The remaining bulk actions (Mark Imported/Email Sent, Delivery
+  Status, Remove/Delete "Danger zone") are now inside a **"More actions
+  on checked leads"** card, also collapsed by default and expanded via
+  its header -- these are used far less often than Sync, so they're
+  tucked away rather than always taking up vertical space.
+
+No form field names, action values, or endpoints changed across either
+pass -- this is a pure layout/labeling/visibility change, every button
+still posts to the same place it always did.
 
 ## Campaign flow (`public/campaign_flow.php`)
 

@@ -149,18 +149,22 @@ render_header('Campaign leads');
 </p>
 
 <div class="card mb-3">
-  <div class="card-header">Overview &amp; filters <?= info_icon('Click any number below as a shortcut to filter the table to just that group, or use the dropdowns to combine filters.') ?></div>
+  <div class="card-header">Overview <?= info_icon('Click any number below as a shortcut to filter the table to just that group.') ?></div>
+  <div class="card-body d-flex flex-wrap gap-2">
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>" class="badge bg-dark text-decoration-none"><?= (int) $stats['all_count'] ?> total</a>
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&wave_status=active" class="badge bg-success text-decoration-none"><?= (int) $stats['wave_active'] ?> active</a>
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&wave_status=held" class="badge bg-warning text-decoration-none"><?= (int) $stats['wave_held'] ?> held</a>
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&wave_status=suppressed" class="badge bg-danger text-decoration-none"><?= (int) $stats['wave_suppressed'] ?> suppressed</a>
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&email_sent=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['email_sent_yes'] ?> email sent</a>
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&email_sent=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['email_sent_no'] ?> not sent</a>
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['imported_yes'] ?> imported to Saleshandy</a>
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['imported_no'] ?> not imported</a>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Filters</div>
   <div class="card-body">
-    <div class="d-flex flex-wrap gap-2 mb-3">
-      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>" class="badge bg-dark text-decoration-none"><?= (int) $stats['all_count'] ?> total</a>
-      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&wave_status=active" class="badge bg-success text-decoration-none"><?= (int) $stats['wave_active'] ?> active</a>
-      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&wave_status=held" class="badge bg-warning text-decoration-none"><?= (int) $stats['wave_held'] ?> held</a>
-      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&wave_status=suppressed" class="badge bg-danger text-decoration-none"><?= (int) $stats['wave_suppressed'] ?> suppressed</a>
-      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&email_sent=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['email_sent_yes'] ?> email sent</a>
-      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&email_sent=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['email_sent_no'] ?> not sent</a>
-      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['imported_yes'] ?> imported to Saleshandy</a>
-      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['imported_no'] ?> not imported</a>
-    </div>
     <form method="get" action="campaign_leads.php" class="d-flex flex-wrap gap-2 align-items-center">
       <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
       <select name="wave_status" class="form-select form-select-sm" style="max-width: 170px;">
@@ -234,22 +238,29 @@ render_header('Campaign leads');
 <?php endif; ?>
 
 <div class="card mb-4 border-danger">
-  <div class="card-header">Paste bounced emails <?= info_icon('Suppresses the pasted emails\' domains everywhere (all campaigns and future imports), then auto-releases every other still-pending company in this campaign as the next batch to send.') ?></div>
-  <div class="card-body">
-    <form method="post" action="campaign_bounce_paste.php">
-      <?= csrf_field() ?>
-      <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
-      <textarea name="emails" class="form-control form-control-sm mb-2" rows="3" placeholder="Paste bounced email addresses -- one per line, or comma/space separated"></textarea>
-      <div class="d-flex flex-wrap gap-2 align-items-center">
-        <select name="bounce_type" class="form-select form-select-sm" style="max-width: 220px;">
-          <option value="">Bounce type (optional)</option>
-          <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
-            <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
-          <?php endforeach; ?>
-        </select>
-        <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Suppress these domains and release every other pending company in this campaign as the next batch?');">Process bounces &amp; release the rest</button>
-      </div>
-    </form>
+  <div class="card-header">
+    <button class="btn btn-link btn-sm text-decoration-none p-0 fw-semibold" type="button" data-bs-toggle="collapse" data-bs-target="#bouncePasteBody">
+      Paste bounced emails &raquo;
+    </button>
+    <?= info_icon('Suppresses the pasted emails\' domains everywhere (all campaigns and future imports), then auto-releases every other still-pending company in this campaign as the next batch to send.') ?>
+  </div>
+  <div class="collapse" id="bouncePasteBody">
+    <div class="card-body">
+      <form method="post" action="campaign_bounce_paste.php">
+        <?= csrf_field() ?>
+        <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+        <textarea name="emails" class="form-control form-control-sm mb-2" rows="3" placeholder="Paste bounced email addresses -- one per line, or comma/space separated"></textarea>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <select name="bounce_type" class="form-select form-select-sm" style="max-width: 220px;">
+            <option value="">Bounce type (optional)</option>
+            <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+              <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Suppress these domains and release every other pending company in this campaign as the next batch?');">Process bounces &amp; release the rest</button>
+        </div>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -440,64 +451,73 @@ render_header('Campaign leads');
     </div>
   <?php endif; ?>
 
+  <?php if ($campaign['saleshandy_sequence_id']): ?>
+  <div class="card mb-3 border-info">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-center py-2">
+      <button type="submit" name="action" value="sync_fields_to_saleshandy" class="btn btn-sm btn-outline-info"
+              onclick="return confirm('Push checked leads\' current field values (per Saleshandy Field Mapping) to their existing Saleshandy contact? Only leads already pushed are updated -- this refreshes their data without touching sequence position or steps.');">
+        Sync updated details to Saleshandy
+      </button>
+      <?= info_icon('For leads edited here since being pushed (e.g. via re-import) -- updates the field values on their existing Saleshandy contact directly, without touching sequence position or steps. Skips anything not yet pushed.') ?>
+      <span class="text-muted small">Tick boxes in the table above first.</span>
+    </div>
+  </div>
+  <?php endif; ?>
+
   <div class="card mb-4">
-    <div class="card-header">Actions on checked leads <span class="text-muted small fw-normal">-- tick boxes in the table above, then pick one</span></div>
-    <div class="card-body d-flex flex-column gap-3">
+    <div class="card-header">
+      <button class="btn btn-link btn-sm text-decoration-none p-0 fw-semibold" type="button" data-bs-toggle="collapse" data-bs-target="#moreActionsBody">
+        More actions on checked leads &raquo;
+      </button>
+      <span class="text-muted small fw-normal">-- tick boxes in the table above, then pick one</span>
+    </div>
+    <div class="collapse" id="moreActionsBody">
+      <div class="card-body d-flex flex-column gap-3">
 
-      <div class="d-flex flex-wrap gap-2 align-items-center">
-        <button type="submit" name="action" value="mark_imported" class="btn btn-sm btn-outline-primary">Mark as Imported to Saleshandy</button>
-        <?= info_icon('Flags checked leads as already imported to Saleshandy, without actually sending anything -- for leads pushed some other way (e.g. manually in Saleshandy) that this app doesn\'t know about yet.') ?>
-        <span class="vr mx-1"></span>
-        <span class="text-muted small">Email sent date:</span>
-        <input type="date" name="email_sent_at" class="form-control form-control-sm" style="max-width: 160px;" value="<?= e(date('Y-m-d')) ?>">
-        <button type="submit" name="action" value="mark_email_sent" class="btn btn-sm btn-outline-primary">Mark as Email Sent</button>
-        <?= info_icon('Flags checked leads as having been emailed on the date above -- for recording sends that happened outside this app.') ?>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <button type="submit" name="action" value="mark_imported" class="btn btn-sm btn-outline-primary">Mark as Imported to Saleshandy</button>
+          <?= info_icon('Flags checked leads as already imported to Saleshandy, without actually sending anything -- for leads pushed some other way (e.g. manually in Saleshandy) that this app doesn\'t know about yet.') ?>
+          <span class="vr mx-1"></span>
+          <span class="text-muted small">Email sent date:</span>
+          <input type="date" name="email_sent_at" class="form-control form-control-sm" style="max-width: 160px;" value="<?= e(date('Y-m-d')) ?>">
+          <button type="submit" name="action" value="mark_email_sent" class="btn btn-sm btn-outline-primary">Mark as Email Sent</button>
+          <?= info_icon('Flags checked leads as having been emailed on the date above -- for recording sends that happened outside this app.') ?>
+        </div>
+
+        <hr class="my-0">
+
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <span class="text-muted small">Delivery status:</span>
+          <select name="delivery_status" id="deliveryStatusSelect" class="form-select form-select-sm" style="max-width: 180px;">
+            <option value="">-- choose --</option>
+            <?php foreach (DELIVERY_STATUSES as $ds): ?>
+              <option value="<?= e($ds) ?>" data-bounce="<?= in_array($ds, DELIVERY_STATUS_BOUNCE_VALUES, true) ? '1' : '0' ?>"><?= e($ds) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <button type="submit" name="action" value="set_delivery_status" class="btn btn-sm btn-outline-primary" id="setDeliveryStatusBtn">Apply to checked</button>
+          <?= info_icon('Manually sets delivery status on checked leads. A bounced status also suppresses that lead\'s domain everywhere, same as Paste bounced emails.') ?>
+        </div>
+
+        <hr class="my-0">
+
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <span class="text-danger small fw-semibold">Danger zone:</span>
+          <button type="submit" name="action" value="remove_from_campaign" class="btn btn-sm btn-outline-warning"
+                  onclick="return confirm('Remove checked leads from this campaign? Only leads not yet pushed to Saleshandy will be removed -- they become free to be added to another campaign. Leads already pushed are skipped.');">
+            Remove from this campaign
+          </button>
+          <?= info_icon('Removes checked leads from this campaign only -- they stay in the system and become free to add to another campaign. Skips any lead already pushed to Saleshandy.') ?>
+          <?php if ($user['role'] === ROLE_ADMIN): ?>
+          <span class="vr mx-1"></span>
+          <button type="submit" name="action" value="delete_lead" class="btn btn-sm btn-outline-danger"
+                  onclick="return confirm('Delete checked leads entirely? This hides them everywhere (not just this campaign), not just removes them from here -- undo from Deleted Leads. Leads already pushed to Saleshandy are skipped.');">
+            Delete checked leads
+          </button>
+          <?= info_icon('Hides checked leads everywhere in the app, not just this campaign -- can be undone from Deleted Leads. Skips any lead already pushed to Saleshandy.') ?>
+          <?php endif; ?>
+        </div>
+
       </div>
-
-      <hr class="my-0">
-
-      <div class="d-flex flex-wrap gap-2 align-items-center">
-        <span class="text-muted small">Delivery status:</span>
-        <select name="delivery_status" id="deliveryStatusSelect" class="form-select form-select-sm" style="max-width: 180px;">
-          <option value="">-- choose --</option>
-          <?php foreach (DELIVERY_STATUSES as $ds): ?>
-            <option value="<?= e($ds) ?>" data-bounce="<?= in_array($ds, DELIVERY_STATUS_BOUNCE_VALUES, true) ? '1' : '0' ?>"><?= e($ds) ?></option>
-          <?php endforeach; ?>
-        </select>
-        <button type="submit" name="action" value="set_delivery_status" class="btn btn-sm btn-outline-primary" id="setDeliveryStatusBtn">Apply to checked</button>
-        <?= info_icon('Manually sets delivery status on checked leads. A bounced status also suppresses that lead\'s domain everywhere, same as Paste bounced emails above.') ?>
-      </div>
-
-      <?php if ($campaign['saleshandy_sequence_id']): ?>
-      <hr class="my-0">
-      <div class="d-flex flex-wrap gap-2 align-items-center">
-        <button type="submit" name="action" value="sync_fields_to_saleshandy" class="btn btn-sm btn-outline-info"
-                onclick="return confirm('Push checked leads\' current field values (per Saleshandy Field Mapping) to their existing Saleshandy contact? Only leads already pushed are updated -- this refreshes their data without touching sequence position or steps.');">
-          Sync updated details to Saleshandy
-        </button>
-        <?= info_icon('For leads edited here since being pushed (e.g. via re-import) -- updates the field values on their existing Saleshandy contact directly, without touching sequence position or steps. Skips anything not yet pushed.') ?>
-      </div>
-      <?php endif; ?>
-
-      <hr class="my-0">
-
-      <div class="d-flex flex-wrap gap-2 align-items-center">
-        <span class="text-danger small fw-semibold">Danger zone:</span>
-        <button type="submit" name="action" value="remove_from_campaign" class="btn btn-sm btn-outline-warning"
-                onclick="return confirm('Remove checked leads from this campaign? Only leads not yet pushed to Saleshandy will be removed -- they become free to be added to another campaign. Leads already pushed are skipped.');">
-          Remove from this campaign
-        </button>
-        <?= info_icon('Removes checked leads from this campaign only -- they stay in the system and become free to add to another campaign. Skips any lead already pushed to Saleshandy.') ?>
-        <?php if ($user['role'] === ROLE_ADMIN): ?>
-        <span class="vr mx-1"></span>
-        <button type="submit" name="action" value="delete_lead" class="btn btn-sm btn-outline-danger"
-                onclick="return confirm('Delete checked leads entirely? This hides them everywhere (not just this campaign), not just removes them from here -- undo from Deleted Leads. Leads already pushed to Saleshandy are skipped.');">
-          Delete checked leads
-        </button>
-        <?= info_icon('Hides checked leads everywhere in the app, not just this campaign -- can be undone from Deleted Leads. Skips any lead already pushed to Saleshandy.') ?>
-        <?php endif; ?>
-      </div>
-
     </div>
   </div>
 </form>
