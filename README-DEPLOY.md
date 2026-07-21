@@ -390,16 +390,28 @@ everything else in the app works without it.
      activity back into each already-assigned lead's Delivery Status, and
      cascades a bounce into the same domain-suppression logic Bounce
      Import uses. It also **auto-releases a wave-1 leader's held group**
-     the moment this sync confirms the leader was sent without bouncing
-     (Delivery Status becomes Active, Replied, or Paused) -- equivalent
-     to clicking "Release" on that leader by hand
-     (`campaign_wave_update.php`), just automatic. Before this, only the
-     bounce outcome auto-cascaded (via the domain-suppression path); a
-     leader that sent cleanly left its held group stuck until someone
-     manually released it, even though Delivery Status alone already
-     looked resolved. Runs from both the manual button and the optional
-     cron backstop (`cron_saleshandy_sync.php`) -- the flash message /
-     cron output line reports how many held leads were released, if any.
+     the moment its Delivery Status shows Active, Replied, or Paused
+     (sent without bouncing) -- equivalent to clicking "Release" on that
+     leader by hand (`campaign_wave_update.php`), just automatic. Before
+     this, only the bounce outcome auto-cascaded (via the domain-
+     suppression path); a leader that sent cleanly left its held group
+     stuck until someone manually released it, even though Delivery
+     Status alone already looked resolved.
+     This release check (`SaleshandyClient::releaseResolvedWaveLeaders()`)
+     always re-checks every still-held leader's *already-stored* Delivery
+     Status directly, not just leads touched by this run's fresh
+     Saleshandy activity -- Saleshandy's activity endpoint is filtered by
+     the event's own date, so a leader's send event stops reappearing in
+     later, narrower-dated syncs once an earlier sync has already
+     consumed it. Without this, a leader resolved by an older sync (e.g.
+     from before this auto-release feature existed) would stay stuck
+     forever, since there'd be no future activity left to re-trigger a
+     release from -- exactly the case a "0 lead(s) updated, but leaders
+     already show Active" report turned out to be. Runs from both the
+     manual button and the optional cron backstop
+     (`cron_saleshandy_sync.php`), every time, regardless of whether any
+     new activity was found -- the flash message / cron output line
+     reports how many held leads were released, if any.
    - **Import from Saleshandy** is the reverse direction -- for a
      sequence that already has prospects enrolled in it (added directly
      in Saleshandy, or from before this integration existed), this

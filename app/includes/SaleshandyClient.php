@@ -560,6 +560,22 @@ class SaleshandyClient
      * days after its leader's delivery was already confirmed, even
      * though delivery_status alone already looked resolved.
      *
+     * IMPORTANT: the release check below cannot live *only* inside the
+     * per-activity-row loop. Saleshandy's consolidated-stats endpoint is
+     * filtered by the event's own date, scoped to
+     * [saleshandy_last_synced_at, now] -- once a leader's send event has
+     * been consumed by one sync, `saleshandy_last_synced_at` moves past
+     * it and that same event will *never appear again* in a later,
+     * narrower-dated sync. A leader whose delivery_status was already set
+     * to Active/Replied/Paused by a sync that ran before this
+     * auto-release feature existed would otherwise stay stuck forever --
+     * there would be no future activity row left to re-trigger it from.
+     * So after processing whatever fresh activity this run found (if
+     * any), a second, unconditional pass re-checks every still-pending
+     * wave-1 leader in this campaign against *already-stored*
+     * delivery_status directly -- no API call needed for that part, and
+     * it runs even when Saleshandy reports zero new activity.
+     *
      * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
      * @return array{matched:int,bounced:int,replied:int,released:int}
      */
@@ -577,67 +593,79 @@ class SaleshandyClient
 
         $activity = $this->fetchSequenceActivity($sequenceId, $startDate, $endDate);
         $byEmail = $this->aggregateActivityByEmail($activity);
-        if (!$byEmail) {
-            $db->prepare('UPDATE campaigns SET saleshandy_last_synced_at = NOW() WHERE id = ?')->execute([$campaign['id']]);
-            return $stats;
-        }
 
-        $assignStmt = $db->prepare(
-            "SELECT a.id FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
-              WHERE a.campaign_id = ? AND l.email = ?"
-        );
-        $updateStmt = $db->prepare(
-            'UPDATE lead_campaign_assignments
-                SET delivery_status = ?, saleshandy_current_step = ?, saleshandy_synced_at = NOW(),
-                    email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?)
-              WHERE id = ?'
-        );
-        // Only a still-pending wave-1 leader (never itself held under
-        // another leader, not already released/suppressed) should trigger
-        // a release -- this also makes the sync safely re-runnable, since
-        // a leader that's already resolved just won't match again.
-        $pendingLeaderStmt = $db->prepare(
-            "SELECT id FROM lead_campaign_assignments WHERE id = ? AND wave_leader_id IS NULL AND bounce_status = 'pending'"
-        );
+        if ($byEmail) {
+            $assignStmt = $db->prepare(
+                "SELECT a.id FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
+                  WHERE a.campaign_id = ? AND l.email = ?"
+            );
+            $updateStmt = $db->prepare(
+                'UPDATE lead_campaign_assignments
+                    SET delivery_status = ?, saleshandy_current_step = ?, saleshandy_synced_at = NOW(),
+                        email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?)
+                  WHERE id = ?'
+            );
 
-        foreach ($byEmail as $email => $row) {
-            $assignStmt->execute([$campaign['id'], $email]);
-            $assignmentId = $assignStmt->fetchColumn();
-            if (!$assignmentId) {
-                continue; // activity for an email not assigned to this campaign locally
-            }
-
-            if ($row['bounced']) {
-                $status = 'Bounced';
-                $stats['bounced']++;
-                WaveAssigner::suppressByEmail($db, $email, $userId, "Saleshandy sync: {$campaign['name']}", $status);
-            } elseif ($row['replied']) {
-                $status = 'Replied';
-                $stats['replied']++;
-            } elseif ($row['unsubscribed']) {
-                $status = 'Paused'; // no dedicated "Unsubscribed" value in DELIVERY_STATUSES
-            } elseif ($row['sentAt']) {
-                $status = 'Active';
-            } else {
-                $status = 'Waiting';
-            }
-
-            $emailSent = $row['sentAt'] ? 1 : 0;
-            $emailSentAt = $row['sentAt'] ? date('Y-m-d', strtotime((string) $row['sentAt'])) : null;
-            $updateStmt->execute([$status, $row['currentStep'], $emailSent, $emailSentAt, $assignmentId]);
-            $stats['matched']++;
-
-            if (in_array($status, ['Active', 'Replied', 'Paused'], true)) {
-                $pendingLeaderStmt->execute([$assignmentId]);
-                if ($pendingLeaderStmt->fetchColumn()) {
-                    $stats['released'] += WaveAssigner::release($db, (int) $assignmentId);
+            foreach ($byEmail as $email => $row) {
+                $assignStmt->execute([$campaign['id'], $email]);
+                $assignmentId = $assignStmt->fetchColumn();
+                if (!$assignmentId) {
+                    continue; // activity for an email not assigned to this campaign locally
                 }
+
+                if ($row['bounced']) {
+                    $status = 'Bounced';
+                    $stats['bounced']++;
+                    WaveAssigner::suppressByEmail($db, $email, $userId, "Saleshandy sync: {$campaign['name']}", $status);
+                } elseif ($row['replied']) {
+                    $status = 'Replied';
+                    $stats['replied']++;
+                } elseif ($row['unsubscribed']) {
+                    $status = 'Paused'; // no dedicated "Unsubscribed" value in DELIVERY_STATUSES
+                } elseif ($row['sentAt']) {
+                    $status = 'Active';
+                } else {
+                    $status = 'Waiting';
+                }
+
+                $emailSent = $row['sentAt'] ? 1 : 0;
+                $emailSentAt = $row['sentAt'] ? date('Y-m-d', strtotime((string) $row['sentAt'])) : null;
+                $updateStmt->execute([$status, $row['currentStep'], $emailSent, $emailSentAt, $assignmentId]);
+                $stats['matched']++;
             }
         }
 
+        $stats['released'] += $this->releaseResolvedWaveLeaders($db, (int) $campaign['id']);
         $db->prepare('UPDATE campaigns SET saleshandy_last_synced_at = NOW() WHERE id = ?')->execute([$campaign['id']]);
 
         return $stats;
+    }
+
+    /**
+     * Releases every still-pending wave-1 leader in this campaign whose
+     * stored delivery_status already shows Active/Replied/Paused --
+     * whether that was set just now above or by an earlier sync, before
+     * or after this auto-release feature existed. Pure local lookup, no
+     * Saleshandy API call, and safely re-runnable (a leader that's
+     * already resolved -- bounce_status != 'pending' -- simply won't
+     * match again).
+     */
+    private function releaseResolvedWaveLeaders(PDO $db, int $campaignId): int
+    {
+        $stmt = $db->prepare(
+            "SELECT a.id FROM lead_campaign_assignments a
+              WHERE a.campaign_id = ? AND a.wave_leader_id IS NULL AND a.bounce_status = 'pending'
+                AND a.delivery_status IN ('Active', 'Replied', 'Paused')
+                AND EXISTS (SELECT 1 FROM lead_campaign_assignments h WHERE h.wave_leader_id = a.id AND h.wave_status = 'held')"
+        );
+        $stmt->execute([$campaignId]);
+        $leaderIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+        $released = 0;
+        foreach ($leaderIds as $leaderId) {
+            $released += WaveAssigner::release($db, $leaderId);
+        }
+        return $released;
     }
 
     /**
