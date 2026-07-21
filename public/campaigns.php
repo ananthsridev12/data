@@ -67,6 +67,20 @@ $campaigns = db()->query(
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
 
+// Touch/step notes already saved via Campaign Flow (campaign_flow.php) --
+// shown inline as an accordion below, straight from our own DB, so
+// browsing this list never makes a Saleshandy API call per campaign. A
+// campaign with no saved notes yet just links to Campaign Flow instead
+// of showing an (empty) accordion.
+$stepNotesByCampaign = [];
+$notesStmt = db()->query(
+    'SELECT campaign_id, step_number, purpose FROM campaign_step_notes
+      WHERE purpose IS NOT NULL AND purpose <> \'\' ORDER BY campaign_id, step_number'
+);
+foreach ($notesStmt->fetchAll() as $note) {
+    $stepNotesByCampaign[(int) $note['campaign_id']][] = $note;
+}
+
 // Live Saleshandy sequence status (active/paused) for linked campaigns --
 // one listSequences() call covers every linked campaign on this page, so
 // it's cheap even with many campaigns. Left empty (badge just omitted) if
@@ -160,7 +174,11 @@ render_header('Campaigns');
       </td>
       <td class="d-flex gap-1">
         <a class="btn btn-sm btn-outline-secondary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>">Manage leads</a>
-        <a class="btn btn-sm btn-outline-secondary" href="campaign_flow.php?campaign_id=<?= (int) $c['id'] ?>">View flow</a>
+        <?php if (!empty($stepNotesByCampaign[$c['id']])): ?>
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#flowRow<?= (int) $c['id'] ?>">Touches</button>
+        <?php else: ?>
+          <a class="btn btn-sm btn-outline-secondary" href="campaign_flow.php?campaign_id=<?= (int) $c['id'] ?>">Configure flow</a>
+        <?php endif; ?>
         <a class="btn btn-sm btn-outline-secondary" href="leads_export_csv.php?campaign_export=<?= (int) $c['id'] ?>">Export CSV</a>
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#renameCampaign<?= (int) $c['id'] ?>">Edit</button>
         <form method="post" action="campaigns.php" onsubmit="return confirm('Toggle active status for <?= e($c['name']) ?>?');">
@@ -221,6 +239,20 @@ render_header('Campaigns');
         </div>
       </td>
     </tr>
+    <?php if (!empty($stepNotesByCampaign[$c['id']])): ?>
+    <tr class="collapse" id="flowRow<?= (int) $c['id'] ?>">
+      <td colspan="10" class="bg-light">
+        <div class="d-flex flex-wrap align-items-center gap-2 py-1">
+          <?php foreach ($stepNotesByCampaign[$c['id']] as $i => $note): ?>
+            <?php if ($i > 0): ?><span class="text-muted">&rarr;</span><?php endif; ?>
+            <span class="badge bg-secondary">T<?= (int) $note['step_number'] ?></span>
+            <span class="small"><?= e($note['purpose']) ?></span>
+          <?php endforeach; ?>
+          <a href="campaign_flow.php?campaign_id=<?= (int) $c['id'] ?>" class="small ms-2">Edit &raquo;</a>
+        </div>
+      </td>
+    </tr>
+    <?php endif; ?>
   <?php endforeach; ?>
   <?php if (!$campaigns): ?>
     <tr><td colspan="10" class="text-center text-muted py-4">No campaigns yet.</td></tr>

@@ -306,18 +306,31 @@ run it once after upgrading, not routinely. See
 
 A simple T1&rarr;T2&rarr;T3... visual of a campaign's real Saleshandy
 sequence steps, for understanding a campaign's structure at a glance
-without opening it in Saleshandy -- linked from Campaigns ("View flow")
-and Campaign Leads ("Campaign flow"). Each step card shows real,
-live-fetched data (`SaleshandyClient::listSequenceSteps()` -- number,
-type, day offset, status) plus an editable **Purpose** text box (e.g.
-"Pain point", "Tool intro"). Purpose is purely our own annotation --
-Saleshandy has no such field -- stored in the new `campaign_step_notes`
-table (`sql/020`, one row per campaign+step, upserted on save; a blank
-box clears that step's note rather than leaving a stale one). Requires
-the campaign to already be linked to a Saleshandy sequence
-(`campaign_saleshandy_settings.php`); shows a clear prompt to link one
-first otherwise, and the usual "could not reach Saleshandy" alert if
-the API call itself fails.
+without opening it in Saleshandy -- linked from Campaign Leads
+("Campaign flow"), and reachable from Campaigns too (see below). Each
+step card shows real, live-fetched data
+(`SaleshandyClient::listSequenceSteps()` -- number, type, day offset,
+status) plus an editable **Purpose** text box (e.g. "Pain point", "Tool
+intro"). Purpose is purely our own annotation -- Saleshandy has no such
+field -- stored in the `campaign_step_notes` table (`sql/020`, one row
+per campaign+step, upserted on save; a blank box clears that step's note
+rather than leaving a stale one). Requires the campaign to already be
+linked to a Saleshandy sequence (`campaign_saleshandy_settings.php`);
+shows a clear prompt to link one first otherwise, and the usual "could
+not reach Saleshandy" alert if the API call itself fails.
+
+**Campaigns** shows the saved Purpose notes inline as a per-row
+accordion ("Touches" button, Bootstrap collapse) -- straight from
+`campaign_step_notes`, **no Saleshandy API call**, so browsing the
+campaign list is never slowed down by per-campaign live lookups. A
+campaign with no saved notes yet shows a **Configure flow** link
+straight to Campaign Flow instead of an empty accordion; once at least
+one step has a Purpose saved there, "Configure flow" is replaced by
+"Touches" here. The accordion itself is deliberately minimal (just
+`T{n}: {purpose}`, no type/day/status) since those live only in
+Saleshandy and this view is intentionally DB-only -- click "Edit"
+inside the accordion (or "Configure flow") to see/change the full
+live picture on Campaign Flow.
 
 ## Bulk tagging (Dashboard and Add Leads to Campaign)
 
