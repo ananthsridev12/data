@@ -40,8 +40,9 @@ and import, in order:
 16. `sql/016_bounce_suppression_settings.sql`
 17. `sql/017_saleshandy_prospect_sync.sql`
 18. `sql/018_campaign_vertical_service.sql`
+19. `sql/019_saleshandy_pushed_at.sql`
 
-(If you're setting up a brand-new site, import all eighteen in order. If
+(If you're setting up a brand-new site, import all nineteen in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -216,11 +217,15 @@ a `campaign_id` alone (without checking "Hide leads already used") still
 counts as a real filter even though it doesn't currently narrow anything
 by itself.
 
-All six checkbox-dropdown filters (Title, Seniority, Department, Size,
-Industry, Country, on both the Dashboard and Add Leads to Campaign) have
-a **Select all** link next to Clear, at the bottom of the dropdown --
-it selects only the currently visible options, so typing a search term
-first narrows what "Select all" applies to.
+All seven checkbox-dropdown filters (Title, Seniority, Department, Size,
+Industry, Country, **Company Country**, on both the Dashboard and Add
+Leads to Campaign) have a **Select all** link next to Clear, at the
+bottom of the dropdown -- it selects only the currently visible options,
+so typing a search term first narrows what "Select all" applies to.
+Country and Company Country are two different fields (a contact's own
+country vs. their company's) -- both are independently filterable
+everywhere the checkbox-dropdown filter set appears (`l.country` /
+`l.company_country`).
 
 On the **Campaign Leads** page, the checkbox list at the bottom has two
 extra actions alongside Mark Imported/Email Sent/Delivery Status:
@@ -232,6 +237,39 @@ leader with a held group under it, to avoid orphaning those held leads)
 and, admin-only, **Delete checked leads** (a full, site-wide soft-delete
 of the underlying lead -- same as the Dashboard's Delete, undoable from
 Deleted Leads -- also skipping anything already pushed).
+
+The **Wave 1 groups** card on Campaign Leads shows compact status
+buttons (e.g. "23 pending", "2 bounced") instead of one long always-
+visible table of every account -- click a status to expand just that
+group's table (Bootstrap collapse, `#waveGroup-{status}`). The Release/
+Suppress actions per leader are unchanged, just inside the expanded
+panel now.
+
+A **First Pushed** column is available on Campaign Leads (Manage
+columns) showing `saleshandy_pushed_at` -- when a lead was first pushed
+to Saleshandy, set once by `campaign_saleshandy_push.php`
+(`COALESCE`-guarded so a later re-push/re-sync never overwrites it) and
+distinct from **Last Synced** (`saleshandy_synced_at`), which updates on
+every push or "Refresh statuses" run and so can't answer "when did this
+first go out." Leads pushed before this column existed (`sql/019`) show
+blank -- there's no way to backfill a timestamp that was never recorded.
+
+**"Email Date" showing 1970-01-01** was a real bug, now fixed: Saleshandy's
+`Email Sent At` field comes back as JavaScript's `Date.toString()` format
+with a trailing IANA zone name in parentheses (confirmed against a live
+API response, not just the docs) -- e.g.
+`"Mon Jul 20 2026 20:20:43 GMT+5:30 (Asia/Kolkata)"`. PHP's `strtotime()`
+silently fails on that trailing `(Asia/Kolkata)` suffix and returns
+`false`, which `date('Y-m-d', false)` casts to the Unix epoch. Every
+place that parsed this field (`SaleshandyClient::syncCampaign()`,
+`pullNewProspects()`) now goes through one shared
+`parseSaleshandyDate()` that strips the parenthetical before parsing and
+returns `null` (not epoch) if parsing still fails -- so a genuinely
+unparseable date now shows blank instead of a nonsense date. This also
+fixed a latent bug in picking a prospect's *earliest* send time across
+multiple sequence steps, which previously compared the raw date
+*strings* lexicographically (unreliable for real chronological order)
+instead of parsed timestamps.
 
 ## Bulk tagging (Dashboard and Add Leads to Campaign)
 

@@ -102,6 +102,14 @@ $waveStmt = db()->prepare(
 $waveStmt->execute(['campaign_id' => $campaignId]);
 $waveGroups = $waveStmt->fetchAll();
 
+// Grouped by outcome and shown as collapsible sections (below) rather than
+// one long flat table -- pending first since it's the actionable bucket,
+// then bounced/delivered as already-resolved history.
+$waveGroupsByStatus = ['pending' => [], 'bounced' => [], 'delivered' => []];
+foreach ($waveGroups as $w) {
+    $waveGroupsByStatus[$w['bounce_status']][] = $w;
+}
+
 render_header('Campaign leads');
 ?>
 <h1 class="h4 mb-1">Leads assigned to "<?= e($campaign['name']) ?>"</h1>
@@ -213,45 +221,55 @@ render_header('Campaign leads');
 
 <?php if ($waveGroups): ?>
 <div class="card mb-4 border-warning">
-  <div class="card-header">Wave 1 groups awaiting a delivered/bounced decision</div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0 align-middle">
-      <thead><tr><th>Company</th><th>Wave-1 contact</th><th>Held</th><th>Outcome</th><th>Bounce type</th><th></th></tr></thead>
-      <tbody>
-      <?php foreach ($waveGroups as $w): ?>
-        <tr>
-          <td><?= e($w['na_company_name']) ?></td>
-          <td><?= e($w['first_name'] . ' ' . $w['last_name']) ?> (<?= e($w['email']) ?>)</td>
-          <td><?= (int) $w['held_count'] ?> (<?= (int) $w['still_held'] ?> still held)</td>
-          <td>
-            <?php
-            $bounceBadge = ['pending' => 'secondary', 'delivered' => 'success', 'bounced' => 'danger'];
-            ?>
-            <span class="badge bg-<?= $bounceBadge[$w['bounce_status']] ?>"><?= e($w['bounce_status']) ?></span>
-          </td>
-          <td class="small text-muted"><?= e($w['bounce_type'] ?? '') ?></td>
-          <td>
-            <?php if ($w['still_held'] > 0): ?>
-            <form method="post" action="campaign_wave_update.php" class="d-inline">
-              <?= csrf_field() ?>
-              <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
-              <input type="hidden" name="leader_assignment_id" value="<?= (int) $w['leader_assignment_id'] ?>">
-              <select name="bounce_type" class="form-select form-select-sm d-inline-block mb-1" style="max-width: 160px;">
-                <option value="">Bounce type...</option>
-                <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
-                  <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
-                <?php endforeach; ?>
-              </select><br>
-              <button type="submit" name="action" value="release" class="btn btn-sm btn-outline-success">Delivered -- release held</button>
-              <button type="submit" name="action" value="suppress" class="btn btn-sm btn-outline-danger" onclick="return confirm('Bounced -- suppress this domain everywhere? This affects all campaigns and future imports too.');">Bounced -- suppress domain</button>
-            </form>
-            <?php endif; ?>
-          </td>
-        </tr>
-      <?php endforeach; ?>
-      </tbody>
-    </table>
+  <div class="card-header">Wave 1 groups</div>
+  <div class="card-body d-flex flex-wrap gap-2">
+    <?php
+    $bounceBadge = ['pending' => 'secondary', 'delivered' => 'success', 'bounced' => 'danger'];
+    $bounceLabel = ['pending' => 'awaiting a delivered/bounced decision', 'delivered' => 'delivered', 'bounced' => 'bounced'];
+    ?>
+    <?php foreach ($waveGroupsByStatus as $status => $rows): if (!$rows) continue; ?>
+      <button type="button" class="btn btn-sm btn-outline-<?= $bounceBadge[$status] ?>" data-bs-toggle="collapse" data-bs-target="#waveGroup-<?= e($status) ?>">
+        <?= count($rows) ?> <?= e($bounceLabel[$status]) ?>
+      </button>
+    <?php endforeach; ?>
   </div>
+  <?php foreach ($waveGroupsByStatus as $status => $rows): if (!$rows) continue; ?>
+    <div class="collapse" id="waveGroup-<?= e($status) ?>">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+          <thead><tr><th>Company</th><th>Wave-1 contact</th><th>Held</th><th>Outcome</th><th>Bounce type</th><th></th></tr></thead>
+          <tbody>
+          <?php foreach ($rows as $w): ?>
+            <tr>
+              <td><?= e($w['na_company_name']) ?></td>
+              <td><?= e($w['first_name'] . ' ' . $w['last_name']) ?> (<?= e($w['email']) ?>)</td>
+              <td><?= (int) $w['held_count'] ?> (<?= (int) $w['still_held'] ?> still held)</td>
+              <td><span class="badge bg-<?= $bounceBadge[$w['bounce_status']] ?>"><?= e($w['bounce_status']) ?></span></td>
+              <td class="small text-muted"><?= e($w['bounce_type'] ?? '') ?></td>
+              <td>
+                <?php if ($w['still_held'] > 0): ?>
+                <form method="post" action="campaign_wave_update.php" class="d-inline">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+                  <input type="hidden" name="leader_assignment_id" value="<?= (int) $w['leader_assignment_id'] ?>">
+                  <select name="bounce_type" class="form-select form-select-sm d-inline-block mb-1" style="max-width: 160px;">
+                    <option value="">Bounce type...</option>
+                    <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+                      <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
+                    <?php endforeach; ?>
+                  </select><br>
+                  <button type="submit" name="action" value="release" class="btn btn-sm btn-outline-success">Delivered -- release held</button>
+                  <button type="submit" name="action" value="suppress" class="btn btn-sm btn-outline-danger" onclick="return confirm('Bounced -- suppress this domain everywhere? This affects all campaigns and future imports too.');">Bounced -- suppress domain</button>
+                </form>
+                <?php endif; ?>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  <?php endforeach; ?>
 </div>
 <?php endif; ?>
 
@@ -286,6 +304,7 @@ render_header('Campaign leads');
                 <?php endif; ?>
               </td>
               <?php break;
+          case 'saleshandy_pushed': ?><td class="small text-muted"><?= e($a['saleshandy_pushed_at'] ?? '') ?></td><?php break;
           case 'email_sent': ?>
               <td>
                 <?php if ($a['email_sent']): ?>

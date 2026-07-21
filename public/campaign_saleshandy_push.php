@@ -179,7 +179,15 @@ $groups = TagRepository::groupLeadsByTagSet(db(), array_keys($leadsById));
 
 $pushedCount = 0;
 $errors = [];
-$updateStatus = db()->prepare("UPDATE lead_campaign_assignments SET status = 'pushed', saleshandy_synced_at = NOW() WHERE id = ?");
+// saleshandy_pushed_at is COALESCE-guarded so it always records the FIRST
+// push, never a later re-push -- unlike saleshandy_synced_at (updated by
+// every push/sync), it answers "when did this actually first go to
+// Saleshandy" reliably.
+$updateStatus = db()->prepare(
+    "UPDATE lead_campaign_assignments
+        SET status = 'pushed', saleshandy_synced_at = NOW(), saleshandy_pushed_at = COALESCE(saleshandy_pushed_at, NOW())
+      WHERE id = ?"
+);
 
 foreach ($groups as $group) {
     $prospectList = array_map(static fn(int $leadId) => $buildProspect($leadsById[$leadId]), $group['lead_ids']);

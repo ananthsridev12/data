@@ -32,6 +32,7 @@ class ColumnPreferences
             'wave' => 'Wave',
             'assigned' => 'Assigned',
             'imported' => 'Imported to Saleshandy',
+            'saleshandy_pushed' => 'First Pushed',
             'email_sent' => 'Email Sent',
             'email_date' => 'Email Date',
             'delivery_status' => 'Delivery Status',

@@ -472,7 +472,7 @@ class SaleshandyClient
      * legitimately lower than Saleshandy's own "N prospects" figure for
      * the sequence.
      *
-     * @return array<int,array{email:string,name:string,sentAt:?string,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int}>
+     * @return array<int,array{email:string,name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int}>
      */
     public function fetchSequenceActivity(string $sequenceId, string $startDate, string $endDate): array
     {
@@ -492,7 +492,7 @@ class SaleshandyClient
                 $rows[] = [
                     'email' => strtolower(trim((string) ($row['Recipient Email'] ?? ''))),
                     'name' => trim((string) ($row['Recipient name'] ?? $row['Recipient Name'] ?? '')),
-                    'sentAt' => $row['Email Sent At'] ?? null,
+                    'sentAt' => self::parseSaleshandyDate($row['Email Sent At'] ?? null),
                     'replied' => ($row['Replied'] ?? 'No') === 'Yes',
                     'bounced' => ($row['Bounced'] ?? 'No') === 'Yes',
                     'unsubscribed' => ($row['Unsubscribed'] ?? 'No') === 'Yes',
@@ -507,13 +507,38 @@ class SaleshandyClient
     }
 
     /**
+     * Parses Saleshandy's "Email Sent At" (and similar) date strings into a
+     * Unix timestamp, or null if unparseable -- callers must never fall
+     * back to date()-on-false, which silently produces 1970-01-01.
+     *
+     * Confirmed against a real API response (not the API docs' simplified
+     * example): Saleshandy returns JavaScript's Date.toString() format,
+     * e.g. "Mon Jul 20 2026 20:20:43 GMT+5:30 (Asia/Kolkata)" -- the
+     * trailing parenthetical IANA zone name (which the docs example
+     * omits) makes PHP's strtotime() return false on the string as-is,
+     * even though it parses the same string fine with that suffix
+     * stripped. This is what was producing "1970-01-01" everywhere an
+     * Email Sent At date was displayed.
+     */
+    private static function parseSaleshandyDate(?string $raw): ?int
+    {
+        $raw = trim((string) $raw);
+        if ($raw === '') {
+            return null;
+        }
+        $raw = trim((string) preg_replace('/\s*\([^)]*\)\s*$/', '', $raw));
+        $timestamp = strtotime($raw);
+        return $timestamp !== false ? $timestamp : null;
+    }
+
+    /**
      * A prospect can have one activity row per sequence step -- this
      * collapses all of an email's rows into one aggregated record so a
      * signal on any single row (a reply, a bounce, a later step reached)
      * isn't lost by only looking at that email's first or last row.
      *
-     * @param array<int,array{email:string,name:string,sentAt:?string,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int}> $activity
-     * @return array<string,array{name:string,sentAt:?string,replied:bool,bounced:bool,unsubscribed:bool,currentStep:?int}>
+     * @param array<int,array{email:string,name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int}> $activity
+     * @return array<string,array{name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,currentStep:?int}>
      */
     private function aggregateActivityByEmail(array $activity): array
     {
@@ -532,7 +557,11 @@ class SaleshandyClient
             if ($agg['name'] === '' && $row['name'] !== '') {
                 $agg['name'] = $row['name'];
             }
-            if ($row['sentAt'] && (!$agg['sentAt'] || $row['sentAt'] < $agg['sentAt'])) {
+            // Numeric timestamp comparison -- previously compared the raw
+            // date *strings* lexicographically, which doesn't reliably
+            // track real chronological order (e.g. "Fri Jan 02 2026" sorts
+            // before "Mon Dec 29 2025" alphabetically despite being later).
+            if ($row['sentAt'] !== null && ($agg['sentAt'] === null || $row['sentAt'] < $agg['sentAt'])) {
                 $agg['sentAt'] = $row['sentAt']; // earliest send time
             }
             if ($row['stepNumber'] !== null && $row['stepNumber'] > ($agg['currentStep'] ?? 0)) {
@@ -628,8 +657,8 @@ class SaleshandyClient
                     $status = 'Waiting';
                 }
 
-                $emailSent = $row['sentAt'] ? 1 : 0;
-                $emailSentAt = $row['sentAt'] ? date('Y-m-d', strtotime((string) $row['sentAt'])) : null;
+                $emailSent = $row['sentAt'] !== null ? 1 : 0;
+                $emailSentAt = $row['sentAt'] !== null ? date('Y-m-d', $row['sentAt']) : null;
                 $updateStmt->execute([$status, $row['currentStep'], $emailSent, $emailSentAt, $assignmentId]);
                 $stats['matched']++;
             }
@@ -712,8 +741,8 @@ class SaleshandyClient
         $insertAssignment = $db->prepare(
             "INSERT INTO lead_campaign_assignments
                 (lead_id, campaign_id, assigned_by, status, exported_at, delivery_status,
-                 saleshandy_current_step, saleshandy_synced_at, email_sent, email_sent_at)
-             VALUES (?, ?, ?, 'pushed', ?, ?, ?, NOW(), ?, ?)"
+                 saleshandy_current_step, saleshandy_synced_at, email_sent, email_sent_at, saleshandy_pushed_at)
+             VALUES (?, ?, ?, 'pushed', ?, ?, ?, NOW(), ?, ?, ?)"
         );
 
         foreach ($byEmail as $email => $row) {
@@ -738,14 +767,21 @@ class SaleshandyClient
             $deliveryStatus = $row['bounced'] ? 'Bounced'
                 : ($row['replied'] ? 'Replied'
                 : ($row['unsubscribed'] ? 'Paused'
-                : ($row['sentAt'] ? 'Active' : 'Waiting')));
-            $exportedAt = $row['sentAt'] ? date('Y-m-d H:i:s', strtotime((string) $row['sentAt'])) : date('Y-m-d H:i:s');
-            $emailSent = $row['sentAt'] ? 1 : 0;
-            $emailSentAt = $row['sentAt'] ? date('Y-m-d', strtotime((string) $row['sentAt'])) : null;
+                : ($row['sentAt'] !== null ? 'Active' : 'Waiting')));
+            $exportedAt = $row['sentAt'] !== null ? date('Y-m-d H:i:s', $row['sentAt']) : date('Y-m-d H:i:s');
+            $emailSent = $row['sentAt'] !== null ? 1 : 0;
+            $emailSentAt = $row['sentAt'] !== null ? date('Y-m-d', $row['sentAt']) : null;
+            // We never actually pushed this one -- it was already enrolled
+            // directly in Saleshandy -- so there's no true "first pushed"
+            // event to record. Its earliest known send time is the closest
+            // available proxy; NOW() (this pull-in moment) if not even
+            // that is known, so the column isn't left misleadingly blank
+            // for an entire class of leads.
+            $pushedAt = $row['sentAt'] !== null ? date('Y-m-d H:i:s', $row['sentAt']) : date('Y-m-d H:i:s');
 
             $insertAssignment->execute([
                 $leadId, $campaign['id'], $userId, $exportedAt, $deliveryStatus,
-                $row['currentStep'], $emailSent, $emailSentAt,
+                $row['currentStep'], $emailSent, $emailSentAt, $pushedAt,
             ]);
             $stats['assignments_created']++;
 
