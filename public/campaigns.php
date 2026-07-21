@@ -251,5 +251,4 @@ render_header('Campaigns');
   <?php endif; ?>
   </tbody>
 </table>
-<script src="assets/js/app.js"></script>
 <?php render_footer(); ?>

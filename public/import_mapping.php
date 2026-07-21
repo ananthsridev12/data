@@ -213,7 +213,6 @@ if ($batch['status'] === 'processing') {
       window.SH_IMPORT_TOTAL_ROWS = <?= (int) $batch['total_rows'] ?>;
       window.SH_IMPORT_CSRF = <?= json_encode(csrf_token()) ?>;
     </script>
-    <script src="assets/js/app.js"></script>
     <?php
     render_footer();
     exit;

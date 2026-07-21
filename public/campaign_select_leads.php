@@ -428,5 +428,4 @@ $previewFilterQuery['campaign_id'] = $campaignId;
   <button type="submit" class="btn btn-primary" onclick="return confirm('Add these leads to &quot;<?= e($campaign['name']) ?>&quot;?');">Save selection</button>
   <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>" class="btn btn-outline-secondary">Cancel</a>
 </form>
-<script src="assets/js/app.js"></script>
 <?php render_footer(); ?>

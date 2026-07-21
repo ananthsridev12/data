@@ -545,5 +545,4 @@ render_header('Campaign leads');
 </nav>
 <?php endif; ?>
 
-<script src="assets/js/app.js"></script>
 <?php render_footer(); ?>

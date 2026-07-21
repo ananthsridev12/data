@@ -330,5 +330,4 @@ $visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c[
 <?php endif; ?>
 <?php endif; // $hasRealFilter ?>
 
-<script src="assets/js/app.js"></script>
 <?php render_footer(); ?>
