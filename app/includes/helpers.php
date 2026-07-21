@@ -5,6 +5,11 @@ function e(?string $value): string
     return htmlspecialchars($value ?? '', ENT_QUOTES, 'UTF-8');
 }
 
+function info_icon(string $text): string
+{
+    return '<span class="text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="' . e($text) . '" style="cursor: help;">&#9432;</span>';
+}
+
 function flash_set(string $type, string $message): void
 {
     auth_boot();

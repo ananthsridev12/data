@@ -302,6 +302,34 @@ the normal sync, so it's a separate, deliberately-triggered action --
 run it once after upgrading, not routinely. See
 `SaleshandyClient::backfillHistoricalDates()`.
 
+**Campaign Leads was redesigned for clarity** -- it had grown to four
+separate cards below the contact table (Mark Imported/Email Sent,
+Delivery Status, Sync to Saleshandy, Remove/Delete), each with its own
+buttons, on top of the Saleshandy sync buttons above the table -- new
+users couldn't tell which button did what or why they were split into
+so many boxes. Now:
+
+- Every card has an explicit header naming what it's for (e.g.
+  "Saleshandy sync -- campaign-wide, no lead selection needed") so it's
+  clear at a glance whether an action applies campaign-wide or only to
+  ticked rows.
+- All bulk actions on checked leads (Mark Imported, Mark Email Sent,
+  Delivery Status, Sync to Saleshandy, Remove/Delete) now live in one
+  **"Actions on checked leads"** card directly under the contact table,
+  grouped into rows by `<hr>` dividers instead of four separate cards
+  scattered around the page. Remove/Delete are visually marked as a
+  "Danger zone" within that same card rather than getting their own
+  red-bordered box.
+- Every button that isn't self-explanatory gets a small (&#9432;) info
+  icon next to it -- hover or tap for a one-line explanation of exactly
+  what that button does (`info_icon()` in `app/includes/helpers.php`,
+  a Bootstrap tooltip; initialized globally in `assets/js/app.js` so any
+  page can use `data-bs-toggle="tooltip"` without extra wiring).
+
+No form field names, action values, or endpoints changed -- this is a
+pure layout/labeling pass, every button still posts to the same place
+it always did.
+
 ## Campaign flow (`public/campaign_flow.php`)
 
 A simple T1&rarr;T2&rarr;T3... visual of a campaign's real Saleshandy

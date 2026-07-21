@@ -1,3 +1,12 @@
+// Bootstrap tooltips (the small (i) info icons next to buttons) are
+// opt-in and need explicit initialization -- one global init covers
+// every page that uses them, no per-page script needed.
+(function () {
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+    new bootstrap.Tooltip(el);
+  });
+})();
+
 // "Select all" checkbox in a table header -- scoped to just that table's
 // own rows, since campaign_leads.php can render more than one of these
 // tables at once (one per Wave status group).
