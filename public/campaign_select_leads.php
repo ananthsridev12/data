@@ -30,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         'departments' => (array) ($rawFilters['departments'] ?? []),
         'industry' => (array) ($rawFilters['industry'] ?? []),
         'country' => (array) ($rawFilters['country'] ?? []),
+        'company_country' => (array) ($rawFilters['company_country'] ?? []),
         'employee_count' => (array) ($rawFilters['employee_count'] ?? []),
         'vertical_id' => $rawFilters['vertical_id'] ?? '',
         'service_id' => $rawFilters['service_id'] ?? '',
@@ -46,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
     // from a single click. Require a filter rather than allow that.
     $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
         || $filters['title'] || $filters['seniority'] || $filters['departments']
-        || $filters['industry'] || $filters['country'] || $filters['employee_count']
+        || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count']
         || $filters['vertical_id'] !== '' || $filters['service_id'] !== ''
         || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
     if (!$hasRealFilter) {
@@ -154,6 +155,7 @@ $filters = [
     'departments' => $multiParam('departments'),
     'industry' => $multiParam('industry'),
     'country' => $multiParam('country'),
+    'company_country' => $multiParam('company_country'),
     'employee_count' => $multiParam('employee_count'),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
@@ -172,7 +174,7 @@ $filters = [
 // an otherwise-unfiltered scan.
 $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
     || $filters['title'] || $filters['seniority'] || $filters['departments']
-    || $filters['industry'] || $filters['country'] || $filters['employee_count']
+    || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count']
     || $filters['vertical_id'] !== '' || $filters['service_id'] !== ''
     || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
 
@@ -194,6 +196,7 @@ $seniorities = LeadRepository::distinctValues(db(), 'seniority');
 $departmentOptions = LeadRepository::distinctValues(db(), 'departments');
 $industries = LeadRepository::distinctValues(db(), 'industry');
 $countries = LeadRepository::distinctValues(db(), 'country');
+$companyCountries = LeadRepository::distinctValues(db(), 'company_country');
 $employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
@@ -235,6 +238,9 @@ render_header('Select leads');
     </div>
     <div class="col-md-2">
       <?php render_multiselect_filter('country', 'Country', $countries, $filters['country']); ?>
+    </div>
+    <div class="col-md-2">
+      <?php render_multiselect_filter('company_country', 'Company Country', $companyCountries, $filters['company_country']); ?>
     </div>
     <div class="col-md-1">
       <?php render_multiselect_filter('employee_count', 'Size', $employeeCounts, $filters['employee_count']); ?>

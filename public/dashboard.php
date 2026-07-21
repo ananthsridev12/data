@@ -28,10 +28,10 @@ $filters = [
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
     'hide_used_in_campaign' => !empty($_GET['hide_used_in_campaign']),
     'show_suppressed' => !empty($_GET['show_suppressed']),
-    // Not exposed on this page's own filter form -- these exist so an
-    // Analytics drill-through link (see analytics.php) can land here with
-    // the exact slice it showed a number for. Still fully valid to type
-    // into the URL by hand.
+    // assigned_campaign_id/imported/email_sent aren't exposed on this
+    // page's own filter form -- they exist so an Analytics drill-through
+    // link (see analytics.php) can land here with the exact slice it
+    // showed a number for. Still fully valid to type into the URL by hand.
     'company_country' => $multiParam('company_country'),
     'assigned_campaign_id' => trim((string) ($_GET['assigned_campaign_id'] ?? '')),
     'imported' => trim((string) ($_GET['imported'] ?? '')),
@@ -66,6 +66,7 @@ $seniorities = LeadRepository::distinctValues(db(), 'seniority');
 $departmentOptions = LeadRepository::distinctValues(db(), 'departments');
 $industries = LeadRepository::distinctValues(db(), 'industry');
 $countries = LeadRepository::distinctValues(db(), 'country');
+$companyCountries = LeadRepository::distinctValues(db(), 'company_country');
 $employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
@@ -120,6 +121,9 @@ render_header('Dashboard');
       </div>
       <div class="col-md-2">
         <?php render_multiselect_filter('country', 'Country', $countries, $filters['country']); ?>
+      </div>
+      <div class="col-md-2">
+        <?php render_multiselect_filter('company_country', 'Company Country', $companyCountries, $filters['company_country']); ?>
       </div>
       <div class="col-md-2">
         <select name="vertical_id" class="form-select form-select-sm">
