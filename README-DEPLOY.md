@@ -491,6 +491,37 @@ modal), which the By Vertical/By Service breakdowns above still read
 from for their grouping -- the campaign-level fields only feed the
 Campaign Summary table.
 
+**Dashboard: hand-pick specific leads and add them to a campaign
+directly.** Every row now has a checkbox (header checkbox selects every
+row currently on screen -- `.selectAllInTable`/`.lead-checkbox`, same
+pattern as Campaign Leads), and a small "Add checked leads to
+campaign..." picker sits just above the table's other bulk actions.
+This is for the "I already found exactly who I want, right here" case
+-- e.g. after clicking a number in Analytics (see below) or narrowing
+with Dashboard's own filters -- as opposed to the filter-driven, title-
+priority-aware flow on Campaigns → **Add leads to this campaign**,
+which is still the better fit for a large, systematic pick.
+
+The checkboxes live inside the results table but submit into a
+separate `<form id="bulkAddCampaignForm">` via each checkbox's HTML5
+`form="bulkAddCampaignForm"` attribute, rather than wrapping the whole
+table in one big form -- avoids nesting them inside each row's own
+Edit/Delete forms, which HTML doesn't allow. Posts to the new
+`lead_bulk_campaign_add.php`, which calls the exact same
+`WaveAssigner::assign()` used by Add Leads to Campaign's own "wave
+auto"/"wave manual" modes (no title-priority list, so the wave-1
+leader per company falls back to seniority ranking) -- so the same
+domain-safety gate applies: two checked leads at the same company still
+result in one leader + one held, not two simultaneous unconfirmed
+sends. Skips (suppressed domain / already in a different campaign /
+blocked by a pending persona elsewhere) are reported the same way as
+the main Add Leads to Campaign flow.
+
+Dashboard's filter form also now exposes **Imported to Saleshandy**
+(Yes/No/All) directly -- previously this only worked as a hidden URL
+param for Analytics drill-through links, not something you could pick
+from the form itself.
+
 ## Notes on the Saleshandy CSV export
 
 `public/leads_export_csv.php` (via `app/includes/CsvExporter.php` and

@@ -157,6 +157,13 @@ render_header('Dashboard');
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="col-md-2">
+        <select name="imported" class="form-select form-select-sm">
+          <option value="">Imported to Saleshandy (all)</option>
+          <option value="1" <?= $filters['imported'] === '1' ? 'selected' : '' ?>>Yes</option>
+          <option value="0" <?= $filters['imported'] === '0' ? 'selected' : '' ?>>No</option>
+        </select>
+      </div>
       <div class="col-md-3 form-check d-flex align-items-center">
         <input class="form-check-input me-2" type="checkbox" name="hide_used_in_campaign" value="1" id="hideUsed" <?= $filters['hide_used_in_campaign'] ? 'checked' : '' ?>>
         <label class="form-check-label" for="hideUsed">Hide leads already used in selected campaign</label>
@@ -220,6 +227,7 @@ $visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c[
     <table class="table table-hover mb-0 align-middle">
       <thead>
         <tr>
+          <th><input type="checkbox" class="selectAllInTable"></th>
           <?php foreach ($visibleColumns as $col): ?>
             <th><?= e($col['label']) ?></th>
           <?php endforeach; ?>
@@ -229,6 +237,7 @@ $visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c[
       <tbody>
       <?php foreach ($result['rows'] as $lead): ?>
         <tr>
+          <td><input type="checkbox" name="lead_ids[]" value="<?= (int) $lead['id'] ?>" class="lead-checkbox" form="bulkAddCampaignForm"></td>
           <?php foreach ($visibleColumns as $col): ?>
             <?php $renderCell($col['key'], $lead); ?>
           <?php endforeach; ?>
@@ -286,13 +295,29 @@ $visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c[
         </tr>
       <?php endforeach; ?>
       <?php if (!$result['rows']): ?>
-        <tr><td colspan="<?= count($visibleColumns) + 1 ?>" class="text-center text-muted py-4">No leads match this filter.</td></tr>
+        <tr><td colspan="<?= count($visibleColumns) + 2 ?>" class="text-center text-muted py-4">No leads match this filter.</td></tr>
       <?php endif; ?>
       </tbody>
     </table>
   </div>
 
-  <p class="text-muted small mb-4">To assign leads to a campaign, open the campaign from <a href="campaigns.php">Campaigns</a> and use "Add leads to this campaign" -- filtering and persona selection now happen there so the whole wave-1/bounce workflow lives in one place.</p>
+  <div class="card mb-3">
+    <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+      <form method="post" action="lead_bulk_campaign_add.php" id="bulkAddCampaignForm" class="d-flex gap-2 align-items-center"
+            onsubmit="return confirm('Add every checked lead to this campaign?');">
+        <?= csrf_field() ?>
+        <input type="hidden" name="return_to" value="<?= e($returnTo) ?>">
+        <select name="campaign_id" class="form-select form-select-sm" style="max-width: 240px;" required>
+          <option value="">Add checked leads to campaign...</option>
+          <?php foreach ($campaigns as $c): ?>
+            <option value="<?= (int) $c['id'] ?>"><?= e($c['name']) ?></option>
+          <?php endforeach; ?>
+        </select>
+        <button type="submit" class="btn btn-sm btn-outline-primary">Add checked leads</button>
+      </form>
+      <?= info_icon('Tick boxes in the table above (or use the header checkbox to select every lead on this page), pick a campaign, then click Add. Same wave-1 domain-safety gate as Campaigns → Add leads to this campaign applies: if two checked leads share a company, one becomes the wave-1 leader and the other is held pending that outcome. For larger, filter-driven picks with title-priority control, use "Add leads to this campaign" from the campaign itself instead.') ?>
+    </div>
+  </div>
 
 <div class="d-flex gap-2 mb-4 align-items-start flex-wrap">
   <form method="get" action="leads_export_csv.php">
