@@ -21,7 +21,13 @@ $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
 $industries = LeadRepository::distinctValues(db(), 'industry');
 
-$campaignSummary = AnalyticsRepository::campaignSummary(db());
+$campaignFunnel = AnalyticsRepository::campaignFunnel(db());
+$funnelMaxStep = 0;
+foreach ($campaignFunnel as $cf) {
+    if ($cf['steps']) {
+        $funnelMaxStep = max($funnelMaxStep, max(array_keys($cf['steps'])));
+    }
+}
 
 // All four breakdowns shown together, same filters applied to each --
 // no "group by" dropdown to click through, so country/vertical/service/
@@ -112,23 +118,45 @@ render_header('Analytics');
 <h1 class="h4 mb-3">Analytics</h1>
 
 <div class="card mb-4">
-  <div class="card-header">Campaign summary</div>
+  <div class="card-header">
+    Campaign outreach funnel
+    <?= info_icon('Prospects: everyone assigned to this campaign. Contacted: had at least the first email sent. Step N sent: reached that step or later (cumulative -- since sequence steps fire in order, "reached step 3" means steps 1 and 2 went out too). Replies: currently marked Replied. All local-DB counts, not a live Saleshandy call.') ?>
+  </div>
   <div class="table-responsive">
     <table class="table table-sm mb-0 align-middle">
-      <thead><tr><th>S No</th><th>Campaign</th><th>Vertical</th><th>Service pitched</th><th>Prospects</th><th>First email date</th></tr></thead>
+      <thead>
+        <tr>
+          <th>S No</th>
+          <th>Campaign</th>
+          <th>Vertical</th>
+          <th>Service pitched</th>
+          <th class="text-end">Prospects</th>
+          <th class="text-end">Contacted</th>
+          <?php for ($n = 1; $n <= $funnelMaxStep; $n++): ?>
+            <th class="text-end">Step <?= $n ?> sent</th>
+          <?php endfor; ?>
+          <th class="text-end">Replies</th>
+          <th>First email date</th>
+        </tr>
+      </thead>
       <tbody>
-        <?php foreach ($campaignSummary as $i => $c): ?>
+        <?php foreach ($campaignFunnel as $i => $c): ?>
           <tr>
             <td><?= $i + 1 ?></td>
             <td><?= e($c['name']) ?></td>
             <td><?= e($c['vertical_label'] ?? '') ?></td>
             <td><?= e($c['service_label'] ?? '') ?></td>
-            <td><?= number_format((int) $c['prospects']) ?></td>
+            <td class="text-end"><?= number_format((int) $c['prospects']) ?></td>
+            <td class="text-end"><?= number_format((int) $c['contacted']) ?></td>
+            <?php for ($n = 1; $n <= $funnelMaxStep; $n++): ?>
+              <td class="text-end"><?= isset($c['steps'][$n]) ? number_format($c['steps'][$n]) : '' ?></td>
+            <?php endfor; ?>
+            <td class="text-end"><?= number_format((int) $c['replies']) ?></td>
             <td><?= $c['first_email_date'] ? e(date('l, F j, Y', strtotime($c['first_email_date']))) : '' ?></td>
           </tr>
         <?php endforeach; ?>
-        <?php if (!$campaignSummary): ?>
-          <tr><td colspan="6" class="text-center text-muted py-3">No campaigns yet.</td></tr>
+        <?php if (!$campaignFunnel): ?>
+          <tr><td colspan="<?= 8 + $funnelMaxStep ?>" class="text-center text-muted py-3">No campaigns yet.</td></tr>
         <?php endif; ?>
       </tbody>
     </table>

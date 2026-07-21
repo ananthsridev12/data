@@ -414,9 +414,19 @@ tag vs. how many already had it.
 The **Analytics** nav item (`public/analytics.php`, all logged-in users)
 has two parts:
 
-- **Campaign summary** -- one row per campaign: Vertical, Service Pitched
-  (set on the campaign itself, see below), total Prospects assigned, and
-  First Email Date (the earliest `email_sent_at` across its assignments).
+- **Campaign outreach funnel** -- one row per campaign: Vertical, Service
+  Pitched (set on the campaign itself, see below), Prospects (everyone
+  assigned), Contacted (had at least the first email sent), a **Step N
+  sent** column for every sequence step reached by anyone so far
+  (cumulative -- "reached step 3" implies steps 1 and 2 also went out,
+  since a sequence's steps fire in order; a campaign that's only reached
+  step 2 simply has no Step 3 column filled in, and a 3-touch campaign
+  never grows a Step 4 column at all), Replies (currently marked
+  `Replied`), and First Email Date. Step counts come from
+  `lead_campaign_assignments.saleshandy_current_step` (the furthest step
+  Saleshandy has reported an actual send for, set by
+  `SaleshandyClient::syncCampaign()`) -- local-DB only, not a live
+  Saleshandy call. See `AnalyticsRepository::campaignFunnel()`.
 - **Four breakdown tables, always shown together** -- By Company Country,
   By Campaign, By Vertical, By Service -- no dropdown to click through.
   Each is a single table, one row per group value, with five

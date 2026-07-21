@@ -86,18 +86,37 @@ class AnalyticsRepository
     }
 
     /**
-     * Per-campaign report: Vertical / Service Pitched / Prospects / First
-     * Email Date -- the "S No, Campaign ID, Vertical, Service Pitched,
-     * Prospects, First Email Date" summary table.
+     * Per-campaign outreach funnel: Prospects / Contacted (at least the
+     * first email sent) / a cumulative sent count for each sequence step
+     * reached so far / Replies. Local-DB only, same as everything else
+     * here -- no live Saleshandy call.
      *
-     * @return array<int,array{id:int,name:string,vertical_label:?string,service_label:?string,prospects:int,first_email_date:?string}>
+     * Step counts are cumulative ("reached step N"), derived from
+     * lead_campaign_assignments.saleshandy_current_step -- the furthest
+     * step Saleshandy has reported an actual send for (see
+     * SaleshandyClient::syncCampaign()). Sequence steps fire in order, so
+     * "reached step 3" implies steps 1 and 2 were sent too; this is the
+     * standard way outreach tools report a step funnel (fewer sent at each
+     * later step as people reply/bounce/pause along the way). The step
+     * count is per campaign -- a 3-touch campaign simply never has a
+     * step 4 key.
+     *
+     * @return array<int,array{
+     *   id:int,name:string,vertical_label:?string,service_label:?string,
+     *   prospects:int,contacted:int,replies:int,first_email_date:?string,
+     *   steps:array<int,int>
+     * }>
      */
-    public static function campaignSummary(PDO $db): array
+    public static function campaignFunnel(PDO $db): array
     {
-        return $db->query(
+        $campaigns = $db->query(
             "SELECT c.id, c.name, v.label AS vertical_label, s.label AS service_label,
                (SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
                  WHERE a.campaign_id = c.id AND l.deleted_at IS NULL) AS prospects,
+               (SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
+                 WHERE a.campaign_id = c.id AND l.deleted_at IS NULL AND a.email_sent = 1) AS contacted,
+               (SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
+                 WHERE a.campaign_id = c.id AND l.deleted_at IS NULL AND a.delivery_status = 'Replied') AS replies,
                (SELECT MIN(a.email_sent_at) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
                  WHERE a.campaign_id = c.id AND l.deleted_at IS NULL AND a.email_sent = 1) AS first_email_date
              FROM campaigns c
@@ -105,6 +124,43 @@ class AnalyticsRepository
              LEFT JOIN services s ON s.id = c.service_id
              ORDER BY c.created_at DESC"
         )->fetchAll();
+
+        $stepCounts = $db->query(
+            "SELECT a.campaign_id, a.saleshandy_current_step AS step, COUNT(*) AS cnt
+               FROM lead_campaign_assignments a
+               JOIN leads l ON l.id = a.lead_id
+              WHERE l.deleted_at IS NULL AND a.saleshandy_current_step IS NOT NULL
+              GROUP BY a.campaign_id, a.saleshandy_current_step"
+        )->fetchAll();
+
+        // Raw counts are "exactly reached this step as their furthest so
+        // far" -- turn into "reached at least step N" (cumulative) per
+        // campaign, descending so each step picks up everyone at a later
+        // step too.
+        $rawByCampaign = [];
+        $maxStepByCampaign = [];
+        foreach ($stepCounts as $row) {
+            $cid = (int) $row['campaign_id'];
+            $step = (int) $row['step'];
+            $rawByCampaign[$cid][$step] = (int) $row['cnt'];
+            $maxStepByCampaign[$cid] = max($maxStepByCampaign[$cid] ?? 0, $step);
+        }
+
+        foreach ($campaigns as &$c) {
+            $cid = (int) $c['id'];
+            $maxStep = $maxStepByCampaign[$cid] ?? 0;
+            $steps = [];
+            $cumulative = 0;
+            for ($n = $maxStep; $n >= 1; $n--) {
+                $cumulative += $rawByCampaign[$cid][$n] ?? 0;
+                $steps[$n] = $cumulative;
+            }
+            ksort($steps);
+            $c['steps'] = $steps;
+        }
+        unset($c);
+
+        return $campaigns;
     }
 
     /**
