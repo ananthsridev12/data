@@ -551,12 +551,21 @@ class SaleshandyClient
      * action (campaign_assignment_update.php) -- one implementation of
      * "what a bounce/reply does", called from three entry points.
      *
+     * Also auto-releases a wave-1 leader's held group the moment sync
+     * confirms the leader went out without bouncing (Active/Replied/
+     * Paused) -- previously this only happened for the bounce outcome
+     * (via suppressByEmail's cascade below); a leader confirmed sent had
+     * to wait for someone to manually click "Release" on Campaign Leads
+     * (campaign_wave_update.php), so a held group could sit stuck for
+     * days after its leader's delivery was already confirmed, even
+     * though delivery_status alone already looked resolved.
+     *
      * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
-     * @return array{matched:int,bounced:int,replied:int}
+     * @return array{matched:int,bounced:int,replied:int,released:int}
      */
     public function syncCampaign(PDO $db, array $campaign, int $userId): array
     {
-        $stats = ['matched' => 0, 'bounced' => 0, 'replied' => 0];
+        $stats = ['matched' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0];
         $sequenceId = $campaign['saleshandy_sequence_id'];
         if (!$sequenceId) {
             return $stats;
@@ -582,6 +591,13 @@ class SaleshandyClient
                 SET delivery_status = ?, saleshandy_current_step = ?, saleshandy_synced_at = NOW(),
                     email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?)
               WHERE id = ?'
+        );
+        // Only a still-pending wave-1 leader (never itself held under
+        // another leader, not already released/suppressed) should trigger
+        // a release -- this also makes the sync safely re-runnable, since
+        // a leader that's already resolved just won't match again.
+        $pendingLeaderStmt = $db->prepare(
+            "SELECT id FROM lead_campaign_assignments WHERE id = ? AND wave_leader_id IS NULL AND bounce_status = 'pending'"
         );
 
         foreach ($byEmail as $email => $row) {
@@ -610,6 +626,13 @@ class SaleshandyClient
             $emailSentAt = $row['sentAt'] ? date('Y-m-d', strtotime((string) $row['sentAt'])) : null;
             $updateStmt->execute([$status, $row['currentStep'], $emailSent, $emailSentAt, $assignmentId]);
             $stats['matched']++;
+
+            if (in_array($status, ['Active', 'Replied', 'Paused'], true)) {
+                $pendingLeaderStmt->execute([$assignmentId]);
+                if ($pendingLeaderStmt->fetchColumn()) {
+                    $stats['released'] += WaveAssigner::release($db, (int) $assignmentId);
+                }
+            }
         }
 
         $db->prepare('UPDATE campaigns SET saleshandy_last_synced_at = NOW() WHERE id = ?')->execute([$campaign['id']]);

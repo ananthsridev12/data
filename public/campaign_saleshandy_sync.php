@@ -34,10 +34,11 @@ $config = require __DIR__ . '/../app/config/config.php';
 try {
     $client = SaleshandyClient::fromConfig($config);
     $stats = $client->syncCampaign(db(), $campaign, $admin['id']);
-    flash_set(
-        'success',
-        "Synced from Saleshandy: {$stats['matched']} lead(s) updated ({$stats['bounced']} bounced, {$stats['replied']} replied)."
-    );
+    $message = "Synced from Saleshandy: {$stats['matched']} lead(s) updated ({$stats['bounced']} bounced, {$stats['replied']} replied).";
+    if ($stats['released'] > 0) {
+        $message .= " {$stats['released']} held lead(s) released -- their wave-1 leader's delivery was confirmed by this sync.";
+    }
+    flash_set('success', $message);
 } catch (SaleshandyApiException $ex) {
     flash_set('danger', 'Could not sync from Saleshandy: ' . $ex->getMessage());
 }

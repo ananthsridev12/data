@@ -389,7 +389,17 @@ everything else in the app works without it.
    - **Refresh statuses from Saleshandy** pulls delivery/reply/bounce
      activity back into each already-assigned lead's Delivery Status, and
      cascades a bounce into the same domain-suppression logic Bounce
-     Import uses.
+     Import uses. It also **auto-releases a wave-1 leader's held group**
+     the moment this sync confirms the leader was sent without bouncing
+     (Delivery Status becomes Active, Replied, or Paused) -- equivalent
+     to clicking "Release" on that leader by hand
+     (`campaign_wave_update.php`), just automatic. Before this, only the
+     bounce outcome auto-cascaded (via the domain-suppression path); a
+     leader that sent cleanly left its held group stuck until someone
+     manually released it, even though Delivery Status alone already
+     looked resolved. Runs from both the manual button and the optional
+     cron backstop (`cron_saleshandy_sync.php`) -- the flash message /
+     cron output line reports how many held leads were released, if any.
    - **Import from Saleshandy** is the reverse direction -- for a
      sequence that already has prospects enrolled in it (added directly
      in Saleshandy, or from before this integration existed), this
