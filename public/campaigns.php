@@ -1,6 +1,5 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
-require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $admin = require_admin();
@@ -81,23 +80,13 @@ foreach ($notesStmt->fetchAll() as $note) {
     $stepNotesByCampaign[(int) $note['campaign_id']][] = $note;
 }
 
-// Live Saleshandy sequence status (active/paused) for linked campaigns --
-// one listSequences() call covers every linked campaign on this page, so
-// it's cheap even with many campaigns. Left empty (badge just omitted) if
-// Saleshandy isn't configured or the call fails -- this page must never
-// break because of it.
-$liveSequenceActive = [];
-if (array_filter($campaigns, static fn(array $c) => $c['saleshandy_sequence_id'])) {
-    try {
-        $config = require __DIR__ . '/../app/config/config.php';
-        $client = SaleshandyClient::fromConfig($config);
-        foreach ($client->listSequences() as $seq) {
-            $liveSequenceActive[$seq['id']] = (bool) ($seq['active'] ?? false);
-        }
-    } catch (SaleshandyApiException $ex) {
-        // Not configured or unreachable -- badges just won't show, page still works.
-    }
-}
+// Live Saleshandy sequence status (active/paused) used to be fetched here
+// with a blocking listSequences() call on every page load -- moved to an
+// async fetch (campaign_saleshandy_status.php + assets/js/app.js) that
+// runs after the page has already rendered, so a slow/unreachable
+// Saleshandy no longer holds up the whole page. "Checking..." badges below
+// get patched in place once that call resolves; the JS itself no-ops if
+// there are no `.sequence-status-badge` elements on the page at all.
 
 render_header('Campaigns');
 ?>
@@ -140,18 +129,18 @@ render_header('Campaigns');
 
 <table class="table table-striped bg-white">
   <thead>
-    <tr><th>Name</th><th>Description</th><th>Vertical</th><th>Service pitched</th><th>Leads assigned</th><th>Exported</th><th>Created by</th><th>Status</th><th>Saleshandy</th><th></th></tr>
+    <tr><th>Name</th><th>Service</th><th>Leads</th><th>Exported</th><th>Status</th><th>Saleshandy</th><th style="width: 220px;"></th></tr>
   </thead>
   <tbody>
   <?php foreach ($campaigns as $c): ?>
     <tr>
-      <td><?= e($c['name']) ?></td>
-      <td><?= e($c['description'] ?? '') ?></td>
-      <td><?= e($c['vertical_label'] ?? '') ?></td>
-      <td><?= e($c['service_label'] ?? '') ?></td>
+      <td>
+        <span title="Created by <?= e($c['created_by_name']) ?>"><?= e($c['name']) ?></span>
+        <?php if ($c['description']): ?><div class="small text-muted"><?= e($c['description']) ?></div><?php endif; ?>
+      </td>
+      <td><?= e($c['vertical_label'] ?? '') ?><?= $c['vertical_label'] && $c['service_label'] ? ' / ' : '' ?><?= e($c['service_label'] ?? '') ?></td>
       <td><a href="dashboard.php?campaign_id=<?= (int) $c['id'] ?>"><?= (int) $c['lead_count'] ?></a></td>
       <td><?= (int) $c['exported_count'] ?></td>
-      <td><?= e($c['created_by_name']) ?></td>
       <td><span class="badge bg-<?= $c['is_active'] ? 'success' : 'secondary' ?>"><?= $c['is_active'] ? 'Active' : 'Inactive' ?></span></td>
       <td>
         <?php if ($c['saleshandy_sequence_id'] && $c['saleshandy_step_id']): ?>
@@ -161,32 +150,35 @@ render_header('Campaigns');
         <?php else: ?>
           <span class="badge bg-secondary">Not linked</span>
         <?php endif; ?>
-        <?php if ($c['saleshandy_sequence_id'] && array_key_exists($c['saleshandy_sequence_id'], $liveSequenceActive)): ?>
-          <?php if ($liveSequenceActive[$c['saleshandy_sequence_id']]): ?>
-            <span class="badge bg-success">Sequence active</span>
-          <?php else: ?>
-            <span class="badge bg-danger" title="This sequence is paused/archived on Saleshandy -- pushing here won't do anything until it's reactivated there.">Sequence paused</span>
-          <?php endif; ?>
-        <?php elseif ($c['saleshandy_sequence_id']): ?>
-          <span class="badge bg-light text-muted border" title="Could not reach Saleshandy to check live status.">Status unknown</span>
+        <?php if ($c['saleshandy_sequence_id']): ?>
+          <span class="badge bg-light text-muted border sequence-status-badge" data-sequence-id="<?= e($c['saleshandy_sequence_id']) ?>">Checking&hellip;</span>
         <?php endif; ?>
         <a href="campaign_saleshandy_settings.php?campaign_id=<?= (int) $c['id'] ?>" class="small d-block">Configure</a>
       </td>
-      <td class="d-flex gap-1">
-        <a class="btn btn-sm btn-outline-secondary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>">Manage leads</a>
-        <?php if (!empty($stepNotesByCampaign[$c['id']])): ?>
-          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#flowRow<?= (int) $c['id'] ?>">Touches</button>
-        <?php else: ?>
-          <a class="btn btn-sm btn-outline-secondary" href="campaign_flow.php?campaign_id=<?= (int) $c['id'] ?>">Configure flow</a>
-        <?php endif; ?>
-        <a class="btn btn-sm btn-outline-secondary" href="leads_export_csv.php?campaign_export=<?= (int) $c['id'] ?>">Export CSV</a>
-        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#renameCampaign<?= (int) $c['id'] ?>">Edit</button>
-        <form method="post" action="campaigns.php" onsubmit="return confirm('Toggle active status for <?= e($c['name']) ?>?');">
-          <?= csrf_field() ?>
-          <input type="hidden" name="action" value="toggle_active">
-          <input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
-          <button type="submit" class="btn btn-sm btn-outline-secondary"><?= $c['is_active'] ? 'Deactivate' : 'Activate' ?></button>
-        </form>
+      <td>
+        <div class="d-flex gap-1">
+          <a class="btn btn-sm btn-outline-primary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>">Manage leads</a>
+          <?php if (!empty($stepNotesByCampaign[$c['id']])): ?>
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#flowRow<?= (int) $c['id'] ?>">Touches</button>
+          <?php else: ?>
+            <a class="btn btn-sm btn-outline-secondary" href="campaign_flow.php?campaign_id=<?= (int) $c['id'] ?>">Configure flow</a>
+          <?php endif; ?>
+          <div class="dropdown">
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="dropdown" aria-expanded="false">&vellip;</button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li><a class="dropdown-item" href="leads_export_csv.php?campaign_export=<?= (int) $c['id'] ?>">Export CSV</a></li>
+              <li><button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#renameCampaign<?= (int) $c['id'] ?>">Edit</button></li>
+              <li>
+                <form method="post" action="campaigns.php" onsubmit="return confirm('Toggle active status for <?= e($c['name']) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="toggle_active">
+                  <input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
+                  <button type="submit" class="dropdown-item"><?= $c['is_active'] ? 'Deactivate' : 'Activate' ?></button>
+                </form>
+              </li>
+            </ul>
+          </div>
+        </div>
         <div class="modal fade" id="renameCampaign<?= (int) $c['id'] ?>" tabindex="-1" aria-hidden="true">
           <div class="modal-dialog">
             <div class="modal-content">
@@ -241,7 +233,7 @@ render_header('Campaigns');
     </tr>
     <?php if (!empty($stepNotesByCampaign[$c['id']])): ?>
     <tr class="collapse" id="flowRow<?= (int) $c['id'] ?>">
-      <td colspan="10" class="bg-light">
+      <td colspan="7" class="bg-light">
         <div class="d-flex flex-wrap align-items-center gap-2 py-1">
           <?php foreach ($stepNotesByCampaign[$c['id']] as $i => $note): ?>
             <?php if ($i > 0): ?><span class="text-muted">&rarr;</span><?php endif; ?>
@@ -255,8 +247,9 @@ render_header('Campaigns');
     <?php endif; ?>
   <?php endforeach; ?>
   <?php if (!$campaigns): ?>
-    <tr><td colspan="10" class="text-center text-muted py-4">No campaigns yet.</td></tr>
+    <tr><td colspan="7" class="text-center text-muted py-4">No campaigns yet.</td></tr>
   <?php endif; ?>
   </tbody>
 </table>
+<script src="assets/js/app.js"></script>
 <?php render_footer(); ?>

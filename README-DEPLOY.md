@@ -332,6 +332,24 @@ Saleshandy and this view is intentionally DB-only -- click "Edit"
 inside the accordion (or "Configure flow") to see/change the full
 live picture on Campaign Flow.
 
+**Action buttons**: each campaign row keeps only its two most-used
+actions as buttons (**Manage leads**, **Touches**/**Configure flow**);
+**Export CSV**, **Edit**, and **Activate/Deactivate** live in a
+kebab (&vellip;) dropdown menu to the right, same underlying links/forms
+as before, just relocated so the primary actions aren't lost in a row of
+five+ buttons.
+
+**Live sequence status is non-blocking**: the "Sequence active/paused"
+badge used to come from a `listSequences()` call made synchronously
+before the page rendered, so a slow or unreachable Saleshandy held up
+the whole Campaigns page. It now renders a "Checking..." placeholder
+badge (`.sequence-status-badge[data-sequence-id]`) immediately, then
+`assets/js/app.js` fetches `campaign_saleshandy_status.php` (a thin,
+admin-only JSON wrapper around `listSequences()`, fails soft to `[]`)
+after page load and patches each badge in place -- "Sequence active",
+"Sequence paused", or "Status unknown" if Saleshandy couldn't be
+reached. No-op if the page has no linked campaigns.
+
 ## Bulk tagging (Dashboard and Add Leads to Campaign)
 
 Both the Dashboard and Add Leads to Campaign screens have a **Tag all N

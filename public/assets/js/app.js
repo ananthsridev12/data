@@ -61,6 +61,41 @@
   tick();
 })();
 
+// Live Saleshandy sequence status badges on campaigns.php -- rendered as
+// "Checking..." placeholders so the page doesn't block on a Saleshandy
+// round-trip; patched in place once campaign_saleshandy_status.php resolves.
+(function () {
+  var badges = document.querySelectorAll('.sequence-status-badge[data-sequence-id]');
+  if (!badges.length) return;
+
+  fetch('campaign_saleshandy_status.php')
+    .then(function (res) { return res.json(); })
+    .then(function (active) {
+      badges.forEach(function (badge) {
+        var id = badge.getAttribute('data-sequence-id');
+        if (!Object.prototype.hasOwnProperty.call(active, id)) {
+          badge.className = 'badge bg-light text-muted border';
+          badge.title = 'Could not reach Saleshandy to check live status.';
+          badge.textContent = 'Status unknown';
+        } else if (active[id]) {
+          badge.className = 'badge bg-success';
+          badge.textContent = 'Sequence active';
+        } else {
+          badge.className = 'badge bg-danger';
+          badge.title = "This sequence is paused/archived on Saleshandy -- pushing here won't do anything until it's reactivated there.";
+          badge.textContent = 'Sequence paused';
+        }
+      });
+    })
+    .catch(function () {
+      badges.forEach(function (badge) {
+        badge.className = 'badge bg-light text-muted border';
+        badge.title = 'Could not reach Saleshandy to check live status.';
+        badge.textContent = 'Status unknown';
+      });
+    });
+})();
+
 // Multi-select checkbox filter dropdowns (render_multiselect_filter() in helpers.php).
 (function () {
   function updateLabel(toggle) {
