@@ -572,6 +572,18 @@ called unconditionally at the end of `syncCampaign()` (same pattern as
 activity to sync). The cron sync (`cron_saleshandy_sync.php`) picks
 this up automatically too.
 
+**If verification never seems to update, check for an error message.**
+Previously, a failed verification-status call was silently swallowed
+(`continue`d past) -- indistinguishable from "nothing to check yet,"
+since the flash message just never mentioned verification either way.
+`refreshVerificationStatus()` now returns the last `SaleshandyApiException`
+message it hit (if any) alongside the checked count, surfaced as a
+second, separate red flash message on Campaign Leads ("Email
+verification check failed: ...") and appended to the cron sync's log
+output -- so a genuinely broken call (wrong endpoint, auth, response
+shape) is now visible instead of looking identical to "just not
+verified yet on Saleshandy's side."
+
 Raw status strings from Saleshandy aren't documented anywhere
 accessible, so `SaleshandyClient::classifyVerificationTier()` buckets
 them by keyword (`bad`/`invalid`/`undeliverable`/... -> Bad,

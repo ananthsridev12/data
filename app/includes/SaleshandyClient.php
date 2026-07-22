@@ -606,11 +606,11 @@ class SaleshandyClient
      * it runs even when Saleshandy reports zero new activity.
      *
      * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
-     * @return array{matched:int,bounced:int,replied:int,released:int,verified:int}
+     * @return array{matched:int,bounced:int,replied:int,released:int,verified:int,verification_error:?string}
      */
     public function syncCampaign(PDO $db, array $campaign, int $userId): array
     {
-        $stats = ['matched' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0, 'verified' => 0];
+        $stats = ['matched' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0, 'verified' => 0, 'verification_error' => null];
         $sequenceId = $campaign['saleshandy_sequence_id'];
         if (!$sequenceId) {
             return $stats;
@@ -665,7 +665,9 @@ class SaleshandyClient
         }
 
         $stats['released'] += $this->releaseResolvedWaveLeaders($db, (int) $campaign['id']);
-        $stats['verified'] += $this->refreshVerificationStatus($db, (int) $campaign['id']);
+        $verifyResult = $this->refreshVerificationStatus($db, (int) $campaign['id']);
+        $stats['verified'] += $verifyResult['checked'];
+        $stats['verification_error'] = $verifyResult['error'];
         $db->prepare('UPDATE campaigns SET saleshandy_last_synced_at = NOW() WHERE id = ?')->execute([$campaign['id']]);
 
         return $stats;
@@ -684,8 +686,17 @@ class SaleshandyClient
      * with fresh activity this sync -- so a status that changes on
      * Saleshandy's side after the fact (e.g. re-verified) still gets
      * picked up on the next refresh.
+     *
+     * @return array{checked:int, error:?string} error is the last
+     *   SaleshandyApiException message hit, if any -- previously a
+     *   failed chunk was silently skipped, so a genuinely broken call
+     *   (wrong endpoint, auth, response shape) had no visible symptom:
+     *   the flash message just never mentioned verification, identical
+     *   to "nothing to check yet." Surfacing the error is the only way
+     *   to tell "not verified yet on Saleshandy's side" (normal, quiet)
+     *   apart from "this call is actually failing" (a real bug).
      */
-    private function refreshVerificationStatus(PDO $db, int $campaignId): int
+    private function refreshVerificationStatus(PDO $db, int $campaignId): array
     {
         $rows = $db->prepare(
             "SELECT DISTINCT l.id, l.email FROM lead_campaign_assignments a
@@ -695,7 +706,7 @@ class SaleshandyClient
         $rows->execute([$campaignId]);
         $leads = $rows->fetchAll();
         if (!$leads) {
-            return 0;
+            return ['checked' => 0, 'error' => null];
         }
 
         $emailByLeadId = [];
@@ -704,11 +715,13 @@ class SaleshandyClient
         }
 
         $checked = 0;
+        $error = null;
         $updateStmt = $db->prepare('UPDATE leads SET email_verification_status = ?, email_verification_checked_at = NOW() WHERE id = ?');
         foreach (array_chunk($emailByLeadId, 200, true) as $chunk) {
             try {
                 $results = $this->checkVerificationStatus(array_values($chunk));
             } catch (SaleshandyApiException $ex) {
+                $error = $ex->getMessage();
                 continue; // best-effort -- a failed batch just leaves those leads' status as-is
             }
             foreach ($chunk as $leadId => $email) {
@@ -721,7 +734,7 @@ class SaleshandyClient
             }
         }
 
-        return $checked;
+        return ['checked' => $checked, 'error' => $error];
     }
 
     /**

@@ -52,6 +52,9 @@ foreach ($campaigns as $campaign) {
         $pullStats = $client->pullNewProspects(db(), $campaign, $systemUserId);
         echo "\"{$campaign['name']}\": {$syncStats['matched']} updated ({$syncStats['bounced']} bounced, {$syncStats['replied']} replied, {$syncStats['released']} wave-1 group(s) released, {$syncStats['verified']} verification status(es) refreshed); "
             . "{$pullStats['leads_created']} new lead(s), {$pullStats['assignments_created']} new assignment(s) pulled in\n";
+        if (!empty($syncStats['verification_error'])) {
+            echo "  -- email verification check failed: {$syncStats['verification_error']}\n";
+        }
     } catch (SaleshandyApiException $ex) {
         echo "\"{$campaign['name']}\": FAILED -- {$ex->getMessage()}\n";
     }

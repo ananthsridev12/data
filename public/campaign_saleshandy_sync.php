@@ -42,6 +42,9 @@ try {
         $message .= " {$stats['verified']} lead(s)' email verification status refreshed.";
     }
     flash_set('success', $message);
+    if (!empty($stats['verification_error'])) {
+        flash_set('danger', 'Email verification check failed: ' . $stats['verification_error']);
+    }
 } catch (SaleshandyApiException $ex) {
     flash_set('danger', 'Could not sync from Saleshandy: ' . $ex->getMessage());
 }
