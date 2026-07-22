@@ -244,11 +244,23 @@ class LeadRepository
         // Mirrors AnalyticsRepository::ASSIGNMENT_JOIN's same "latest
         // assignment per lead" dedup, so drill-through links from
         // Analytics reproduce its counts exactly.
+        // 'imported' means status IN ('exported', 'pushed') -- a lead
+        // counts as imported whether it left the system via a live
+        // Saleshandy API push (campaign_saleshandy_push.php, status =
+        // 'pushed') or a CSV export / manual "Mark as Imported" action
+        // (leads_export_csv.php, campaign_assignment_update.php's
+        // mark_imported action, CampaignHistoryImporter -- all set status
+        // = 'exported'). Must match campaign_leads.php's own "Imported"
+        // column definition exactly (see its imported_yes/imported_no
+        // stats query) -- previously this checked 'pushed' only, so a
+        // lead Campaign Leads called "Imported: Yes" could show up as
+        // "No" here and in every Analytics count, which is exactly the
+        // kind of cross-page inconsistency this filter must not have.
         $latestAssignment = '(SELECT MAX(a2.id) FROM lead_campaign_assignments a2 WHERE a2.lead_id = l.id)';
         if (($filters['imported'] ?? '') === '1') {
-            $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.status = 'pushed' AND a.id = {$latestAssignment})";
+            $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.status IN ('exported', 'pushed') AND a.id = {$latestAssignment})";
         } elseif (($filters['imported'] ?? '') === '0') {
-            $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.status = 'pushed' AND a.id = {$latestAssignment})";
+            $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.status IN ('exported', 'pushed') AND a.id = {$latestAssignment})";
         }
         if (($filters['email_sent'] ?? '') === '1') {
             $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.email_sent = 1 AND a.id = {$latestAssignment})";

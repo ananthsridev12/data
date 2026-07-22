@@ -58,10 +58,15 @@ class AnalyticsRepository
         [$clauses, $params] = self::buildBaseClauses($filters);
         $where = 'WHERE ' . implode(' AND ', $clauses);
 
+        // 'imported' = status IN ('exported', 'pushed') -- must match
+        // LeadRepository::buildWhere()'s 'imported' filter exactly (see
+        // its comment) so a Dashboard drill-through link reproduces the
+        // exact count it was clicked from, and so this matches
+        // campaign_leads.php's own "Imported" column definition.
         $sql = "SELECT {$groupExpr} AS grp,
                    COUNT(*) AS prospects,
-                   SUM(CASE WHEN a.status = 'pushed' THEN 1 ELSE 0 END) AS imported,
-                   SUM(CASE WHEN a.status IS NULL OR a.status != 'pushed' THEN 1 ELSE 0 END) AS not_imported,
+                   SUM(CASE WHEN a.status IN ('exported', 'pushed') THEN 1 ELSE 0 END) AS imported,
+                   SUM(CASE WHEN a.status IS NULL OR a.status NOT IN ('exported', 'pushed') THEN 1 ELSE 0 END) AS not_imported,
                    SUM(CASE WHEN a.email_sent = 1 THEN 1 ELSE 0 END) AS email_sent,
                    SUM(CASE WHEN a.email_sent IS NULL OR a.email_sent = 0 THEN 1 ELSE 0 END) AS email_not_sent
                  FROM leads l "

@@ -436,9 +436,19 @@ has two parts:
   always equals Prospects, same for Email Sent + Email Not Sent), not a
   narrower "still in the pipeline" subset -- deliberately simple so the
   numbers can be sanity-checked at a glance instead of needing to be
-  cross-referenced across several tables. All four sections share one
-  filter bar: campaign, vertical, service, industry, and two independent
-  optional date ranges -- lead imported-into-app date (`leads.created_at`)
+  cross-referenced across several tables. **"Imported to Saleshandy"
+  means `lead_campaign_assignments.status IN ('exported', 'pushed')`** --
+  a lead counts as imported whether it left via a live Saleshandy API
+  push (`campaign_saleshandy_push.php`, status `pushed`) or a CSV
+  export / the "Mark as Imported to Saleshandy" button (status
+  `exported`). This must exactly match `LeadRepository::buildWhere()`'s
+  `imported` filter and Campaign Leads' own "Imported" column -- they
+  used to disagree (this table and Dashboard's `imported` filter only
+  counted `pushed`, so a lead Campaign Leads called "Imported" could
+  show as "Not Imported" here), fixed so all three now use the same
+  definition. All four sections share one filter bar: campaign,
+  vertical, service, industry, and two independent optional date
+  ranges -- lead imported-into-app date (`leads.created_at`)
   and email-sent date (`lead_campaign_assignments.email_sent_at`). Blank/
   unknown Company Country groups as literal "NA", matching how the source
   data is usually reported. See `AnalyticsRepository::pivotByDimension()`.
