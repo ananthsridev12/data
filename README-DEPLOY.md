@@ -292,16 +292,35 @@ lead pushed before `saleshandy_pushed_at` existed) never self-heals, no
 matter how many times "Refresh statuses" runs afterward -- by the time
 you re-sync, the narrower [last-synced, now) window has usually already
 moved past the real send event anyway, so there's nothing left to
-re-trigger a fix from even if the column *were* NULL. **Backfill
-Email/Pushed dates** (next to Refresh statuses on Campaign Leads, admin-
-only) exists specifically for this: it re-fetches the sequence's full
-2-year history (same lookback `pullNewProspects()` already uses, not
-bounded by the last sync) and fixes both `email_sent_at` (only if it's
-currently NULL or the literal `1970-01-01` marker) and
+re-trigger a fix from even if the column *were* NULL. **The same
+narrow-window problem also affects `delivery_status` itself, not just
+dates** -- for a campaign that's been running a while, a lead can show
+"Waiting" forever even though it genuinely delivered, if the regular
+sync's window raced past that event before it was ever captured.
+`releaseResolvedWaveLeaders()`'s unconditional pass only helps once
+`delivery_status` is already correct; it has nothing to fall back on if
+that value was never set right in the first place -- confirmed in
+production: a campaign reported "0 lead(s) updated (0 bounced, 0
+replied)" on every Refresh despite emails that had genuinely delivered.
+
+**Backfill dates & status** (next to Refresh statuses on Campaign
+Leads, admin-only) exists specifically for both of these: it re-fetches
+the sequence's full 2-year history (same lookback `pullNewProspects()`
+already uses, not bounded by the last sync) and fixes `email_sent_at`
+(only if it's currently NULL or the literal `1970-01-01` marker),
 `saleshandy_pushed_at` (only if NULL, using the earliest known send time
-as a best-effort proxy -- never overwrites a real value). Heavier than
-the normal sync, so it's a separate, deliberately-triggered action --
-run it once after upgrading, not routinely. See
+as a best-effort proxy -- never overwrites a real value), **and now
+also `delivery_status`/`saleshandy_current_step`** -- recomputed from
+the complete history using the same bounced > replied > unsubscribed >
+sent priority `syncCampaign()` uses, always overwritten (not just
+fill-if-empty, since the full lookback is strictly more authoritative
+than whatever a narrow window last saw). A freshly-discovered bounce
+still triggers the same domain-suppression side effect a regular sync
+would, and `releaseResolvedWaveLeaders()` runs at the end too, so any
+wave-1 leader newly confirmed delivered by this backfill releases its
+held group in the same pass. Heavier than the normal sync, so it's a
+separate, deliberately-triggered action -- run it whenever historical
+data looks wrong, not routinely. See
 `SaleshandyClient::backfillHistoricalDates()`.
 
 **Campaign Leads was redesigned for clarity** -- it had grown to four

@@ -252,11 +252,11 @@ render_header('Campaign leads');
       <button type="submit" class="btn btn-sm btn-outline-secondary">Import from Saleshandy</button>
       <?= info_icon('Pulls in prospects that exist in this Saleshandy sequence but aren\'t assigned to this campaign here yet. New leads only get an email and name -- no company or title.') ?>
     </form>
-    <form method="post" action="campaign_saleshandy_backfill_dates.php" class="d-flex gap-2 align-items-center" onsubmit="return confirm('Re-check this campaign against Saleshandy\'s full 2-year history to fix any wrong/missing Email Date or First Pushed values? This is slower than Refresh statuses -- run it once, not on every visit.');">
+    <form method="post" action="campaign_saleshandy_backfill_dates.php" class="d-flex gap-2 align-items-center" onsubmit="return confirm('Re-check this campaign against Saleshandy\'s full 2-year history to fix any wrong/missing Email Date, First Pushed date, or delivery status? This is slower than Refresh statuses -- run it once, not on every visit.');">
       <?= csrf_field() ?>
       <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
-      <button type="submit" class="btn btn-sm btn-outline-warning">Backfill dates</button>
-      <?= info_icon('One-off repair: re-checks Saleshandy\'s full 2-year history to fix Email Date/First Pushed values that Refresh statuses can no longer reach once its sync window has moved past them. Slower -- run once, not routinely.') ?>
+      <button type="submit" class="btn btn-sm btn-outline-warning">Backfill dates &amp; status</button>
+      <?= info_icon('One-off repair: re-checks Saleshandy\'s full 2-year history to fix Email Date/First Pushed values AND delivery status (Bounced/Replied/Active) that Refresh statuses can no longer reach once its sync window has moved past them -- important for a campaign that\'s been running a while, where the regular sync may have already raced past real delivery events. Also releases any wave-1 leads now confirmed delivered. Slower -- run once, not routinely.') ?>
     </form>
   </div>
 </div>

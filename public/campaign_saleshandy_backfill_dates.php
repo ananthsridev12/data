@@ -33,12 +33,14 @@ if (!$campaign['saleshandy_sequence_id']) {
 $config = require __DIR__ . '/../app/config/config.php';
 try {
     $client = SaleshandyClient::fromConfig($config);
-    $stats = $client->backfillHistoricalDates(db(), $campaign);
-    flash_set(
-        'success',
-        "Checked {$stats['checked']} lead(s) against Saleshandy's full history: "
-            . "{$stats['email_date_fixed']} Email Date(s) fixed, {$stats['pushed_at_fixed']} First Pushed date(s) backfilled."
-    );
+    $stats = $client->backfillHistoricalDates(db(), $campaign, $admin['id']);
+    $message = "Checked {$stats['checked']} lead(s) against Saleshandy's full history: "
+        . "{$stats['email_date_fixed']} Email Date(s) fixed, {$stats['pushed_at_fixed']} First Pushed date(s) backfilled, "
+        . "{$stats['delivery_status_fixed']} delivery status(es) corrected ({$stats['bounced']} bounced, {$stats['replied']} replied).";
+    if ($stats['released'] > 0) {
+        $message .= " {$stats['released']} held lead(s) released -- their wave-1 leader's delivery was confirmed by this backfill.";
+    }
+    flash_set('success', $message);
 } catch (SaleshandyApiException $ex) {
     flash_set('danger', 'Could not backfill from Saleshandy: ' . $ex->getMessage());
 }

@@ -848,31 +848,51 @@ class SaleshandyClient
     }
 
     /**
-     * Repairs two things the normal "Refresh statuses" sync (syncCampaign())
-     * can never reach once already set once, because it only fetches
-     * activity in the window since saleshandy_last_synced_at -- once that
-     * window has moved past a lead's actual send event, the event never
-     * reappears in a later sync:
+     * Repairs everything the normal "Refresh statuses" sync (syncCampaign())
+     * can never reach once its narrow window has moved past a lead's actual
+     * activity, because it only fetches events since saleshandy_last_synced_at
+     * -- once that window has moved past a lead's actual send/delivery
+     * event, the event never reappears in a later sync. For a campaign
+     * that's been running a while, this can mean delivery_status stays
+     * stuck at "Waiting" forever for leads that genuinely delivered, since
+     * the regular sync's narrow window raced past the real event before it
+     * was ever captured -- releaseResolvedWaveLeaders() only helps once
+     * delivery_status is already correct, it has nothing to fall back on
+     * if that value was never set right in the first place.
+     *
+     * Fixes, using the same full 2-year lookback:
+     *  - delivery_status / saleshandy_current_step -- recomputed from the
+     *    complete history the same way syncCampaign()'s per-row loop does
+     *    (bounced > replied > unsubscribed > sent > waiting), always
+     *    overwritten rather than only-if-empty, since this is the fuller,
+     *    more authoritative picture. Bounces here also trigger the same
+     *    domain-suppression side effect a regular sync would have.
      *  - email_sent_at stuck at the 1970-01-01 epoch bug (see
-     *    parseSaleshandyDate()) from before that fix existed, or never
-     *    set at all for a lead whose sync ran before Saleshandy actually
-     *    had activity for it.
-     *  - saleshandy_pushed_at left NULL for a lead pushed before
-     *    sql/019 added that column -- backfilled with its earliest known
-     *    send time as a best-effort proxy (never overwrites a real value).
+     *    parseSaleshandyDate()) from before that fix existed, or never set
+     *    at all for a lead whose sync ran before Saleshandy actually had
+     *    activity for it.
+     *  - saleshandy_pushed_at left NULL for a lead pushed before sql/019
+     *    added that column -- backfilled with its earliest known send time
+     *    as a best-effort proxy (never overwrites a real value).
+     *  - wave-1 leaders newly confirmed Active/Replied/Paused by the above
+     *    get released the same way a regular sync's unconditional pass
+     *    already does.
      *
      * Deliberately separate from the regular sync and manually triggered:
      * it re-fetches the FULL 2-year lookback (same as pullNewProspects()),
      * a much heavier call than the normal incremental one, meant to be run
-     * once after upgrading (or whenever historical dates look wrong)
+     * once after upgrading (or whenever historical data looks wrong)
      * rather than on every "Refresh statuses" click.
      *
      * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
-     * @return array{checked:int, email_date_fixed:int, pushed_at_fixed:int}
+     * @return array{checked:int, email_date_fixed:int, pushed_at_fixed:int, delivery_status_fixed:int, bounced:int, replied:int, released:int}
      */
-    public function backfillHistoricalDates(PDO $db, array $campaign): array
+    public function backfillHistoricalDates(PDO $db, array $campaign, int $userId): array
     {
-        $stats = ['checked' => 0, 'email_date_fixed' => 0, 'pushed_at_fixed' => 0];
+        $stats = [
+            'checked' => 0, 'email_date_fixed' => 0, 'pushed_at_fixed' => 0,
+            'delivery_status_fixed' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0,
+        ];
         $sequenceId = $campaign['saleshandy_sequence_id'];
         if (!$sequenceId) {
             return $stats;
@@ -887,12 +907,19 @@ class SaleshandyClient
         }
 
         $findStmt = $db->prepare(
-            "SELECT a.id, a.email_sent_at, a.saleshandy_pushed_at FROM lead_campaign_assignments a
+            "SELECT a.id, a.email_sent_at, a.saleshandy_pushed_at, a.delivery_status, a.saleshandy_current_step
+               FROM lead_campaign_assignments a
                JOIN leads l ON l.id = a.lead_id
               WHERE a.campaign_id = ? AND l.email = ?"
         );
         $updateEmailDate = $db->prepare('UPDATE lead_campaign_assignments SET email_sent = 1, email_sent_at = ? WHERE id = ?');
         $updatePushedAt = $db->prepare('UPDATE lead_campaign_assignments SET saleshandy_pushed_at = ? WHERE id = ?');
+        $updateDeliveryStatus = $db->prepare(
+            'UPDATE lead_campaign_assignments
+                SET delivery_status = ?, saleshandy_current_step = ?, saleshandy_synced_at = NOW(),
+                    email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?)
+              WHERE id = ?'
+        );
 
         foreach ($byEmail as $email => $row) {
             if ($row['sentAt'] === null) {
@@ -913,7 +940,31 @@ class SaleshandyClient
                 $updatePushedAt->execute([date('Y-m-d H:i:s', $row['sentAt']), $assignment['id']]);
                 $stats['pushed_at_fixed']++;
             }
+
+            // Same priority as syncCampaign()'s per-row loop, but against
+            // the full history rather than a possibly-stale narrow window
+            // -- so this always overwrites, it's not a fill-if-empty guard.
+            if ($row['bounced']) {
+                $newStatus = 'Bounced';
+                $stats['bounced']++;
+                WaveAssigner::suppressByEmail($db, $email, $userId, "Saleshandy backfill: {$campaign['name']}", $newStatus);
+            } elseif ($row['replied']) {
+                $newStatus = 'Replied';
+                $stats['replied']++;
+            } elseif ($row['unsubscribed']) {
+                $newStatus = 'Paused';
+            } else {
+                $newStatus = 'Active';
+            }
+
+            if ($newStatus !== $assignment['delivery_status'] || $row['currentStep'] !== $assignment['saleshandy_current_step']) {
+                $emailSentAt = date('Y-m-d', $row['sentAt']);
+                $updateDeliveryStatus->execute([$newStatus, $row['currentStep'], 1, $emailSentAt, $assignment['id']]);
+                $stats['delivery_status_fixed']++;
+            }
         }
+
+        $stats['released'] += $this->releaseResolvedWaveLeaders($db, (int) $campaign['id']);
 
         return $stats;
     }
