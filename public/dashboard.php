@@ -24,6 +24,7 @@ $filters = [
     'domain' => trim((string) ($_GET['domain'] ?? '')),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
+    'role_group_id' => trim((string) ($_GET['role_group_id'] ?? '')),
     'imported_by' => trim((string) ($_GET['imported_by'] ?? '')),
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
     'hide_used_in_campaign' => !empty($_GET['hide_used_in_campaign']),
@@ -51,7 +52,7 @@ $page = max(1, (int) ($_GET['page'] ?? 1));
 $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
     || $filters['title'] || $filters['seniority'] || $filters['departments']
     || $filters['industry'] || $filters['country'] || $filters['employee_count']
-    || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['imported_by'] !== ''
+    || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== '' || $filters['imported_by'] !== ''
     || $filters['campaign_id'] !== '' || $filters['company_country']
     || $filters['assigned_campaign_id'] !== '' || $filters['imported'] !== '' || $filters['email_sent'] !== '';
 
@@ -70,6 +71,7 @@ $companyCountries = LeadRepository::distinctValues(db(), 'company_country');
 $employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
+$roleGroups = LeadRepository::activeLookupOptions(db(), 'role_groups');
 $campaigns = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORDER BY name')->fetchAll();
 $importers = db()->query(
     "SELECT DISTINCT u.id, u.name FROM users u JOIN import_batches ib ON ib.uploaded_by = u.id ORDER BY u.name"
@@ -142,6 +144,14 @@ render_header('Dashboard');
         </select>
       </div>
       <div class="col-md-2">
+        <select name="role_group_id" class="form-select form-select-sm">
+          <option value="">Role Group (all)</option>
+          <?php foreach ($roleGroups as $rg): ?>
+            <option value="<?= (int) $rg['id'] ?>" <?= (string) $filters['role_group_id'] === (string) $rg['id'] ? 'selected' : '' ?>><?= e($rg['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-2">
         <select name="imported_by" class="form-select form-select-sm">
           <option value="">Imported by (all)</option>
           <?php foreach ($importers as $imp): ?>
@@ -202,6 +212,7 @@ $renderCell = static function (string $key, array $lead) {
         case 'seniority': ?><td><?= e($lead['seniority']) ?></td><?php break;
         case 'vertical': ?><td><?= e($lead['vertical_code'] ?? '') ?></td><?php break;
         case 'service': ?><td><?= e($lead['service_code'] ?? '') ?></td><?php break;
+        case 'role_group': ?><td><?= e($lead['role_group_label'] ?? '') ?></td><?php break;
         case 'imported_by': ?>
             <td class="small text-muted" title="<?= e($lead['imported_filename'] ?? '') . ' -- ' . e($lead['imported_at'] ?? '') ?>"><?= e($lead['imported_by_name'] ?? '') ?></td>
             <?php break;
@@ -282,6 +293,15 @@ $visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c[
                           <option value="">--</option>
                           <?php foreach ($services as $s): ?>
                             <option value="<?= (int) $s['id'] ?>" <?= (int) $lead['service_id'] === (int) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
+                          <?php endforeach; ?>
+                        </select>
+                      </div>
+                      <div class="mb-3">
+                        <label class="form-label">Role Group <span class="text-muted small">(auto-classified from title on import; override here if needed)</span></label>
+                        <select name="role_group_id" class="form-select form-select-sm">
+                          <option value="">-- Unclassified --</option>
+                          <?php foreach ($roleGroups as $rg): ?>
+                            <option value="<?= (int) $rg['id'] ?>" <?= (int) $lead['role_group_id'] === (int) $rg['id'] ? 'selected' : '' ?>><?= e($rg['label']) ?></option>
                           <?php endforeach; ?>
                         </select>
                       </div>

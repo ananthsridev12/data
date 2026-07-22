@@ -38,6 +38,7 @@ class LeadRepository
 
         $sql = "SELECT l.*, v.code AS vertical_code, v.label AS vertical_label,
                   s.code AS service_code, s.label AS service_label,
+                  rg.label AS role_group_label,
                   ib.filename AS imported_filename, ib.started_at AS imported_at, iu.name AS imported_by_name,
                   (SELECT GROUP_CONCAT(c.name SEPARATOR ', ')
                      FROM lead_campaign_assignments a
@@ -70,6 +71,7 @@ class LeadRepository
                 FROM leads l
                 LEFT JOIN verticals v ON v.id = l.vertical_id
                 LEFT JOIN services s ON s.id = l.service_id
+                LEFT JOIN role_groups rg ON rg.id = l.role_group_id
                 LEFT JOIN import_batches ib ON ib.id = l.last_import_batch_id
                 LEFT JOIN users iu ON iu.id = ib.uploaded_by
                 {$where}
@@ -175,6 +177,14 @@ class LeadRepository
             } else {
                 $clauses[] = 'l.service_id = :service_id';
                 $params['service_id'] = (int) $filters['service_id'];
+            }
+        }
+        if (($filters['role_group_id'] ?? '') !== '') {
+            if ($filters['role_group_id'] === 'none') {
+                $clauses[] = 'l.role_group_id IS NULL';
+            } else {
+                $clauses[] = 'l.role_group_id = :role_group_id';
+                $params['role_group_id'] = (int) $filters['role_group_id'];
             }
         }
         if (!empty($filters['campaign_id'])) {
@@ -380,12 +390,13 @@ class LeadRepository
     }
 
     /**
-     * Active rows from a lookup table (verticals/services), for filter
-     * dropdowns and inline-edit selects. Table name is never user input.
+     * Active rows from a lookup table (verticals/services/role_groups), for
+     * filter dropdowns and inline-edit selects. Table name is never user
+     * input.
      */
     public static function activeLookupOptions(PDO $db, string $table): array
     {
-        if (!in_array($table, ['verticals', 'services'], true)) {
+        if (!in_array($table, ['verticals', 'services', 'role_groups'], true)) {
             throw new InvalidArgumentException("Not a lookup table: {$table}");
         }
         return $db->query("SELECT id, code, label FROM {$table} WHERE is_active = 1 ORDER BY label")->fetchAll();

@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../config/constants.php';
 require_once __DIR__ . '/../vendor/simplexlsx/SimpleXLSX.php';
 require_once __DIR__ . '/TagRepository.php';
+require_once __DIR__ . '/RoleGroupClassifier.php';
 
 use Shuchkin\SimpleXLSX;
 
@@ -170,10 +171,18 @@ class LeadImporter
             $lookupMaps[$field] = self::loadLookupMap($db, $meta['table']);
         }
         $customFields = self::loadCustomFieldIds($db);
+        // Ordered id ASC, same as lead_reclassify_roles.php -- first active
+        // group with a keyword hit wins. Loaded once per chunk, not per
+        // row, since role group rules don't change mid-import.
+        $roleGroups = $db->query('SELECT id, keywords FROM role_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
 
         $columns = array_keys(LEAD_FIELDS);
         $extraColumns = array_map(static fn(array $f) => $f['fk_column'], LOOKUP_FIELDS);
-        $allColumns = array_merge($columns, $extraColumns);
+        // role_group_id is deliberately NOT a LOOKUP_FIELDS entry -- an
+        // unmatched title must never error the row the way an unrecognized
+        // Vertical/Service value does (see RoleGroupClassifier's docblock),
+        // it just classifies to null ("Unclassified").
+        $allColumns = array_merge($columns, $extraColumns, ['role_group_id']);
         $placeholders = implode(', ', array_fill(0, count($allColumns), '?'));
         $updateClause = implode(', ', array_map(
             static fn($c) => "{$c} = VALUES({$c})",
@@ -317,6 +326,7 @@ class LeadImporter
             foreach ($extraColumns as $col) {
                 $values[] = $lookupIds[$col] ?? null;
             }
+            $values[] = RoleGroupClassifier::classify($data['title'] ?? null, $roleGroups);
             $values[] = $batchId;
 
             $stmt->execute($values);

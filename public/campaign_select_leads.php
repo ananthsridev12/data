@@ -34,6 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         'employee_count' => (array) ($rawFilters['employee_count'] ?? []),
         'vertical_id' => $rawFilters['vertical_id'] ?? '',
         'service_id' => $rawFilters['service_id'] ?? '',
+        'role_group_id' => $rawFilters['role_group_id'] ?? '',
         'campaign_id' => $campaignId,
         'hide_used_in_campaign' => !empty($rawFilters['hide_used_in_campaign']),
         'pending_elsewhere' => $rawFilters['pending_elsewhere'] ?? '',
@@ -48,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
     $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
         || $filters['title'] || $filters['seniority'] || $filters['departments']
         || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count']
-        || $filters['vertical_id'] !== '' || $filters['service_id'] !== ''
+        || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== ''
         || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
     if (!$hasRealFilter) {
         flash_set('danger', 'Apply at least one filter before saving a selection -- an unfiltered selection would match every lead in the system.');
@@ -159,6 +160,7 @@ $filters = [
     'employee_count' => $multiParam('employee_count'),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
+    'role_group_id' => trim((string) ($_GET['role_group_id'] ?? '')),
     'campaign_id' => $campaignId,
     'hide_used_in_campaign' => !isset($_GET['hide_used_in_campaign']) || $_GET['hide_used_in_campaign'] === '1',
     'pending_elsewhere' => trim((string) ($_GET['pending_elsewhere'] ?? '')),
@@ -175,7 +177,7 @@ $filters = [
 $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
     || $filters['title'] || $filters['seniority'] || $filters['departments']
     || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count']
-    || $filters['vertical_id'] !== '' || $filters['service_id'] !== ''
+    || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== ''
     || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
 
 if ($hasRealFilter) {
@@ -200,6 +202,7 @@ $companyCountries = LeadRepository::distinctValues(db(), 'company_country');
 $employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
+$roleGroups = LeadRepository::activeLookupOptions(db(), 'role_groups');
 $existingTags = TagRepository::all(db());
 
 render_header('Select leads');
@@ -258,6 +261,18 @@ render_header('Select leads');
         <option value="">Service (all)</option>
         <?php foreach ($services as $s): ?>
           <option value="<?= (int) $s['id'] ?>" <?= (string) $filters['service_id'] === (string) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-0">
+        Role Group
+        <?= info_icon('Consolidated persona bucket, auto-classified from each lead\'s title (see Role Groups under the admin menu). Pick the Service you\'re pitching above and the Role Group that matches your ICP for it, to narrow straight to the right audience.') ?>
+      </label>
+      <select name="role_group_id" class="form-select form-select-sm">
+        <option value="">All</option>
+        <?php foreach ($roleGroups as $rg): ?>
+          <option value="<?= (int) $rg['id'] ?>" <?= (string) $filters['role_group_id'] === (string) $rg['id'] ? 'selected' : '' ?>><?= e($rg['label']) ?></option>
         <?php endforeach; ?>
       </select>
     </div>
@@ -336,7 +351,7 @@ $previewFilterQuery['campaign_id'] = $campaignId;
 <div class="table-responsive card mb-4">
   <table class="table table-sm table-hover mb-0 align-middle">
     <thead>
-      <tr><th>Company</th><th>Contact</th><th>Email</th><th>Title</th><th>Seniority</th><th>Company Country</th><th>Industry</th><th>Vertical</th><th>Service</th><th>Status</th></tr>
+      <tr><th>Company</th><th>Contact</th><th>Email</th><th>Title</th><th>Seniority</th><th>Company Country</th><th>Industry</th><th>Vertical</th><th>Service</th><th>Role Group</th><th>Status</th></tr>
     </thead>
     <tbody>
       <?php foreach ($preview['rows'] as $lead): ?>
@@ -350,6 +365,7 @@ $previewFilterQuery['campaign_id'] = $campaignId;
           <td><?= e($lead['industry']) ?></td>
           <td><?= e($lead['vertical_label'] ?? '') ?></td>
           <td><?= e($lead['service_label'] ?? '') ?></td>
+          <td><?= e($lead['role_group_label'] ?? '') ?></td>
           <td>
             <?php if ($lead['used_in_campaigns']): ?>
               <span class="badge badge-used" title="<?= e($lead['used_in_campaigns']) ?>">Used</span>
@@ -366,7 +382,7 @@ $previewFilterQuery['campaign_id'] = $campaignId;
         </tr>
       <?php endforeach; ?>
       <?php if (!$preview['rows']): ?>
-        <tr><td colspan="10" class="text-center text-muted py-4">No leads match this filter.</td></tr>
+        <tr><td colspan="11" class="text-center text-muted py-4">No leads match this filter.</td></tr>
       <?php endif; ?>
     </tbody>
   </table>

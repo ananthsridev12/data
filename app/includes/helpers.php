@@ -80,6 +80,7 @@ function render_header(string $title): void
         <li class="nav-item"><a class="nav-link" href="import_history.php">Import History</a></li>
         <li class="nav-item"><a class="nav-link" href="campaigns.php">Campaigns</a></li>
         <li class="nav-item"><a class="nav-link" href="lists.php">Lists</a></li>
+        <li class="nav-item"><a class="nav-link" href="role_groups.php">Role Groups</a></li>
         <li class="nav-item"><a class="nav-link" href="tags.php">Tags</a></li>
         <li class="nav-item"><a class="nav-link" href="custom_fields.php">Custom Fields</a></li>
         <li class="nav-item"><a class="nav-link" href="bounce_import.php">Bounces</a></li>

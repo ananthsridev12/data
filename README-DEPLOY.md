@@ -42,8 +42,9 @@ and import, in order:
 18. `sql/018_campaign_vertical_service.sql`
 19. `sql/019_saleshandy_pushed_at.sql`
 20. `sql/020_campaign_step_notes.sql`
+21. `sql/021_role_groups.sql`
 
-(If you're setting up a brand-new site, import all twenty in order. If
+(If you're setting up a brand-new site, import all twenty-one in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -565,6 +566,46 @@ SQL is a `REGEXP` approximation of the same keyword logic for
 convenience only -- the actual push-time skip decision always goes
 through the real PHP classifier, so this filter can never affect what
 gets sent, only what you can find in the table.
+
+## Role Groups (`public/role_groups.php`)
+
+Consolidates messy free-text `leads.title` values ("VP of Engineering",
+"SVP Eng Ops", "Director, Platform Engineering") into a small set of
+admin-managed targeting buckets ("Engineering Leadership", "IT Ops",
+...), so picking a campaign's audience becomes **Service** (what you're
+pitching, already existed) + **Role Group** (who it's for, based on
+your ICP) instead of retyping a fragile keyword list every time.
+
+Same structural pattern as Vertical/Service (`sql/003_...`, `public/lists.php`):
+a small admin table (`role_groups` -- `code`, `label`, `keywords`,
+`is_active`), a nullable `leads.role_group_id` FK, a single-`<select>`
+filter, a `ColumnPreferences` entry, and a slot in the Dashboard
+lead-edit modal for manual override. Added by `sql/021_role_groups.sql`.
+
+**Classification is keyword-based and deliberately soft.** Each group
+has an ordered, comma-separated, case-insensitive keyword list; a
+lead's `title` is checked against each *active* group's keywords in
+`id` order, first substring match wins (`RoleGroupClassifier::classify()`,
+reusing the exact matching style already proven in
+`WaveAssigner::pickLeader()`'s wave-1 title-priority list). Unlike
+Vertical/Service, an unmatched title never errors the import row --
+it just classifies to `NULL` ("Unclassified"), since job titles are far
+too varied to pre-enumerate exhaustively the way a fixed vertical/service
+list can be. New leads are auto-classified on import
+(`LeadImporter.php`); after adding or editing a group's keywords, use
+**"Reclassify all leads now"** on the Role Groups page
+(`public/lead_reclassify_roles.php`, admin-only) to re-apply the
+updated rules to leads already in the system.
+
+**Matching is substring-based, not whole-word** -- a short keyword can
+match inside an unrelated title (e.g. "CTO" also matches inside
+"Director", since "di**recto**r" contains "cto"). Prefer fuller phrases
+("Chief Technology Officer" rather than "CTO") to avoid surprises;
+`role_groups.php` shows this caveat directly on the page.
+
+Available as a **Role Group** filter/column on Dashboard, Add Leads to
+Campaign (`campaign_select_leads.php` -- the actual "pick Service +
+Role Group" moment), and Campaign Leads (Manage Columns).
 
 ## Notes on the Saleshandy CSV export
 
