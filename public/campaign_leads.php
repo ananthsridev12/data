@@ -30,11 +30,13 @@ $filters = [
     'email_sent' => trim((string) ($_GET['email_sent'] ?? '')),
     'imported' => trim((string) ($_GET['imported'] ?? '')),
     'delivery_status' => trim((string) ($_GET['delivery_status'] ?? '')),
+    'verification' => trim((string) ($_GET['verification'] ?? '')),
 ];
 
-// Base filter (email_sent/imported/delivery_status only -- wave_status is
-// applied separately below, either as one explicit clause when the admin
-// picked a status, or per-bucket when showing all three side by side).
+// Base filter (email_sent/imported/delivery_status/verification only --
+// wave_status is applied separately below, either as one explicit clause
+// when the admin picked a status, or per-bucket when showing all three
+// side by side).
 $baseWhereClauses = ['a.campaign_id = :campaign_id', 'l.deleted_at IS NULL'];
 $baseWhereParams = ['campaign_id' => $campaignId];
 if ($filters['email_sent'] === '1' || $filters['email_sent'] === '0') {
@@ -50,6 +52,21 @@ if ($filters['delivery_status'] !== '' && in_array($filters['delivery_status'], 
     $baseWhereClauses[] = 'a.delivery_status = :delivery_status';
     $baseWhereParams['delivery_status'] = $filters['delivery_status'];
 }
+// SQL approximation of SaleshandyClient::classifyVerificationTier()'s
+// keyword classification, for this convenience filter only -- the real
+// push-time bad/risky skip decision always goes through the actual PHP
+// classifier, this never affects what gets sent.
+$verificationBadSql = "l.email_verification_status REGEXP 'bad|invalid|undeliverable|reject|bounc|block|disposable'";
+$verificationGoodSql = "l.email_verification_status REGEXP 'good|valid|deliverable|safe|verifi'";
+if ($filters['verification'] === 'bad') {
+    $baseWhereClauses[] = $verificationBadSql;
+} elseif ($filters['verification'] === 'good') {
+    $baseWhereClauses[] = "NOT ({$verificationBadSql}) AND {$verificationGoodSql}";
+} elseif ($filters['verification'] === 'risky') {
+    $baseWhereClauses[] = "l.email_verification_status IS NOT NULL AND l.email_verification_status != '' AND NOT ({$verificationBadSql}) AND NOT ({$verificationGoodSql})";
+} elseif ($filters['verification'] === 'none') {
+    $baseWhereClauses[] = "(l.email_verification_status IS NULL OR l.email_verification_status = '')";
+}
 
 $fetchAssignments = static function (array $whereClauses, array $whereParams, ?int $limit, int $offset = 0): array {
     $where = 'WHERE ' . implode(' AND ', $whereClauses);
@@ -59,7 +76,7 @@ $fetchAssignments = static function (array $whereClauses, array $whereParams, ?i
 
     $limitSql = $limit !== null ? "LIMIT {$limit} OFFSET {$offset}" : '';
     $stmt = db()->prepare(
-        "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email, u.name AS assigned_by_name
+        "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email, l.email_verification_status, u.name AS assigned_by_name
            FROM lead_campaign_assignments a
            JOIN leads l ON l.id = a.lead_id
            JOIN users u ON u.id = a.assigned_by
@@ -189,6 +206,13 @@ render_header('Campaign leads');
           <option value="<?= e($ds) ?>" <?= $filters['delivery_status'] === $ds ? 'selected' : '' ?>><?= e($ds) ?></option>
         <?php endforeach; ?>
       </select>
+      <select name="verification" class="form-select form-select-sm" style="max-width: 190px;">
+        <option value="">Email verification (all)</option>
+        <option value="good" <?= $filters['verification'] === 'good' ? 'selected' : '' ?>>Verified</option>
+        <option value="risky" <?= $filters['verification'] === 'risky' ? 'selected' : '' ?>>Risky</option>
+        <option value="bad" <?= $filters['verification'] === 'bad' ? 'selected' : '' ?>>Bad</option>
+        <option value="none" <?= $filters['verification'] === 'none' ? 'selected' : '' ?>>Not checked yet</option>
+      </select>
       <button type="submit" class="btn btn-sm btn-primary">Filter</button>
       <?php if (array_filter($filters)): ?>
         <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>" class="btn btn-sm btn-outline-secondary">Clear filters</a>
@@ -219,7 +243,7 @@ render_header('Campaign leads');
       <?= csrf_field() ?>
       <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
       <button type="submit" class="btn btn-sm btn-outline-primary">Refresh statuses</button>
-      <?= info_icon('Pulls the latest delivery status (sent/bounced/replied) from Saleshandy for leads already pushed. ' . ($campaign['saleshandy_last_synced_at'] ? 'Last synced ' . $campaign['saleshandy_last_synced_at'] . '.' : 'Never synced yet.')) ?>
+      <?= info_icon('Pulls the latest delivery status (sent/bounced/replied) and email verification status (Bad/Risky/Verified) from Saleshandy for leads already pushed. ' . ($campaign['saleshandy_last_synced_at'] ? 'Last synced ' . $campaign['saleshandy_last_synced_at'] . '.' : 'Never synced yet.')) ?>
     </form>
     <form method="post" action="campaign_saleshandy_import.php" class="d-flex gap-2 align-items-center" onsubmit="return confirm('Pull in any prospects from this Saleshandy sequence that aren\'t assigned to this campaign here yet? New leads will only have an email and name -- no company, title, etc.');">
       <?= csrf_field() ?>
@@ -371,6 +395,9 @@ render_header('Campaign leads');
                   <span class="text-muted small">--</span>
                 <?php endif; ?>
               </td>
+              <?php break;
+          case 'email_verification': ?>
+              <td><?= render_verification_badge($a['email_verification_status']) ?></td>
               <?php break;
           case 'saleshandy_step': ?>
               <td><?= $a['saleshandy_current_step'] !== null ? 'Step ' . (int) $a['saleshandy_current_step'] : '' ?></td>

@@ -606,11 +606,11 @@ class SaleshandyClient
      * it runs even when Saleshandy reports zero new activity.
      *
      * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
-     * @return array{matched:int,bounced:int,replied:int,released:int}
+     * @return array{matched:int,bounced:int,replied:int,released:int,verified:int}
      */
     public function syncCampaign(PDO $db, array $campaign, int $userId): array
     {
-        $stats = ['matched' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0];
+        $stats = ['matched' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0, 'verified' => 0];
         $sequenceId = $campaign['saleshandy_sequence_id'];
         if (!$sequenceId) {
             return $stats;
@@ -665,9 +665,63 @@ class SaleshandyClient
         }
 
         $stats['released'] += $this->releaseResolvedWaveLeaders($db, (int) $campaign['id']);
+        $stats['verified'] += $this->refreshVerificationStatus($db, (int) $campaign['id']);
         $db->prepare('UPDATE campaigns SET saleshandy_last_synced_at = NOW() WHERE id = ?')->execute([$campaign['id']]);
 
         return $stats;
+    }
+
+    /**
+     * Re-checks Saleshandy's email verification status for every lead
+     * already pushed in this campaign, piggybacking on the same "Refresh
+     * statuses" action rather than a separate button -- verification only
+     * becomes meaningful once a lead has actually been imported into
+     * Saleshandy (checking before that point returns nothing useful), so
+     * this naturally belongs alongside the existing post-push sync rather
+     * than a pre-push check. Updates leads.email_verification_status
+     * (raw string; classify via classifyVerificationTier() when
+     * displaying) for every pushed lead in the campaign, not just ones
+     * with fresh activity this sync -- so a status that changes on
+     * Saleshandy's side after the fact (e.g. re-verified) still gets
+     * picked up on the next refresh.
+     */
+    private function refreshVerificationStatus(PDO $db, int $campaignId): int
+    {
+        $rows = $db->prepare(
+            "SELECT DISTINCT l.id, l.email FROM lead_campaign_assignments a
+               JOIN leads l ON l.id = a.lead_id
+              WHERE a.campaign_id = ? AND a.status = 'pushed' AND l.deleted_at IS NULL"
+        );
+        $rows->execute([$campaignId]);
+        $leads = $rows->fetchAll();
+        if (!$leads) {
+            return 0;
+        }
+
+        $emailByLeadId = [];
+        foreach ($leads as $lead) {
+            $emailByLeadId[(int) $lead['id']] = $lead['email'];
+        }
+
+        $checked = 0;
+        $updateStmt = $db->prepare('UPDATE leads SET email_verification_status = ?, email_verification_checked_at = NOW() WHERE id = ?');
+        foreach (array_chunk($emailByLeadId, 200, true) as $chunk) {
+            try {
+                $results = $this->checkVerificationStatus(array_values($chunk));
+            } catch (SaleshandyApiException $ex) {
+                continue; // best-effort -- a failed batch just leaves those leads' status as-is
+            }
+            foreach ($chunk as $leadId => $email) {
+                $rawStatus = $results[strtolower($email)] ?? '';
+                if ($rawStatus === '') {
+                    continue; // not yet verified on Saleshandy's side -- leave existing value alone
+                }
+                $updateStmt->execute([$rawStatus, $leadId]);
+                $checked++;
+            }
+        }
+
+        return $checked;
     }
 
     /**

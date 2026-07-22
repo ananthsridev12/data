@@ -24,6 +24,7 @@ class ColumnPreferences
             'service' => 'Service',
             'imported_by' => 'Imported by',
             'used_in' => 'Used in',
+            'email_verification' => 'Email Verification',
         ],
         'campaign_leads' => [
             'company' => 'Company',
@@ -36,6 +37,7 @@ class ColumnPreferences
             'email_sent' => 'Email Sent',
             'email_date' => 'Email Date',
             'delivery_status' => 'Delivery Status',
+            'email_verification' => 'Email Verification',
             'saleshandy_step' => 'Saleshandy Step',
             'saleshandy_synced' => 'Last Synced',
         ],

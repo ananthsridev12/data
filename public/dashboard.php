@@ -218,6 +218,9 @@ $renderCell = static function (string $key, array $lead) {
               <?php endif; ?>
             </td>
             <?php break;
+        case 'email_verification': ?>
+            <td><?= render_verification_badge($lead['email_verification_status']) ?></td>
+            <?php break;
     }
 };
 $visibleColumns = array_values(array_filter($columns, static fn(array $c) => $c['visible']));

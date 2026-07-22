@@ -195,13 +195,14 @@ the shared implementation:
    `WaveAssigner::pendingElsewhereCampaigns()`.
 
 **Add Leads to Campaign** shows an actual preview table (company, contact,
-email, title, seniority, status badges), not just the match counts --
-paginated, with the same filters as the Dashboard plus two more specific
-to this screen: **Pending elsewhere** (above) and **Account used
-elsewhere** (all/yes/no), which is broader -- it flags a lead whose
-account has a *different* persona in *any* campaign at all, resolved or
-not, for finding backup contacts at companies you're already engaging
-with rather than only ones currently blocked from being added.
+email, title, seniority, company country, industry, vertical, service,
+status badges), not just the match counts -- paginated, with the same
+filters as the Dashboard plus two more specific to this screen:
+**Pending elsewhere** (above) and **Account used elsewhere**
+(all/yes/no), which is broader -- it flags a lead whose account has a
+*different* persona in *any* campaign at all, resolved or not, for
+finding backup contacts at companies you're already engaging with
+rather than only ones currently blocked from being added.
 
 This screen requires **at least one filter** before it previews or lets
 you save a selection -- an unfiltered click would otherwise scan the
@@ -531,6 +532,39 @@ Dashboard's filter form also now exposes **Imported to Saleshandy**
 (Yes/No/All) directly -- previously this only worked as a hidden URL
 param for Analytics drill-through links, not something you could pick
 from the form itself.
+
+## Email verification (Bad / Risky / Verified)
+
+Saleshandy verifies each prospect's email deliverability once it's
+actually been imported there -- checking before that point returns
+nothing useful, so this is a **post-push** signal, not a pre-push one.
+`campaign_saleshandy_push.php` already checked it silently at push time
+(to skip Bad addresses and, unless "Include risky emails" is checked,
+Risky ones too) -- it just was never shown anywhere.
+
+**"Refresh statuses from Saleshandy"** on Campaign Leads now also
+re-checks verification for every already-pushed lead in that campaign,
+alongside its existing delivery-status pull -- one button, not two,
+since both are "pull the latest from Saleshandy for leads already
+imported there." See `SaleshandyClient::refreshVerificationStatus()`,
+called unconditionally at the end of `syncCampaign()` (same pattern as
+`releaseResolvedWaveLeaders()` -- runs even when there's no fresh
+activity to sync). The cron sync (`cron_saleshandy_sync.php`) picks
+this up automatically too.
+
+Raw status strings from Saleshandy aren't documented anywhere
+accessible, so `SaleshandyClient::classifyVerificationTier()` buckets
+them by keyword (`bad`/`invalid`/`undeliverable`/... -> Bad,
+`good`/`valid`/`verifi`/... -> Verified, anything else -> Risky) rather
+than comparing exact strings. This tier renders as a badge
+(`render_verification_badge()` in `app/includes/helpers.php`) --
+available as an **Email Verification** column on Dashboard and
+Campaign Leads (Manage Columns), and as a filter dropdown
+(Verified/Risky/Bad/Not checked yet) on Campaign Leads. The filter's
+SQL is a `REGEXP` approximation of the same keyword logic for
+convenience only -- the actual push-time skip decision always goes
+through the real PHP classifier, so this filter can never affect what
+gets sent, only what you can find in the table.
 
 ## Notes on the Saleshandy CSV export
 

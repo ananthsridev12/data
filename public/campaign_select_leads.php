@@ -336,7 +336,7 @@ $previewFilterQuery['campaign_id'] = $campaignId;
 <div class="table-responsive card mb-4">
   <table class="table table-sm table-hover mb-0 align-middle">
     <thead>
-      <tr><th>Company</th><th>Contact</th><th>Email</th><th>Title</th><th>Seniority</th><th>Status</th></tr>
+      <tr><th>Company</th><th>Contact</th><th>Email</th><th>Title</th><th>Seniority</th><th>Company Country</th><th>Industry</th><th>Vertical</th><th>Service</th><th>Status</th></tr>
     </thead>
     <tbody>
       <?php foreach ($preview['rows'] as $lead): ?>
@@ -346,6 +346,10 @@ $previewFilterQuery['campaign_id'] = $campaignId;
           <td class="small"><?= e($lead['email']) ?></td>
           <td><?= e($lead['title']) ?></td>
           <td><?= e($lead['seniority']) ?></td>
+          <td><?= e($lead['company_country']) ?></td>
+          <td><?= e($lead['industry']) ?></td>
+          <td><?= e($lead['vertical_label'] ?? '') ?></td>
+          <td><?= e($lead['service_label'] ?? '') ?></td>
           <td>
             <?php if ($lead['used_in_campaigns']): ?>
               <span class="badge badge-used" title="<?= e($lead['used_in_campaigns']) ?>">Used</span>
@@ -362,7 +366,7 @@ $previewFilterQuery['campaign_id'] = $campaignId;
         </tr>
       <?php endforeach; ?>
       <?php if (!$preview['rows']): ?>
-        <tr><td colspan="6" class="text-center text-muted py-4">No leads match this filter.</td></tr>
+        <tr><td colspan="10" class="text-center text-muted py-4">No leads match this filter.</td></tr>
       <?php endif; ?>
     </tbody>
   </table>

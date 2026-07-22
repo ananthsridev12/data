@@ -10,6 +10,31 @@ function info_icon(string $text): string
     return '<span class="text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="' . e($text) . '" style="cursor: help;">&#9432;</span>';
 }
 
+/**
+ * Saleshandy email verification status badge -- Bad (never send)/Risky
+ * (deliverability uncertain)/Verified (safe to send), or "Not checked
+ * yet" if this lead hasn't been pushed to Saleshandy yet (verification
+ * only becomes meaningful post-import, see
+ * SaleshandyClient::refreshVerificationStatus()). Requires
+ * SaleshandyClient.php to classify the raw status; loaded lazily here so
+ * pages that don't otherwise need the class don't have to require it
+ * just to render this one badge.
+ */
+function render_verification_badge(?string $rawStatus): string
+{
+    if ($rawStatus === null || $rawStatus === '') {
+        return '<span class="badge bg-light text-muted border">Not checked yet</span>';
+    }
+    if (!class_exists('SaleshandyClient')) {
+        require_once __DIR__ . '/SaleshandyClient.php';
+    }
+    $tier = SaleshandyClient::classifyVerificationTier($rawStatus);
+    $badge = ['bad' => 'danger', 'risky' => 'warning', 'good' => 'success'][$tier] ?? 'secondary';
+    $label = ['bad' => 'Bad', 'risky' => 'Risky', 'good' => 'Verified'][$tier] ?? e($rawStatus);
+    $textClass = $tier === 'risky' ? ' text-dark' : '';
+    return '<span class="badge bg-' . $badge . $textClass . '" title="' . e($rawStatus) . '">' . $label . '</span>';
+}
+
 function flash_set(string $type, string $message): void
 {
     auth_boot();

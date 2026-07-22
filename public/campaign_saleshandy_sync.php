@@ -38,6 +38,9 @@ try {
     if ($stats['released'] > 0) {
         $message .= " {$stats['released']} held lead(s) released -- their wave-1 leader's delivery was confirmed by this sync.";
     }
+    if ($stats['verified'] > 0) {
+        $message .= " {$stats['verified']} lead(s)' email verification status refreshed.";
+    }
     flash_set('success', $message);
 } catch (SaleshandyApiException $ex) {
     flash_set('danger', 'Could not sync from Saleshandy: ' . $ex->getMessage());
