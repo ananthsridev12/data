@@ -7,6 +7,33 @@
   });
 })();
 
+// Role Groups' "Pick from existing titles" checkbox dropdown -- checking
+// a title appends it into that form's Keywords field (comma-separated);
+// unchecking removes it. Selector matches by name prefix since each
+// instance (the Add form, each Edit modal) uses a unique
+// render_multiselect_filter() name to avoid id collisions across modals,
+// but they all feed the same "keywords" field in their own form.
+(function () {
+  document.querySelectorAll('input[name^="title_picker"]').forEach(function (cb) {
+    cb.addEventListener('change', function () {
+      var form = cb.closest('form');
+      var field = form ? form.querySelector('[name="keywords"]') : null;
+      if (!field) return;
+
+      var current = field.value.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s !== ''; });
+      var title = cb.value;
+      var idx = current.findIndex(function (s) { return s.toLowerCase() === title.toLowerCase(); });
+
+      if (cb.checked && idx === -1) {
+        current.push(title);
+      } else if (!cb.checked && idx !== -1) {
+        current.splice(idx, 1);
+      }
+      field.value = current.join(', ');
+    });
+  });
+})();
+
 // "Select all" checkbox in a table header -- scoped to just that table's
 // own rows, since campaign_leads.php can render more than one of these
 // tables at once (one per Wave status group).

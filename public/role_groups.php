@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/RoleGroupClassifier.php';
+require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $admin = require_admin();
 
@@ -48,6 +49,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $roleGroups = db()->query('SELECT * FROM role_groups ORDER BY label')->fetchAll();
 $unclassifiedCount = (int) db()->query("SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND role_group_id IS NULL AND title IS NOT NULL AND title != ''")->fetchColumn();
+// Every distinct title already in the leads table -- lets an admin pick
+// from real data via the checkbox dropdown below instead of guessing
+// keyword phrases blind. Same source/widget already used for Dashboard's
+// Title filter.
+$titleOptions = LeadRepository::distinctValues(db(), 'title', 1000);
 
 render_header('Role Groups');
 ?>
@@ -79,10 +85,13 @@ render_header('Role Groups');
       <div class="col-md-3">
         <input type="text" name="label" class="form-control form-control-sm" placeholder="Name, e.g. Engineering Leadership" required>
       </div>
-      <div class="col-md-5">
-        <input type="text" name="keywords" class="form-control form-control-sm" placeholder="Keywords, comma-separated, e.g. VP Engineering, CTO, Head of Engineering">
+      <div class="col-md-4">
+        <textarea name="keywords" class="form-control form-control-sm" rows="1" placeholder="Keywords, comma-separated, e.g. VP Engineering, CTO, Head of Engineering"></textarea>
       </div>
       <div class="col-md-2">
+        <?php render_multiselect_filter('title_picker_new', 'Pick from existing titles', $titleOptions, []); ?>
+      </div>
+      <div class="col-md-1">
         <button type="submit" class="btn btn-primary btn-sm w-100">Add</button>
       </div>
     </form>
@@ -125,6 +134,10 @@ render_header('Role Groups');
                   <div class="mb-3">
                     <label class="form-label">Keywords <span class="text-muted small">(comma-separated, order matters -- first match wins)</span></label>
                     <textarea name="keywords" class="form-control form-control-sm" rows="3"><?= e($rg['keywords'] ?? '') ?></textarea>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label small text-muted mb-0">Pick from existing titles</label>
+                    <?php render_multiselect_filter('title_picker_' . (int) $rg['id'], 'Existing titles', $titleOptions, RoleGroupClassifier::parseKeywords($rg['keywords'] ?? '')); ?>
                   </div>
                 </div>
                 <div class="modal-footer">

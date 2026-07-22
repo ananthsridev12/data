@@ -607,6 +607,23 @@ Available as a **Role Group** filter/column on Dashboard, Add Leads to
 Campaign (`campaign_select_leads.php` -- the actual "pick Service +
 Role Group" moment), and Campaign Leads (Manage Columns).
 
+**"Pick from existing titles" dropdown** (both the Add-a-role-group form
+and each group's Edit modal) -- a searchable checkbox list of every
+distinct `title` already in the leads table
+(`LeadRepository::distinctValues(db(), 'title', 1000)`, the same source
+used for Dashboard's own Title filter), rendered via the existing
+`render_multiselect_filter()` widget. Checking a title appends it into
+that form's Keywords field (comma-separated); unchecking removes it;
+titles already present in a group's keywords show pre-checked when
+editing (`RoleGroupClassifier::parseKeywords()`). Lets an admin build a
+keyword list by browsing real titles in the data instead of guessing
+phrases blind. Each instance uses a unique widget name
+(`title_picker_new` for the Add form, `title_picker_{id}` per Edit
+modal) so checkbox ids never collide across the multiple pickers on one
+page -- the sync logic itself lives in `assets/js/app.js`, matching any
+checkbox whose name starts with `title_picker` and writing into the
+`keywords` field of its own enclosing `<form>`.
+
 ## Notes on the Saleshandy CSV export
 
 `public/leads_export_csv.php` (via `app/includes/CsvExporter.php` and
