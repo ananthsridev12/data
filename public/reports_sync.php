@@ -5,7 +5,7 @@ require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 $admin = require_admin();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header('Location: abm_report.php');
+    header('Location: reports.php');
     exit;
 }
 
@@ -15,7 +15,7 @@ $campaigns = db()->query("SELECT * FROM campaigns WHERE saleshandy_sequence_id I
 
 if (!$campaigns) {
     flash_set('danger', 'No campaigns are linked to Saleshandy yet.');
-    header('Location: abm_report.php');
+    header('Location: reports.php');
     exit;
 }
 
@@ -41,5 +41,5 @@ try {
     flash_set('danger', 'Could not connect to Saleshandy: ' . $ex->getMessage());
 }
 
-header('Location: abm_report.php');
+header('Location: reports.php');
 exit;

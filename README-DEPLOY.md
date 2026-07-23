@@ -43,8 +43,11 @@ and import, in order:
 19. `sql/019_saleshandy_pushed_at.sql`
 20. `sql/020_campaign_step_notes.sql`
 21. `sql/021_role_groups.sql`
+22. `sql/022_email_opens.sql`
+23. `sql/023_reply_sentiment.sql`
+24. `sql/024_send_events.sql`
 
-(If you're setting up a brand-new site, import all twenty-one in order. If
+(If you're setting up a brand-new site, import all twenty-four in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -568,58 +571,76 @@ Dashboard's filter form also now exposes **Imported to Saleshandy**
 param for Analytics drill-through links, not something you could pick
 from the form itself.
 
-## ABM Visibility Report (`public/abm_report.php`)
+## Reports (`public/reports.php`)
 
-Replicates (a first phase of) a spreadsheet report the user was previously
-rebuilding by hand from Saleshandy exports -- **Summary** (headline metrics
-+ a 5-stage funnel: Contacts in database -> Contacted at least once ->
-Delivered (not bounced) -> Opened -> Replied), **Coverage by Vertical**
-(In database / Contacted / Not contacted / Opened / Coverage %), and
-**Sequence performance** (one row per Saleshandy-linked campaign: emails
-sent, opens, open rate, bounces, bounce rate, replies). All logged-in
-users can view it (nav: **ABM Visibility**, next to Analytics); only
-admins see the **Fetch to update from Saleshandy** button.
+Replicates a spreadsheet report the user was previously rebuilding by hand
+from Saleshandy exports. All logged-in users can view it (nav: **Reports**,
+formerly "ABM Visibility" -- renamed since it's grown past just ABM
+metrics); only admins see the **Fetch to update from Saleshandy** button.
+Two different data sources feed it, at two different granularities:
 
-**Deliberately out of scope for this phase**: a Daily Activity table, a
-Weekly rollup, and a per-Step (not cumulative) breakdown -- all three need
-per-day/per-send-event history that this app doesn't store yet (only each
-lead's *first* send date and *furthest* step reached are kept, in
-`lead_campaign_assignments.email_sent_at`/`saleshandy_current_step`). A
-follow-up would need a new event-level table fed from
-`SaleshandyClient::fetchSequenceActivity()`'s raw, pre-aggregation rows
-(currently collapsed to one row per lead by `aggregateActivityByEmail()`
-before anything is persisted). The original spreadsheet's "Intent Signal
-Pipeline" / "Signal Skills in Demand" section is excluded entirely -- it
-has no corresponding data anywhere in this app or in Saleshandy.
+- **Summary** (headline metrics + a 5-stage funnel: Contacts in database ->
+  Contacted at least once -> Delivered (not bounced) -> Opened -> Replied),
+  **Replies by outcome**, **Coverage by Vertical** (In database / Contacted
+  / Not contacted / Opened / Coverage %), and **Sequence performance** (one
+  row per Saleshandy-linked campaign) all read `leads` +
+  `lead_campaign_assignments` -- one row per lead per campaign, so "Emails
+  sent" and "Contacts" are the same number there (this table only ever
+  tracks one lead's *first* send date and *furthest* step reached, not
+  individual step-send events).
+- **Daily sending activity**, **Weekly rhythm**, and **Steps & drop-off**
+  (RAW per-step counts, pooled across every sequence -- explicitly *not*
+  cumulative, unlike Analytics' "reached step N" numbers) read the newer
+  `saleshandy_send_events` table (`sql/024_send_events.sql`), which *does*
+  have true per-day, per-step granularity. See `ReportsRepository.php`.
 
-**Email opens are now tracked, at the same one-row-per-lead-per-campaign
-granularity as everything else** -- `sql/022_email_opens.sql` adds
+The original spreadsheet's "Intent Signal Pipeline" / "Signal Skills in
+Demand" section remains excluded -- it has no corresponding data anywhere
+in this app or in Saleshandy.
+
+**Email opens are now tracked** -- `sql/022_email_opens.sql` adds
 `lead_campaign_assignments.open_count`/`last_opened_at`.
 `SaleshandyClient::fetchSequenceActivity()` already discarded Saleshandy's
 `Open Count`/`Last Opened At` fields on every fetch (confirmed present in
 Saleshandy's own documented response for this same
-`/analytics/consolidated-stats` endpoint); it now parses them, and both
-`syncCampaign()` (the regular incremental sync, used by cron and each
-campaign's "Refresh statuses" button) and `backfillHistoricalDates()`
-(the full 2-year lookback, "Backfill dates & status") persist them. These
-are Saleshandy's own **cumulative snapshot as of the last fetch**, not a
-per-day open log -- exact for "opened at all" (what this report needs),
-but not attributable to a specific day (which is exactly the piece
-deferred above).
+`/analytics/consolidated-stats` endpoint); it now parses them. These are
+Saleshandy's own **cumulative snapshot as of the last fetch**, not a
+per-day open log -- exact for "opened at all", but Daily/Weekly's
+day-attribution of an open (via the snapshot's `Last Opened At`) can be
+approximate for a contact who opened earlier and again more recently.
 
-**Because opens were never captured before this feature existed, every
-lead's `open_count` starts at 0 regardless of real history** -- the
-report will under-report Opened/Coverage/open-rate numbers until each
-Saleshandy-linked campaign is synced or backfilled again after deploying
-`sql/022_email_opens.sql`. Recommended rollout: click **Fetch to update**
-on the new report page once after deploying (it loops the same
+**Replies are now categorized by outcome** -- `sql/023_reply_sentiment.sql`
+adds `lead_campaign_assignments.reply_sentiment`, populated from
+Saleshandy's own `Current Sentiment` field (Positive / Negative / Neutral
+/ Uncategorized) on the same endpoint, only recorded when
+`delivery_status = 'Replied'`. A reply that predates this feature (or
+whose campaign hasn't been re-synced since) shows as "Not yet categorized"
+on the Reports page until the next sync/backfill.
+
+**Per-day, per-step send history** -- `sql/024_send_events.sql` adds
+`saleshandy_send_events`, one row per (campaign, recipient, step, date
+actually sent), fed by a new `SaleshandyClient::persistSendEvents()`
+called from both `syncCampaign()` and `backfillHistoricalDates()` on the
+exact raw activity rows `fetchSequenceActivity()` already fetched for
+each -- no extra Saleshandy API calls. Idempotent (unique key on
+`campaign_id, recipient_email, step_number, sent_date`), so re-fetching an
+overlapping date range only ever updates existing rows.
+
+**Because none of open_count/reply_sentiment/send_events existed before
+this feature, all of it starts empty/zero regardless of real history** --
+the report will under-report (or show entirely empty Daily/Weekly/Steps
+sections) until each Saleshandy-linked campaign is synced or backfilled
+again after deploying `sql/022`-`024`. Recommended rollout: click **Fetch
+to update** on the Reports page once after deploying (it loops the same
 incremental `syncCampaign()` cron already runs across every linked
 campaign), or run each campaign's own "Backfill dates & status" for a
-full historical pass. "Contacts in database" (Summary/Coverage) counts
-every non-deleted lead regardless of whether it's ever been assigned to a
-campaign -- so Coverage % will read low if you've imported more leads
-than you've started outreach to, which is expected, not a bug. See
-`AbmVisibilityRepository.php`.
+full 2-year historical pass -- needed at least once to populate
+`saleshandy_send_events`, since the incremental sync alone won't reach
+back far enough to fill in past history. "Contacts in database"
+(Summary/Coverage) counts every non-deleted lead regardless of whether
+it's ever been assigned to a campaign -- so Coverage % will read low if
+you've imported more leads than you've started outreach to, which is
+expected, not a bug.
 
 ## Email verification (Bad / Risky / Verified)
 
