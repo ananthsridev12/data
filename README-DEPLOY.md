@@ -568,6 +568,59 @@ Dashboard's filter form also now exposes **Imported to Saleshandy**
 param for Analytics drill-through links, not something you could pick
 from the form itself.
 
+## ABM Visibility Report (`public/abm_report.php`)
+
+Replicates (a first phase of) a spreadsheet report the user was previously
+rebuilding by hand from Saleshandy exports -- **Summary** (headline metrics
++ a 5-stage funnel: Contacts in database -> Contacted at least once ->
+Delivered (not bounced) -> Opened -> Replied), **Coverage by Vertical**
+(In database / Contacted / Not contacted / Opened / Coverage %), and
+**Sequence performance** (one row per Saleshandy-linked campaign: emails
+sent, opens, open rate, bounces, bounce rate, replies). All logged-in
+users can view it (nav: **ABM Visibility**, next to Analytics); only
+admins see the **Fetch to update from Saleshandy** button.
+
+**Deliberately out of scope for this phase**: a Daily Activity table, a
+Weekly rollup, and a per-Step (not cumulative) breakdown -- all three need
+per-day/per-send-event history that this app doesn't store yet (only each
+lead's *first* send date and *furthest* step reached are kept, in
+`lead_campaign_assignments.email_sent_at`/`saleshandy_current_step`). A
+follow-up would need a new event-level table fed from
+`SaleshandyClient::fetchSequenceActivity()`'s raw, pre-aggregation rows
+(currently collapsed to one row per lead by `aggregateActivityByEmail()`
+before anything is persisted). The original spreadsheet's "Intent Signal
+Pipeline" / "Signal Skills in Demand" section is excluded entirely -- it
+has no corresponding data anywhere in this app or in Saleshandy.
+
+**Email opens are now tracked, at the same one-row-per-lead-per-campaign
+granularity as everything else** -- `sql/022_email_opens.sql` adds
+`lead_campaign_assignments.open_count`/`last_opened_at`.
+`SaleshandyClient::fetchSequenceActivity()` already discarded Saleshandy's
+`Open Count`/`Last Opened At` fields on every fetch (confirmed present in
+Saleshandy's own documented response for this same
+`/analytics/consolidated-stats` endpoint); it now parses them, and both
+`syncCampaign()` (the regular incremental sync, used by cron and each
+campaign's "Refresh statuses" button) and `backfillHistoricalDates()`
+(the full 2-year lookback, "Backfill dates & status") persist them. These
+are Saleshandy's own **cumulative snapshot as of the last fetch**, not a
+per-day open log -- exact for "opened at all" (what this report needs),
+but not attributable to a specific day (which is exactly the piece
+deferred above).
+
+**Because opens were never captured before this feature existed, every
+lead's `open_count` starts at 0 regardless of real history** -- the
+report will under-report Opened/Coverage/open-rate numbers until each
+Saleshandy-linked campaign is synced or backfilled again after deploying
+`sql/022_email_opens.sql`. Recommended rollout: click **Fetch to update**
+on the new report page once after deploying (it loops the same
+incremental `syncCampaign()` cron already runs across every linked
+campaign), or run each campaign's own "Backfill dates & status" for a
+full historical pass. "Contacts in database" (Summary/Coverage) counts
+every non-deleted lead regardless of whether it's ever been assigned to a
+campaign -- so Coverage % will read low if you've imported more leads
+than you've started outreach to, which is expected, not a bug. See
+`AbmVisibilityRepository.php`.
+
 ## Email verification (Bad / Risky / Verified)
 
 Saleshandy verifies each prospect's email deliverability once it's

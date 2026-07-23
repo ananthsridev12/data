@@ -472,7 +472,13 @@ class SaleshandyClient
      * legitimately lower than Saleshandy's own "N prospects" figure for
      * the sequence.
      *
-     * @return array<int,array{email:string,name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int}>
+     * "Open Count"/"Last Opened At" are Saleshandy's own cumulative
+     * snapshot as of this fetch (confirmed via the documented shape of
+     * this same endpoint) -- not a per-day open log, so they answer "has
+     * this recipient opened, and when most recently" rather than "which
+     * day did each open happen on".
+     *
+     * @return array<int,array{email:string,name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int,openCount:int,lastOpenedAt:?int}>
      */
     public function fetchSequenceActivity(string $sequenceId, string $startDate, string $endDate): array
     {
@@ -497,6 +503,8 @@ class SaleshandyClient
                     'bounced' => ($row['Bounced'] ?? 'No') === 'Yes',
                     'unsubscribed' => ($row['Unsubscribed'] ?? 'No') === 'Yes',
                     'stepNumber' => isset($row['Step Number']) ? (int) $row['Step Number'] : null,
+                    'openCount' => isset($row['Open Count']) ? (int) $row['Open Count'] : 0,
+                    'lastOpenedAt' => self::parseSaleshandyDate($row['Last Opened At'] ?? null),
                 ];
             }
             $hasMore = !empty($payload['hasMore']);
@@ -537,8 +545,8 @@ class SaleshandyClient
      * signal on any single row (a reply, a bounce, a later step reached)
      * isn't lost by only looking at that email's first or last row.
      *
-     * @param array<int,array{email:string,name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int}> $activity
-     * @return array<string,array{name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,currentStep:?int}>
+     * @param array<int,array{email:string,name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int,openCount:int,lastOpenedAt:?int}> $activity
+     * @return array<string,array{name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,currentStep:?int,openCount:int,lastOpenedAt:?int}>
      */
     private function aggregateActivityByEmail(array $activity): array
     {
@@ -548,7 +556,7 @@ class SaleshandyClient
                 continue;
             }
             if (!isset($byEmail[$row['email']])) {
-                $byEmail[$row['email']] = ['name' => $row['name'], 'sentAt' => $row['sentAt'], 'replied' => false, 'bounced' => false, 'unsubscribed' => false, 'currentStep' => null];
+                $byEmail[$row['email']] = ['name' => $row['name'], 'sentAt' => $row['sentAt'], 'replied' => false, 'bounced' => false, 'unsubscribed' => false, 'currentStep' => null, 'openCount' => 0, 'lastOpenedAt' => null];
             }
             $agg = &$byEmail[$row['email']];
             $agg['replied'] = $agg['replied'] || $row['replied'];
@@ -566,6 +574,16 @@ class SaleshandyClient
             }
             if ($row['stepNumber'] !== null && $row['stepNumber'] > ($agg['currentStep'] ?? 0)) {
                 $agg['currentStep'] = $row['stepNumber']; // furthest step reached
+            }
+            // A lead can have one activity row per step, each with its own
+            // Open Count -- take the highest across all of a lead's steps
+            // as this lead's total opens, and the most recent open time
+            // across steps as their last-opened timestamp.
+            if ($row['openCount'] > $agg['openCount']) {
+                $agg['openCount'] = $row['openCount'];
+            }
+            if ($row['lastOpenedAt'] !== null && ($agg['lastOpenedAt'] === null || $row['lastOpenedAt'] > $agg['lastOpenedAt'])) {
+                $agg['lastOpenedAt'] = $row['lastOpenedAt'];
             }
             unset($agg);
         }
@@ -631,7 +649,8 @@ class SaleshandyClient
             $updateStmt = $db->prepare(
                 'UPDATE lead_campaign_assignments
                     SET delivery_status = ?, saleshandy_current_step = ?, saleshandy_synced_at = NOW(),
-                        email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?)
+                        email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?),
+                        open_count = ?, last_opened_at = ?
                   WHERE id = ?'
             );
 
@@ -659,7 +678,8 @@ class SaleshandyClient
 
                 $emailSent = $row['sentAt'] !== null ? 1 : 0;
                 $emailSentAt = $row['sentAt'] !== null ? date('Y-m-d', $row['sentAt']) : null;
-                $updateStmt->execute([$status, $row['currentStep'], $emailSent, $emailSentAt, $assignmentId]);
+                $lastOpenedAt = $row['lastOpenedAt'] !== null ? date('Y-m-d H:i:s', $row['lastOpenedAt']) : null;
+                $updateStmt->execute([$status, $row['currentStep'], $emailSent, $emailSentAt, $row['openCount'], $lastOpenedAt, $assignmentId]);
                 $stats['matched']++;
             }
         }
@@ -898,13 +918,13 @@ class SaleshandyClient
      * rather than on every "Refresh statuses" click.
      *
      * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
-     * @return array{checked:int, email_date_fixed:int, pushed_at_fixed:int, delivery_status_fixed:int, bounced:int, replied:int, released:int}
+     * @return array{checked:int, email_date_fixed:int, pushed_at_fixed:int, delivery_status_fixed:int, bounced:int, replied:int, released:int, opens_fixed:int}
      */
     public function backfillHistoricalDates(PDO $db, array $campaign, int $userId): array
     {
         $stats = [
             'checked' => 0, 'email_date_fixed' => 0, 'pushed_at_fixed' => 0,
-            'delivery_status_fixed' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0,
+            'delivery_status_fixed' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0, 'opens_fixed' => 0,
         ];
         $sequenceId = $campaign['saleshandy_sequence_id'];
         if (!$sequenceId) {
@@ -920,7 +940,8 @@ class SaleshandyClient
         }
 
         $findStmt = $db->prepare(
-            "SELECT a.id, a.email_sent_at, a.saleshandy_pushed_at, a.delivery_status, a.saleshandy_current_step
+            "SELECT a.id, a.email_sent_at, a.saleshandy_pushed_at, a.delivery_status, a.saleshandy_current_step,
+                    a.open_count, a.last_opened_at
                FROM lead_campaign_assignments a
                JOIN leads l ON l.id = a.lead_id
               WHERE a.campaign_id = ? AND l.email = ?"
@@ -933,6 +954,7 @@ class SaleshandyClient
                     email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?)
               WHERE id = ?'
         );
+        $updateOpens = $db->prepare('UPDATE lead_campaign_assignments SET open_count = ?, last_opened_at = ? WHERE id = ?');
 
         foreach ($byEmail as $email => $row) {
             if ($row['sentAt'] === null) {
@@ -952,6 +974,12 @@ class SaleshandyClient
             if ($assignment['saleshandy_pushed_at'] === null) {
                 $updatePushedAt->execute([date('Y-m-d H:i:s', $row['sentAt']), $assignment['id']]);
                 $stats['pushed_at_fixed']++;
+            }
+
+            $lastOpenedAt = $row['lastOpenedAt'] !== null ? date('Y-m-d H:i:s', $row['lastOpenedAt']) : null;
+            if ($row['openCount'] !== (int) $assignment['open_count'] || $lastOpenedAt !== $assignment['last_opened_at']) {
+                $updateOpens->execute([$row['openCount'], $lastOpenedAt, $assignment['id']]);
+                $stats['opens_fixed']++;
             }
 
             // Same priority as syncCampaign()'s per-row loop, but against
