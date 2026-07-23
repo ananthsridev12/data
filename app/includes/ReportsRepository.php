@@ -30,21 +30,34 @@ class ReportsRepository
         ) a ON a.lead_id = l.id
     ";
 
-    /** SQL fragment (no leading AND), true when this assignment counts as "in period" for the given filters. */
-    private static function periodExpr(array $filters, array &$params): string
+    /**
+     * SQL fragment (no leading AND), true when this assignment counts as
+     * "in period" for the given filters. $suffix must be unique per call
+     * within a single query -- PDO's real (non-emulated) prepared
+     * statements reject the same named placeholder appearing twice in one
+     * statement, which bit coverageByVertical() (uses this twice in one
+     * query) the first time any filter was actually active: it worked
+     * with no filters (the whole "in period" clause was just the
+     * unparameterized "a.email_sent = 1", no placeholders to collide) but
+     * threw "SQLSTATE[HY093]: Invalid parameter number" the moment
+     * date_from/date_to/campaign_id added real :placeholders, since the
+     * same name showed up twice in that one statement. Every caller of
+     * this method now passes a distinct $suffix per call.
+     */
+    private static function periodExpr(array $filters, array &$params, string $suffix = ''): string
     {
         $clauses = ['a.email_sent = 1'];
         if (!empty($filters['date_from'])) {
-            $clauses[] = 'a.email_sent_at >= :date_from';
-            $params['date_from'] = $filters['date_from'];
+            $clauses[] = "a.email_sent_at >= :date_from{$suffix}";
+            $params["date_from{$suffix}"] = $filters['date_from'];
         }
         if (!empty($filters['date_to'])) {
-            $clauses[] = 'a.email_sent_at <= :date_to';
-            $params['date_to'] = $filters['date_to'];
+            $clauses[] = "a.email_sent_at <= :date_to{$suffix}";
+            $params["date_to{$suffix}"] = $filters['date_to'];
         }
         if (!empty($filters['campaign_id'])) {
-            $clauses[] = 'a.campaign_id = :campaign_id';
-            $params['campaign_id'] = (int) $filters['campaign_id'];
+            $clauses[] = "a.campaign_id = :campaign_id{$suffix}";
+            $params["campaign_id{$suffix}"] = (int) $filters['campaign_id'];
         }
         return implode(' AND ', $clauses);
     }
@@ -120,12 +133,13 @@ class ReportsRepository
     public static function coverageByVertical(PDO $db, array $filters): array
     {
         $params = [];
-        $period = self::periodExpr($filters, $params);
+        $periodContacted = self::periodExpr($filters, $params, '_c');
+        $periodOpened = self::periodExpr($filters, $params, '_o');
 
         $sql = "SELECT COALESCE(v.label, '(none)') AS grp,
                    COUNT(*) AS in_database,
-                   SUM(CASE WHEN {$period} THEN 1 ELSE 0 END) AS contacted,
-                   SUM(CASE WHEN {$period} AND a.open_count > 0 THEN 1 ELSE 0 END) AS opened
+                   SUM(CASE WHEN {$periodContacted} THEN 1 ELSE 0 END) AS contacted,
+                   SUM(CASE WHEN {$periodOpened} AND a.open_count > 0 THEN 1 ELSE 0 END) AS opened
                  FROM leads l
                  " . self::ASSIGNMENT_JOIN . "
                  LEFT JOIN verticals v ON v.id = l.vertical_id
