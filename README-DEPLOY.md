@@ -186,24 +186,39 @@ the shared implementation:
    Active/Replied/Paused (sent, and not currently flagged as a bounce) --
    at that point B becomes assignable again. A confirmed bounce doesn't
    go through this rule at all -- it's already the stronger, permanent
-   block from rule 2. Visible three ways: the Dashboard shows a **Pending
-   elsewhere** badge (hover for which campaign) on any lead whose account
-   has another persona currently in flight; a skipped selection reports
-   exactly which campaign(s) are holding it up (e.g. "2 in
-   'DM-DT-ESI-US-01'"); and Add Leads to Campaign has a **Pending
-   elsewhere** filter (all/hide blocked leads/show only blocked leads) to
-   preview what's actually assignable before you save a selection. See
+   block from rule 2. Visible three ways: the Dashboard shows an
+   **Account Delivery Checking (Pending)** badge (hover for which
+   campaign) on any lead whose account has another persona currently in
+   flight; a skipped selection reports exactly which campaign(s) are
+   holding it up (e.g. "2 in 'DM-DT-ESI-US-01'"); and Add Leads to
+   Campaign has an **Account Delivery Checking (Pending)** filter
+   (all/hide blocked leads/show only blocked leads) to preview what's
+   actually assignable before you save a selection. See
    `WaveAssigner::pendingElsewhereCampaigns()`.
 
 **Add Leads to Campaign** shows an actual preview table (company, contact,
 email, title, seniority, company country, industry, vertical, service,
 status badges), not just the match counts -- paginated, with the same
 filters as the Dashboard plus two more specific to this screen:
-**Pending elsewhere** (above) and **Account used elsewhere**
+**Account Delivery Checking (Pending)** (above) and **Account used elsewhere**
 (all/yes/no), which is broader -- it flags a lead whose account has a
 *different* persona in *any* campaign at all, resolved or not, for
 finding backup contacts at companies you're already engaging with
 rather than only ones currently blocked from being added.
+
+**The "Used" badge is worded relative to whichever campaign you're
+looking at.** It flags a lead that already has an assignment record in
+*some* campaign (any campaign, any point in time -- not the same thing
+as "Account Delivery Checking (Pending)"/"Account used elsewhere",
+which are both about a *different* persona at the same company, not
+this lead's own history). On Add Leads to Campaign, where there's a
+specific target campaign in view, it reads **"Used in same campaign"**
+if that's the campaign it's already in, or **"Used in {campaign
+name}"** naming the actual different campaign otherwise -- previously
+both cases just said "Used", so it wasn't obvious without hovering
+whether a lead was blocked by *this* campaign or a *different* one. On
+Dashboard, which has no single target campaign in view, it always
+names the campaign(s) directly: "Used in {name}".
 
 This screen requires **at least one filter** before it previews or lets
 you save a selection -- an unfiltered click would otherwise scan the

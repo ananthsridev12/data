@@ -278,7 +278,7 @@ render_header('Select leads');
     </div>
     <div class="col-md-2">
       <label class="form-label small text-muted mb-0">
-        Pending elsewhere
+        Account Delivery Checking (Pending)
         <?= info_icon('Checks every campaign a same-company contact is in -- including this one. "Blocked" leads have a different contact at their company still awaiting a delivered/bounced outcome anywhere, so they\'d be held for wave-1 safety if added now.') ?>
       </label>
       <select name="pending_elsewhere" class="form-select form-select-sm">
@@ -367,14 +367,19 @@ $previewFilterQuery['campaign_id'] = $campaignId;
           <td><?= e($lead['service_label'] ?? '') ?></td>
           <td><?= e($lead['role_group_label'] ?? '') ?></td>
           <td>
-            <?php if ($lead['used_in_campaigns']): ?>
-              <span class="badge badge-used" title="<?= e($lead['used_in_campaigns']) ?>">Used</span>
+            <?php if ($lead['used_in_campaigns']):
+              $usedCampaignNames = array_map('trim', explode(',', $lead['used_in_campaigns']));
+              $usedLabel = (count($usedCampaignNames) === 1 && $usedCampaignNames[0] === $campaign['name'])
+                  ? 'Used in same campaign'
+                  : 'Used in ' . $lead['used_in_campaigns'];
+            ?>
+              <span class="badge badge-used" title="This lead already belongs to: <?= e($lead['used_in_campaigns']) ?>"><?= e($usedLabel) ?></span>
             <?php endif; ?>
             <?php if ($lead['suppressed_reason'] !== null): ?>
               <span class="badge bg-danger" title="<?= e($lead['suppressed_reason']) ?>">Suppressed</span>
             <?php endif; ?>
             <?php if ($lead['pending_elsewhere_campaigns']): ?>
-              <span class="badge bg-warning text-dark" title="Another persona at this account is pending delivery in: <?= e($lead['pending_elsewhere_campaigns']) ?> (campaign name(s) listed here may include this campaign itself, not just other ones).">Pending elsewhere</span>
+              <span class="badge bg-warning text-dark" title="Another persona at this account is pending delivery in: <?= e($lead['pending_elsewhere_campaigns']) ?> (campaign name(s) listed here may include this campaign itself, not just other ones).">Account Delivery Checking (Pending)</span>
             <?php elseif ($lead['account_used_elsewhere_campaigns']): ?>
               <span class="badge bg-info text-dark" title="Another persona at this account is already in: <?= e($lead['account_used_elsewhere_campaigns']) ?> (campaign name(s) listed here may include this campaign itself, not just other ones).">Account used elsewhere</span>
             <?php endif; ?>

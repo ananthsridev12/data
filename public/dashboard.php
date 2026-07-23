@@ -219,13 +219,13 @@ $renderCell = static function (string $key, array $lead) {
         case 'used_in': ?>
             <td>
               <?php if ($lead['used_in_campaigns']): ?>
-                <span class="badge badge-used" title="<?= e($lead['used_in_campaigns']) ?>">Used</span>
+                <span class="badge badge-used" title="This lead already belongs to: <?= e($lead['used_in_campaigns']) ?>">Used in <?= e($lead['used_in_campaigns']) ?></span>
               <?php endif; ?>
               <?php if ($lead['suppressed_reason'] !== null): ?>
                 <span class="badge bg-danger" title="<?= e($lead['suppressed_reason']) ?>">Suppressed</span>
               <?php endif; ?>
               <?php if ($lead['pending_elsewhere_campaigns']): ?>
-                <span class="badge bg-warning text-dark" title="Another persona at this account is pending delivery in: <?= e($lead['pending_elsewhere_campaigns']) ?> -- can't be added to a new campaign until that resolves.">Pending elsewhere</span>
+                <span class="badge bg-warning text-dark" title="Another persona at this account is pending delivery in: <?= e($lead['pending_elsewhere_campaigns']) ?> -- can't be added to a new campaign until that resolves.">Account Delivery Checking (Pending)</span>
               <?php endif; ?>
             </td>
             <?php break;
