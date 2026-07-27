@@ -758,6 +758,19 @@ flash, not a duplicate entry). Same as editing keywords directly, this
 doesn't reclassify by itself -- **"Reclassify all leads now" still needs
 a click** to apply it to leads already in the system.
 
+## Role Groups: CSV import
+
+Below the Add form, "Import role groups from a file" -- bulk create/update
+role groups from a CSV (header row: `Code`, `Name`/`Label`, optionally
+`Keywords`), one row per group. Same `fgetcsv()`/header-detection pattern
+as `bounce_import.php`. **Upserts by Code**: an existing code's Name/
+Keywords are overwritten by the file's values (not merged); a new code is
+inserted active. Missing Code or Name on a row skips that row (counted,
+not silently dropped). Doesn't reclassify existing leads by itself --
+"Reclassify all leads now" still needs a click afterward. A "Download a
+template" link on the same card gives a one-row example file via a
+`data:` URI, no server round-trip needed.
+
 ## ICP Segments: "Personas without an ICP yet"
 
 On `icp_segments.php`, above the Add form: every *active* Role Group

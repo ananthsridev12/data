@@ -65,6 +65,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('success', "\"{$keyword}\" added to \"{$rg['label']}\" -- run \"Reclassify all leads now\" below to apply it.");
             }
         }
+    } elseif ($action === 'import_csv') {
+        // Bulk create/update role groups from a CSV, one row per group --
+        // same fgetcsv()/header-detection pattern as bounce_import.php.
+        // Upserts by Code: an existing code's Name/Keywords are
+        // overwritten with the file's values (not merged), a new code
+        // is inserted active. Does not reclassify by itself -- run
+        // "Reclassify all leads now" below afterward, same as any other
+        // keyword change.
+        if (empty($_FILES['role_groups_file']) || $_FILES['role_groups_file']['error'] !== UPLOAD_ERR_OK) {
+            flash_set('danger', 'Please choose a CSV file to import.');
+            header('Location: role_groups.php');
+            exit;
+        }
+
+        $handle = fopen($_FILES['role_groups_file']['tmp_name'], 'r');
+        if ($handle === false) {
+            flash_set('danger', 'Could not read the uploaded file.');
+            header('Location: role_groups.php');
+            exit;
+        }
+
+        $header = fgetcsv($handle);
+        $codeCol = null;
+        $labelCol = null;
+        $keywordsCol = null;
+        if ($header !== false) {
+            foreach ($header as $i => $col) {
+                $colName = strtolower(trim((string) $col));
+                if ($colName === 'code') {
+                    $codeCol = $i;
+                } elseif (in_array($colName, ['name', 'label'], true)) {
+                    $labelCol = $i;
+                } elseif ($colName === 'keywords') {
+                    $keywordsCol = $i;
+                }
+            }
+        }
+
+        if ($codeCol === null || $labelCol === null) {
+            flash_set('danger', 'Could not find both a "Code" and a "Name" column in that file -- check the header row.');
+            fclose($handle);
+            header('Location: role_groups.php');
+            exit;
+        }
+
+        $findStmt = db()->prepare('SELECT id FROM role_groups WHERE code = ?');
+        $insertStmt = db()->prepare('INSERT INTO role_groups (code, label, keywords) VALUES (?, ?, ?)');
+        $updateStmt = db()->prepare('UPDATE role_groups SET label = ?, keywords = ? WHERE id = ?');
+
+        $created = 0;
+        $updated = 0;
+        $skipped = 0;
+        while (($row = fgetcsv($handle)) !== false) {
+            $code = trim((string) ($row[$codeCol] ?? ''));
+            $label = trim((string) ($row[$labelCol] ?? ''));
+            $keywords = $keywordsCol !== null ? trim((string) ($row[$keywordsCol] ?? '')) : '';
+
+            if ($code === '' || $label === '') {
+                $skipped++;
+                continue;
+            }
+
+            $findStmt->execute([$code]);
+            $existingId = $findStmt->fetchColumn();
+            if ($existingId) {
+                $updateStmt->execute([$label, $keywords !== '' ? $keywords : null, $existingId]);
+                $updated++;
+            } else {
+                $insertStmt->execute([$code, $label, $keywords !== '' ? $keywords : null]);
+                $created++;
+            }
+        }
+        fclose($handle);
+
+        flash_set(
+            'success',
+            "Import complete: {$created} role group(s) created, {$updated} updated" . ($skipped > 0 ? ", {$skipped} row(s) skipped (missing code or name)" : '')
+                . ' -- run "Reclassify all leads now" below to apply any keyword changes to leads already in the system.'
+        );
     }
 
     header('Location: role_groups.php');
@@ -128,6 +207,26 @@ render_header('Role Groups');
       <div class="col-md-1">
         <button type="submit" class="btn btn-primary btn-sm w-100">Add</button>
       </div>
+    </form>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Import role groups from a file</div>
+  <div class="card-body">
+    <p class="text-muted small mb-2">
+      A CSV with a header row containing <strong>Code</strong>, <strong>Name</strong> (or "Label"), and
+      optionally <strong>Keywords</strong> (comma-separated, inside one quoted cell -- e.g.
+      <code>"VP Engineering, CTO, Head of Engineering"</code>). One row per role group. An existing
+      code's Name/Keywords are <strong>overwritten</strong> by the file's values; a new code is created
+      active. Doesn't reclassify existing leads by itself -- run "Reclassify all leads now" below afterward.
+    </p>
+    <form method="post" action="role_groups.php" enctype="multipart/form-data" class="d-flex gap-2 align-items-center">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="import_csv">
+      <input type="file" name="role_groups_file" class="form-control form-control-sm" accept=".csv" required style="max-width: 320px;">
+      <button type="submit" class="btn btn-outline-primary btn-sm">Import</button>
+      <a class="small" download="role_groups_template.csv" href="data:text/csv;charset=utf-8,Code%2CName%2CKeywords%0AENG_LEAD%2CEngineering%20Leadership%2C%22VP%20Engineering%2C%20CTO%2C%20Head%20of%20Engineering%22%0A">Download a template</a>
     </form>
   </div>
 </div>
