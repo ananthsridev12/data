@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../config/constants.php';
 require_once __DIR__ . '/WaveAssigner.php';
+require_once __DIR__ . '/TagRepository.php';
 
 /**
  * Thin cURL wrapper around Saleshandy's REST API. No SDK/Composer, matching
@@ -1084,6 +1085,171 @@ class SaleshandyClient
         $stats['released'] += $this->releaseResolvedWaveLeaders($db, (int) $campaign['id']);
 
         return $stats;
+    }
+
+    /**
+     * Pushes every push-eligible lead in a campaign to its linked
+     * Saleshandy sequence step -- the shared implementation behind both
+     * the manual "Push to Saleshandy" button (public/campaign_saleshandy_push.php,
+     * a thin wrapper around this) and public/icp_distribution_cron.php's
+     * optional auto-push. Extracted rather than duplicated so the two
+     * callers can never drift out of sync with each other.
+     *
+     * Push-eligible: currently active under the wave-1 domain-safety gate
+     * (not held, not suppressed), not already pushed, lead not
+     * soft-deleted, and the lead's domain isn't on the suppression list.
+     * Email verification: bad (invalid/undeliverable) addresses are never
+     * sent to; risky ones are skipped unless $includeRisky is true.
+     * Verification status is cached per lead so a re-push doesn't re-spend
+     * verification credits on an address already checked.
+     *
+     * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id/saleshandy_step_id)
+     * @return array{pushed:int,skipped_bad:int,skipped_risky:int,stale_labels:array<int,string>,errors:array<int,string>,verification_check_error:?string}
+     */
+    public function pushCampaignLeads(PDO $db, array $campaign, bool $includeRisky = false): array
+    {
+        $result = ['pushed' => 0, 'skipped_bad' => 0, 'skipped_risky' => 0, 'stale_labels' => [], 'errors' => [], 'verification_check_error' => null];
+
+        if (!$campaign['saleshandy_sequence_id'] || !$campaign['saleshandy_step_id']) {
+            $result['errors'][] = 'This campaign is not linked to a Saleshandy sequence/step yet.';
+            return $result;
+        }
+
+        $campaignId = (int) $campaign['id'];
+        $rowsStmt = $db->prepare(
+            "SELECT a.id AS assignment_id, l.*, v.label AS vertical_label, s.label AS service_label
+               FROM lead_campaign_assignments a
+               JOIN leads l ON l.id = a.lead_id
+               LEFT JOIN verticals v ON v.id = l.vertical_id
+               LEFT JOIN services s ON s.id = l.service_id
+              WHERE a.campaign_id = ? AND a.wave_status = 'active' AND a.status != 'pushed'
+                AND l.deleted_at IS NULL
+                AND NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1))"
+        );
+        $rowsStmt->execute([$campaignId]);
+        $rows = $rowsStmt->fetchAll();
+
+        if (!$rows) {
+            return $result;
+        }
+
+        $leadsById = [];
+        $assignmentIdByLead = [];
+        foreach ($rows as $row) {
+            $leadsById[(int) $row['id']] = $row;
+            $assignmentIdByLead[(int) $row['id']] = (int) $row['assignment_id'];
+        }
+
+        $toVerify = [];
+        foreach ($leadsById as $leadId => $lead) {
+            if ($lead['email_verification_status'] === null) {
+                $toVerify[$leadId] = $lead['email'];
+            }
+        }
+        if ($toVerify) {
+            try {
+                $updateVerification = $db->prepare('UPDATE leads SET email_verification_status = ?, email_verification_checked_at = NOW() WHERE id = ?');
+                foreach (array_chunk($toVerify, 200, true) as $chunk) {
+                    $results = $this->checkVerificationStatus(array_values($chunk));
+                    foreach ($chunk as $leadId => $email) {
+                        $rawStatus = $results[strtolower($email)] ?? '';
+                        $updateVerification->execute([$rawStatus !== '' ? $rawStatus : null, $leadId]);
+                        $leadsById[$leadId]['email_verification_status'] = $rawStatus !== '' ? $rawStatus : null;
+                    }
+                }
+            } catch (SaleshandyApiException $ex) {
+                $result['verification_check_error'] = $ex->getMessage();
+            }
+        }
+
+        foreach ($leadsById as $leadId => $lead) {
+            $status = $lead['email_verification_status'];
+            if ($status === null) {
+                continue; // verification unavailable this run -- don't block on it
+            }
+            $tier = self::classifyVerificationTier($status);
+            if ($tier === 'bad') {
+                unset($leadsById[$leadId]);
+                $result['skipped_bad']++;
+            } elseif ($tier === 'risky' && !$includeRisky) {
+                unset($leadsById[$leadId]);
+                $result['skipped_risky']++;
+            }
+        }
+
+        if (!$leadsById) {
+            return $result;
+        }
+
+        $enabledMappings = $db->query(
+            'SELECT lead_field_key, saleshandy_label FROM saleshandy_field_mappings WHERE enabled = 1'
+        )->fetchAll();
+
+        $staleLabels = [];
+        try {
+            $knownLabels = array_filter(array_map(
+                static fn (array $f): string => trim((string) ($f['label'] ?? '')),
+                $this->listFields()
+            ));
+            $enabledMappings = array_values(array_filter($enabledMappings, static function (array $m) use ($knownLabels, &$staleLabels) {
+                if (in_array($m['saleshandy_label'], $knownLabels, true)) {
+                    return true;
+                }
+                $staleLabels[] = $m['saleshandy_label'];
+                return false;
+            }));
+        } catch (SaleshandyApiException $ex) {
+            // Fail open -- push with mappings as configured, unvalidated.
+        }
+        $result['stale_labels'] = array_unique($staleLabels);
+
+        $resolveValue = static function (array $lead, string $key): string {
+            if ($key === 'vertical') {
+                return (string) ($lead['vertical_label'] ?? '');
+            }
+            if ($key === 'service') {
+                return (string) ($lead['service_label'] ?? '');
+            }
+            return (string) ($lead[$key] ?? '');
+        };
+
+        $buildProspect = static function (array $lead) use ($enabledMappings, $resolveValue): array {
+            $prospect = [
+                'First Name' => (string) $lead['first_name'],
+                'Last Name' => (string) $lead['last_name'],
+                'Email' => (string) $lead['email'],
+            ];
+            foreach ($enabledMappings as $m) {
+                $value = $resolveValue($lead, $m['lead_field_key']);
+                if ($value !== '') {
+                    $prospect[$m['saleshandy_label']] = $value;
+                }
+            }
+            return $prospect;
+        };
+
+        $groups = TagRepository::groupLeadsByTagSet($db, array_keys($leadsById));
+
+        $updateStatus = $db->prepare(
+            "UPDATE lead_campaign_assignments
+                SET status = 'pushed', saleshandy_synced_at = NOW(), saleshandy_pushed_at = COALESCE(saleshandy_pushed_at, NOW())
+              WHERE id = ?"
+        );
+
+        foreach ($groups as $group) {
+            $prospectList = array_map(static fn (int $leadId): array => $buildProspect($leadsById[$leadId]), $group['lead_ids']);
+            try {
+                $this->pushProspects($campaign['saleshandy_step_id'], $prospectList, $group['tags']);
+                foreach ($group['lead_ids'] as $leadId) {
+                    $updateStatus->execute([$assignmentIdByLead[$leadId]]);
+                }
+                $result['pushed'] += count($group['lead_ids']);
+            } catch (SaleshandyApiException $ex) {
+                $result['errors'][] = $ex->getMessage();
+            }
+        }
+
+        return $result;
     }
 
     /**

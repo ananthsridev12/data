@@ -46,8 +46,9 @@ and import, in order:
 22. `sql/022_email_opens.sql`
 23. `sql/023_reply_sentiment.sql`
 24. `sql/024_send_events.sql`
+25. `sql/025_icp_segments.sql`
 
-(If you're setting up a brand-new site, import all twenty-four in order. If
+(If you're setting up a brand-new site, import all twenty-five in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -743,6 +744,76 @@ modal) so checkbox ids never collide across the multiple pickers on one
 page -- the sync logic itself lives in `assets/js/app.js`, matching any
 checkbox whose name starts with `title_picker` and writing into the
 `keywords` field of its own enclosing `<form>`.
+
+## ICP Segments (`public/icp_segments.php`)
+
+Builds on Role Groups: a named, reusable match rule for **one buyer
+persona** (company country, industry, seniority, employee count,
+vertical, service, and exactly one Role Group) linked to **2 or more
+campaigns with a percentage split**, for A/B testing the same persona
+across campaigns. A cron job (`public/icp_distribution_cron.php`)
+periodically finds newly-matching, never-before-assigned leads and
+distributes them across the linked campaigns according to the weights.
+`sql/025_icp_segments.sql` adds `icp_segments` + `icp_campaign_links`.
+
+**One ICP = one persona** (at most one Role Group) -- to target multiple
+personas, create multiple ICPs, each with its own campaign links. Match
+criteria are optional multi-value fields (company country/industry/
+seniority/employee count, comma-separated same as `role_groups.keywords`,
+parsed with `RoleGroupClassifier::parseKeywords()`) plus optional
+single-value Vertical/Service, mapped straight onto
+`LeadRepository::matchingIds()`'s existing filter keys
+(`IcpRepository::toFilters()`) -- no new filtering logic, just a new way
+to save and reuse a filter combination.
+
+**Percentages must sum to exactly 100 to run.** This isn't enforced as a
+hard block on activating an ICP (ordering an ICP's own creation before
+its links exist would make that awkward) -- instead, an ICP whose links
+don't currently sum to 100 is simply skipped by the cron every run until
+fixed, shown on the page as a "Not running -- links sum to N%, needs
+100%" warning badge rather than treated as an error.
+
+**Split happens per individual lead** (weighted random, via
+`IcpRepository::splitLeadIds()` -- shuffle the matching pool, then slice
+by cumulative percentage boundaries, last link absorbing any rounding
+remainder so every lead lands in exactly one bucket), **not per
+company/domain.** This deliberately does *not* need new domain-safety
+logic: the existing `WaveAssigner::filterEligibleForCampaign()`
+"already elsewhere"/"pending elsewhere" checks (used by every campaign
+assignment in this app already) already enforce "don't touch a second
+persona at a company until the first one's status is known," *globally
+across campaigns* -- so if two personas at one company land in different
+buckets during a split, the second is correctly held back automatically,
+exactly the same as if they'd been added to two different campaigns by
+hand on two different days. Verified end-to-end: a same-company pair
+split across two campaigns in one run left only one of them with any
+assignment row at all; the other was cleanly skipped as "pending
+elsewhere" rather than double-sent.
+
+**Auto-push to Saleshandy is a per-ICP checkbox** (`auto_push_enabled`),
+not a global setting. If checked, the cron also pushes newly-assigned
+leads to their campaign's Saleshandy sequence immediately after
+distributing them; if unchecked (the default), the cron only assigns --
+an admin still reviews and clicks each campaign's own "Push to
+Saleshandy" button manually, same as every other campaign.
+
+**Push logic is now shared, not duplicated.** The eligibility query,
+email-verification filtering, field-mapping staleness check, and
+tag-grouped `pushProspects()` calls that used to live only inline in
+`campaign_saleshandy_push.php` are now `SaleshandyClient::pushCampaignLeads()`
+-- called both by that admin-triggered endpoint (now a thin wrapper) and
+by the cron's optional auto-push. Manual push behavior is unchanged;
+this was a pure extraction, verified by confirming identical flash-message
+output before/after against a fake Saleshandy client.
+
+**Cron setup** -- same shared-secret token convention as the existing
+Saleshandy sync cron, reusing `$config['saleshandy']['cron_token']`:
+```
+wget -q -O /dev/null "https://yoursite.com/icp_distribution_cron.php?token=YOUR_CRON_TOKEN"
+```
+Add as a separate cPanel Cron Job entry alongside `cron_saleshandy_sync.php`
+(a few-hours interval is reasonable -- there's no benefit to running it
+more often than leads actually get imported).
 
 ## Notes on the Saleshandy CSV export
 
