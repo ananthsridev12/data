@@ -41,6 +41,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = (int) ($_POST['id'] ?? 0);
         db()->prepare('UPDATE role_groups SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
         flash_set('success', 'Status updated.');
+    } elseif ($action === 'add_keyword') {
+        // One-click helper for the "Unclassified titles" list below --
+        // appends the exact title text as a new keyword rather than
+        // requiring copy/paste into the Edit modal's textarea. Does not
+        // reclassify by itself (same as editing keywords directly) --
+        // "Reclassify all leads now" still applies it.
+        $id = (int) ($_POST['id'] ?? 0);
+        $keyword = trim((string) ($_POST['keyword'] ?? ''));
+        $stmt = db()->prepare('SELECT label, keywords FROM role_groups WHERE id = ?');
+        $stmt->execute([$id]);
+        $rg = $stmt->fetch();
+        if (!$rg || $keyword === '') {
+            flash_set('danger', 'Could not add keyword.');
+        } else {
+            $existing = RoleGroupClassifier::parseKeywords($rg['keywords'] ?? '');
+            if (in_array($keyword, $existing, true)) {
+                flash_set('info', "\"{$keyword}\" is already a keyword on \"{$rg['label']}\".");
+            } else {
+                $existing[] = $keyword;
+                db()->prepare('UPDATE role_groups SET keywords = ? WHERE id = ?')
+                    ->execute([implode(', ', $existing), $id]);
+                flash_set('success', "\"{$keyword}\" added to \"{$rg['label']}\" -- run \"Reclassify all leads now\" below to apply it.");
+            }
+        }
     }
 
     header('Location: role_groups.php');
@@ -48,7 +72,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $roleGroups = db()->query('SELECT * FROM role_groups ORDER BY label')->fetchAll();
+$activeRoleGroups = array_values(array_filter($roleGroups, static fn (array $rg): bool => (bool) $rg['is_active']));
 $unclassifiedCount = (int) db()->query("SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND role_group_id IS NULL AND title IS NOT NULL AND title != ''")->fetchColumn();
+// Distinct unclassified titles, most common first -- so mapping effort
+// goes to the titles affecting the most leads first, and the raw text
+// is right there to copy/pick into an active group's keywords via the
+// one-click "Add as keyword" action below, instead of just a count.
+$unclassifiedTitles = db()->query(
+    "SELECT title, COUNT(*) AS cnt FROM leads
+      WHERE deleted_at IS NULL AND role_group_id IS NULL AND title IS NOT NULL AND title != ''
+      GROUP BY title ORDER BY cnt DESC, title LIMIT 200"
+)->fetchAll();
 // Every distinct title already in the leads table -- lets an admin pick
 // from real data via the checkbox dropdown below instead of guessing
 // keyword phrases blind. Same source/widget already used for Dashboard's
@@ -156,6 +190,50 @@ render_header('Role Groups');
   <?php endif; ?>
   </tbody>
 </table>
+
+<div class="card mb-4">
+  <div class="card-header">
+    Unclassified titles
+    <?= info_icon('Every distinct title currently NOT matching any active role group\'s keywords, most common first. Pick an active group and click "Add" to append that exact title as a new keyword -- then run "Reclassify all leads now" below to apply it to these leads.') ?>
+  </div>
+  <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+    <table class="table table-sm mb-0">
+      <thead class="sticky-top bg-white"><tr><th>Title</th><th class="text-end">Leads</th><th style="width: 320px;">Add as keyword to&hellip;</th></tr></thead>
+      <tbody>
+        <?php foreach ($unclassifiedTitles as $row): ?>
+          <tr>
+            <td><?= e($row['title']) ?></td>
+            <td class="text-end"><?= number_format($row['cnt']) ?></td>
+            <td>
+              <?php if ($activeRoleGroups): ?>
+                <form method="post" action="role_groups.php" class="d-flex gap-1">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="add_keyword">
+                  <input type="hidden" name="keyword" value="<?= e($row['title']) ?>">
+                  <select name="id" class="form-select form-select-sm" required>
+                    <option value="">Pick a role group...</option>
+                    <?php foreach ($activeRoleGroups as $rg): ?>
+                      <option value="<?= (int) $rg['id'] ?>"><?= e($rg['label']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                  <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">Add</button>
+                </form>
+              <?php else: ?>
+                <span class="text-muted small">No active role groups yet.</span>
+              <?php endif; ?>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+        <?php if (!$unclassifiedTitles): ?>
+          <tr><td colspan="3" class="text-center text-muted py-3">Every title is currently classified.</td></tr>
+        <?php endif; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php if (count($unclassifiedTitles) === 200): ?>
+    <div class="card-body py-2 text-muted small border-top">Showing the 200 most common unclassified titles -- there may be more further down the tail.</div>
+  <?php endif; ?>
+</div>
 
 <div class="card mb-4 border-info">
   <div class="card-header">Reclassify existing leads</div>

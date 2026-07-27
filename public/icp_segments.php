@@ -83,6 +83,19 @@ foreach ($icps as $icp) {
     $linksByIcp[(int) $icp['id']] = IcpRepository::links(db(), (int) $icp['id']);
 }
 
+// Active Role Groups (personas) with zero ICPs referencing them at all
+// yet (not just zero *active* ones -- even an unfinished draft ICP still
+// counts as "started"), most classified leads first -- so the gap most
+// worth closing shows up on top instead of just a flat A-Z list.
+$unmappedPersonas = db()->query(
+    "SELECT rg.id, rg.label,
+        (SELECT COUNT(*) FROM leads l WHERE l.role_group_id = rg.id AND l.deleted_at IS NULL) AS lead_count
+       FROM role_groups rg
+      WHERE rg.is_active = 1
+        AND NOT EXISTS (SELECT 1 FROM icp_segments icp WHERE icp.role_group_id = rg.id)
+      ORDER BY lead_count DESC, rg.label"
+)->fetchAll();
+
 render_header('ICP Segments');
 ?>
 <h1 class="h4 mb-3">ICP Segments</h1>
@@ -95,17 +108,40 @@ render_header('ICP Segments');
   simply skipped by the cron until fixed, not treated as an error.
 </p>
 
-<div class="card mb-4">
+<?php if ($unmappedPersonas): ?>
+<div class="card mb-4 border-warning">
+  <div class="card-header">
+    Personas without an ICP yet
+    <?= info_icon('Active Role Groups that have no ICP built for them at all, most classified leads first. These personas are being recognized on import but nothing is targeting them via a campaign split -- click "Create ICP" to jump to the Add form with this persona pre-selected.') ?>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Role Group (persona)</th><th class="text-end">Leads classified</th><th style="width: 140px;"></th></tr></thead>
+      <tbody>
+        <?php foreach ($unmappedPersonas as $p): ?>
+          <tr>
+            <td><?= e($p['label']) ?></td>
+            <td class="text-end"><?= number_format($p['lead_count']) ?></td>
+            <td><a href="#addIcpForm" class="btn btn-sm btn-outline-warning" onclick="document.getElementById('addIcpRoleGroup').value='<?= (int) $p['id'] ?>'; document.getElementById('addIcpName').focus();">Create ICP</a></td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+<?php endif; ?>
+
+<div class="card mb-4" id="addIcpForm">
   <div class="card-header">Add an ICP segment</div>
   <div class="card-body">
     <form method="post" action="icp_segments.php" class="row g-2">
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="create">
       <div class="col-md-3">
-        <input type="text" name="name" class="form-control form-control-sm" placeholder="Name, e.g. Healthcare CFOs" required>
+        <input type="text" name="name" id="addIcpName" class="form-control form-control-sm" placeholder="Name, e.g. Healthcare CFOs" required>
       </div>
       <div class="col-md-2">
-        <select name="role_group_id" class="form-select form-select-sm" required>
+        <select name="role_group_id" id="addIcpRoleGroup" class="form-select form-select-sm" required>
           <option value="">Role Group (persona)...</option>
           <?php foreach ($roleGroups as $rg): ?>
             <option value="<?= (int) $rg['id'] ?>"><?= e($rg['label']) ?></option>

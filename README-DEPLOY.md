@@ -745,6 +745,31 @@ page -- the sync logic itself lives in `assets/js/app.js`, matching any
 checkbox whose name starts with `title_picker` and writing into the
 `keywords` field of its own enclosing `<form>`.
 
+**"Unclassified titles" list** -- below the role groups table, every
+distinct `title` currently matching *no* active group's keywords,
+grouped and sorted by how many leads carry it (most-affecting first,
+capped at 200 distinct titles). Each row has a "Pick a role group... +
+Add" mini-form (`action=add_keyword`) that appends that exact title text
+as a new keyword on the chosen group -- a one-click alternative to
+copy/pasting into the Edit modal's textarea for the common case of "I
+can see the title, I just want to map it." Duplicate-safe (adding a
+title already present in that group's keywords is a no-op with an info
+flash, not a duplicate entry). Same as editing keywords directly, this
+doesn't reclassify by itself -- **"Reclassify all leads now" still needs
+a click** to apply it to leads already in the system.
+
+## ICP Segments: "Personas without an ICP yet"
+
+On `icp_segments.php`, above the Add form: every *active* Role Group
+that has zero ICPs referencing it at all (not just zero active ones --
+even an unfinished draft still counts as "started"), sorted by how many
+leads are already classified into that persona. Surfaces personas that
+are being recognized on import but aren't being targeted by any
+campaign split yet. Each row's "Create ICP" button jumps to the Add
+form with that Role Group pre-selected (`document.getElementById(...)
+.value = ...`, no page reload) rather than requiring the admin to
+re-find it in the dropdown.
+
 ## ICP Segments (`public/icp_segments.php`)
 
 Builds on Role Groups: a named, reusable match rule for **one buyer
