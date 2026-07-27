@@ -76,11 +76,12 @@ $fetchAssignments = static function (array $whereClauses, array $whereParams, ?i
 
     $limitSql = $limit !== null ? "LIMIT {$limit} OFFSET {$offset}" : '';
     $stmt = db()->prepare(
-        "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email, l.email_verification_status, rg.label AS role_group_label, u.name AS assigned_by_name
+        "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email, l.email_verification_status, rg.label AS role_group_label, cg.label AS country_group_label, u.name AS assigned_by_name
            FROM lead_campaign_assignments a
            JOIN leads l ON l.id = a.lead_id
            JOIN users u ON u.id = a.assigned_by
            LEFT JOIN role_groups rg ON rg.id = l.role_group_id
+           LEFT JOIN country_groups cg ON cg.id = l.country_group_id
           {$where}
           ORDER BY a.assigned_at DESC
           {$limitSql}"
@@ -358,6 +359,7 @@ render_header('Campaign leads');
           case 'contact': ?><td><?= e($a['first_name'] . ' ' . $a['last_name']) ?></td><?php break;
           case 'email': ?><td><?= e($a['email']) ?></td><?php break;
           case 'role_group': ?><td><?= e($a['role_group_label'] ?? '') ?></td><?php break;
+          case 'country_group': ?><td><?= e($a['country_group_label'] ?? '') ?></td><?php break;
           case 'wave': ?>
               <td>
                 <?php $waveBadge = ['active' => 'success', 'held' => 'warning', 'suppressed' => 'danger']; ?>

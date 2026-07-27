@@ -13,12 +13,14 @@ class IcpRepository
     {
         $rows = $db->query(
             "SELECT icp.*, rg.label AS role_group_label, v.label AS vertical_label, s.label AS service_label,
+                    cg.label AS country_group_label,
                     (SELECT COUNT(*) FROM icp_campaign_links l WHERE l.icp_id = icp.id) AS link_count,
                     (SELECT COALESCE(SUM(l.percentage), 0) FROM icp_campaign_links l WHERE l.icp_id = icp.id) AS percentage_total
                FROM icp_segments icp
                LEFT JOIN role_groups rg ON rg.id = icp.role_group_id
                LEFT JOIN verticals v ON v.id = icp.vertical_id
                LEFT JOIN services s ON s.id = icp.service_id
+               LEFT JOIN country_groups cg ON cg.id = icp.country_group_id
               ORDER BY icp.name"
         )->fetchAll();
 
@@ -78,11 +80,11 @@ class IcpRepository
     {
         $stmt = $db->prepare(
             'INSERT INTO icp_segments
-                (name, role_group_id, vertical_id, service_id, company_country, industry, seniority, employee_count, auto_push_enabled, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
-            $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null,
+            $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
             !empty($data['auto_push_enabled']) ? 1 : 0, $userId,
         ]);
@@ -94,12 +96,12 @@ class IcpRepository
     {
         $stmt = $db->prepare(
             'UPDATE icp_segments
-                SET name = ?, role_group_id = ?, vertical_id = ?, service_id = ?,
+                SET name = ?, role_group_id = ?, vertical_id = ?, service_id = ?, country_group_id = ?,
                     company_country = ?, industry = ?, seniority = ?, employee_count = ?, auto_push_enabled = ?
               WHERE id = ?'
         );
         $stmt->execute([
-            $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null,
+            $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
             !empty($data['auto_push_enabled']) ? 1 : 0, $id,
         ]);
@@ -148,6 +150,7 @@ class IcpRepository
             'vertical_id' => $icp['vertical_id'] ?: '',
             'service_id' => $icp['service_id'] ?: '',
             'role_group_id' => $icp['role_group_id'] ?: '',
+            'country_group_id' => $icp['country_group_id'] ?: '',
             'assigned_campaign_id' => 'none',
         ];
     }

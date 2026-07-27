@@ -36,6 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         'vertical_id' => $rawFilters['vertical_id'] ?? '',
         'service_id' => $rawFilters['service_id'] ?? '',
         'role_group_id' => $rawFilters['role_group_id'] ?? '',
+        'country_group_id' => $rawFilters['country_group_id'] ?? '',
         'campaign_id' => $campaignId,
         'hide_used_in_campaign' => !empty($rawFilters['hide_used_in_campaign']),
         'pending_elsewhere' => $rawFilters['pending_elsewhere'] ?? '',
@@ -50,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
     $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
         || $filters['title'] || $filters['seniority'] || $filters['departments']
         || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count_range']
-        || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== ''
+        || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== '' || $filters['country_group_id'] !== ''
         || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
     if (!$hasRealFilter) {
         flash_set('danger', 'Apply at least one filter before saving a selection -- an unfiltered selection would match every lead in the system.');
@@ -162,6 +163,7 @@ $filters = [
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
     'role_group_id' => trim((string) ($_GET['role_group_id'] ?? '')),
+    'country_group_id' => trim((string) ($_GET['country_group_id'] ?? '')),
     'campaign_id' => $campaignId,
     'hide_used_in_campaign' => !isset($_GET['hide_used_in_campaign']) || $_GET['hide_used_in_campaign'] === '1',
     'pending_elsewhere' => trim((string) ($_GET['pending_elsewhere'] ?? '')),
@@ -178,7 +180,7 @@ $filters = [
 $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
     || $filters['title'] || $filters['seniority'] || $filters['departments']
     || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count_range']
-    || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== ''
+    || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== '' || $filters['country_group_id'] !== ''
     || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
 
 if ($hasRealFilter) {
@@ -204,6 +206,7 @@ $employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
 $roleGroups = LeadRepository::activeLookupOptions(db(), 'role_groups');
+$countryGroups = LeadRepository::activeLookupOptions(db(), 'country_groups');
 $existingTags = TagRepository::all(db());
 
 render_header('Select leads');
@@ -274,6 +277,15 @@ render_header('Select leads');
         <option value="">All</option>
         <?php foreach ($roleGroups as $rg): ?>
           <option value="<?= (int) $rg['id'] ?>" <?= (string) $filters['role_group_id'] === (string) $rg['id'] ? 'selected' : '' ?>><?= e($rg['label']) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted mb-0">Country Group</label>
+      <select name="country_group_id" class="form-select form-select-sm">
+        <option value="">All</option>
+        <?php foreach ($countryGroups as $cg): ?>
+          <option value="<?= (int) $cg['id'] ?>" <?= (string) $filters['country_group_id'] === (string) $cg['id'] ? 'selected' : '' ?>><?= e($cg['label']) ?></option>
         <?php endforeach; ?>
       </select>
     </div>

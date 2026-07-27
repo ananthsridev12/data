@@ -18,6 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'role_group_id' => (int) ($_POST['role_group_id'] ?? 0) ?: null,
             'vertical_id' => (int) ($_POST['vertical_id'] ?? 0) ?: null,
             'service_id' => (int) ($_POST['service_id'] ?? 0) ?: null,
+            'country_group_id' => (int) ($_POST['country_group_id'] ?? 0) ?: null,
             'company_country' => implode(', ', (array) ($_POST['company_country'] ?? [])),
             'industry' => implode(', ', (array) ($_POST['industry'] ?? [])),
             'seniority' => implode(', ', (array) ($_POST['seniority'] ?? [])),
@@ -72,6 +73,7 @@ $icps = IcpRepository::list(db());
 $roleGroups = LeadRepository::activeLookupOptions(db(), 'role_groups');
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
+$countryGroups = LeadRepository::activeLookupOptions(db(), 'country_groups');
 $campaigns = db()->query("SELECT id, name FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL ORDER BY name")->fetchAll();
 
 $companyCountries = LeadRepository::distinctValues(db(), 'company_country');
@@ -165,6 +167,14 @@ render_header('ICP Segments');
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="col-md-2">
+        <select name="country_group_id" class="form-select form-select-sm">
+          <option value="">Country Group (any)</option>
+          <?php foreach ($countryGroups as $cg): ?>
+            <option value="<?= (int) $cg['id'] ?>"><?= e($cg['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
       <div class="col-md-3 form-check pt-2">
         <input class="form-check-input" type="checkbox" name="auto_push_enabled" value="1" id="autoPushNew">
         <label class="form-check-label small" for="autoPushNew">Auto-push to Saleshandy after assignment</label>
@@ -217,6 +227,7 @@ render_header('ICP Segments');
         Persona: <strong><?= e($icp['role_group_label'] ?? 'Unclassified') ?></strong>
         <?php if ($icp['vertical_label']): ?> | Vertical: <?= e($icp['vertical_label']) ?><?php endif; ?>
         <?php if ($icp['service_label']): ?> | Service: <?= e($icp['service_label']) ?><?php endif; ?>
+        <?php if ($icp['country_group_label']): ?> | Country Group: <?= e($icp['country_group_label']) ?><?php endif; ?>
         <?php if ($icp['company_country']): ?> | Country: <?= e($icp['company_country']) ?><?php endif; ?>
         <?php if ($icp['industry']): ?> | Industry: <?= e($icp['industry']) ?><?php endif; ?>
         <?php if ($icp['seniority']): ?> | Seniority: <?= e($icp['seniority']) ?><?php endif; ?>
@@ -308,6 +319,15 @@ render_header('ICP Segments');
                 <option value="">Any</option>
                 <?php foreach ($services as $s): ?>
                   <option value="<?= (int) $s['id'] ?>" <?= (int) $icp['service_id'] === (int) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small">Country Group</label>
+              <select name="country_group_id" class="form-select form-select-sm">
+                <option value="">Any</option>
+                <?php foreach ($countryGroups as $cg): ?>
+                  <option value="<?= (int) $cg['id'] ?>" <?= (int) $icp['country_group_id'] === (int) $cg['id'] ? 'selected' : '' ?>><?= e($cg['label']) ?></option>
                 <?php endforeach; ?>
               </select>
             </div>

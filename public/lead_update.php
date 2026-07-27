@@ -22,8 +22,9 @@ if ($leadId <= 0) {
 $verticalId = ($_POST['vertical_id'] ?? '') !== '' ? (int) $_POST['vertical_id'] : null;
 $serviceId = ($_POST['service_id'] ?? '') !== '' ? (int) $_POST['service_id'] : null;
 $roleGroupId = ($_POST['role_group_id'] ?? '') !== '' ? (int) $_POST['role_group_id'] : null;
+$countryGroupId = ($_POST['country_group_id'] ?? '') !== '' ? (int) $_POST['country_group_id'] : null;
 
-foreach (['vertical_id' => ['verticals', $verticalId], 'service_id' => ['services', $serviceId], 'role_group_id' => ['role_groups', $roleGroupId]] as [$table, $valueId]) {
+foreach (['vertical_id' => ['verticals', $verticalId], 'service_id' => ['services', $serviceId], 'role_group_id' => ['role_groups', $roleGroupId], 'country_group_id' => ['country_groups', $countryGroupId]] as [$table, $valueId]) {
     if ($valueId === null) {
         continue;
     }
@@ -36,8 +37,8 @@ foreach (['vertical_id' => ['verticals', $verticalId], 'service_id' => ['service
     }
 }
 
-db()->prepare('UPDATE leads SET vertical_id = ?, service_id = ?, role_group_id = ? WHERE id = ?')
-    ->execute([$verticalId, $serviceId, $roleGroupId, $leadId]);
+db()->prepare('UPDATE leads SET vertical_id = ?, service_id = ?, role_group_id = ?, country_group_id = ? WHERE id = ?')
+    ->execute([$verticalId, $serviceId, $roleGroupId, $countryGroupId, $leadId]);
 
 flash_set('success', 'Lead updated.');
 header('Location: ' . $returnTo);

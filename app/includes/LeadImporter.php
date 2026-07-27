@@ -5,6 +5,7 @@ require_once __DIR__ . '/../vendor/simplexlsx/SimpleXLSX.php';
 require_once __DIR__ . '/TagRepository.php';
 require_once __DIR__ . '/RoleGroupClassifier.php';
 require_once __DIR__ . '/EmployeeCountRangeClassifier.php';
+require_once __DIR__ . '/CountryGroupClassifier.php';
 
 use Shuchkin\SimpleXLSX;
 
@@ -176,6 +177,7 @@ class LeadImporter
         // group with a keyword hit wins. Loaded once per chunk, not per
         // row, since role group rules don't change mid-import.
         $roleGroups = $db->query('SELECT id, keywords FROM role_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
+        $countryGroups = $db->query('SELECT id, countries FROM country_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
 
         $columns = array_keys(LEAD_FIELDS);
         $extraColumns = array_map(static fn(array $f) => $f['fk_column'], LOOKUP_FIELDS);
@@ -183,9 +185,9 @@ class LeadImporter
         // unmatched title must never error the row the way an unrecognized
         // Vertical/Service value does (see RoleGroupClassifier's docblock),
         // it just classifies to null ("Unclassified"). employee_count_range
-        // is the same idea applied to employee_count -- a derived, coarser
-        // bucket that never blocks the row.
-        $allColumns = array_merge($columns, $extraColumns, ['role_group_id', 'employee_count_range']);
+        // and country_group_id are the same idea applied to employee_count/
+        // company_country -- derived, coarser buckets that never block the row.
+        $allColumns = array_merge($columns, $extraColumns, ['role_group_id', 'employee_count_range', 'country_group_id']);
         $placeholders = implode(', ', array_fill(0, count($allColumns), '?'));
         $updateClause = implode(', ', array_map(
             static fn($c) => "{$c} = VALUES({$c})",
@@ -331,6 +333,7 @@ class LeadImporter
             }
             $values[] = RoleGroupClassifier::classify($data['title'] ?? null, $roleGroups);
             $values[] = EmployeeCountRangeClassifier::classify($data['employee_count'] ?? null);
+            $values[] = CountryGroupClassifier::classify($data['company_country'] ?? null, $countryGroups);
             $values[] = $batchId;
 
             $stmt->execute($values);

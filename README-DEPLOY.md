@@ -48,8 +48,9 @@ and import, in order:
 24. `sql/024_send_events.sql`
 25. `sql/025_icp_segments.sql`
 26. `sql/026_employee_count_range.sql`
+27. `sql/027_country_groups.sql`
 
-(If you're setting up a brand-new site, import all twenty-six in order. If
+(If you're setting up a brand-new site, import all twenty-seven in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -792,6 +793,51 @@ wrong). Bulk actions that re-apply Dashboard's current filter (bulk
 tag, bulk delete, CSV export) were updated to match the renamed filter
 key -- worth checking for if any other page ever adds its own copy of
 Dashboard's filter-rebuilding pattern in the future.
+
+## Country Groups (`public/country_groups.php`)
+
+Buckets `leads.company_country` into a small set of admin-defined regional
+groups (e.g. for grouping by rough send-time region/timezone) instead of
+one checkbox per exact country string. Structurally the same pattern as
+Role Groups (`sql/027_country_groups.sql`: `country_groups` table --
+`code`, `label`, `countries` TEXT, `is_active` -- plus a nullable
+`leads.country_group_id` FK), **except matching is exact, not
+substring** (`CountryGroupClassifier::classify()`) -- country names are
+standardized enough that substring matching risked over-matching short
+codes (a substring match on "US" would also hit "USA", "Belarus",
+"Australia", etc.), unlike free-text job titles. A value must exactly
+equal (case-insensitive) an entry in a group's comma-separated country
+list to match; list every spelling variant you expect to see (e.g. both
+"USA" and "United States").
+
+**No CSV import** for this one (unlike Role Groups) -- the user
+explicitly didn't want it, groups are few and edited directly on the
+page.
+
+**Seeded with 4 starting groups** (editable/expandable afterward, not
+fixed like Employee Count Ranges):
+- Americas: United States, USA, US, Canada, Brazil, Mexico, Argentina, Chile, Colombia, Peru, Ecuador, Uruguay, Costa Rica, Panama
+- UK, Ireland & Europe: United Kingdom, UK, England, Scotland, Wales, Northern Ireland, Ireland, Germany, France, Spain, Italy, Netherlands, Belgium, Switzerland, Sweden, Norway, Denmark, Finland, Poland, Austria, Portugal, Greece, Czech Republic, Romania, Hungary, Ukraine
+- India & Asia: India, Singapore, Japan, China, Hong Kong, South Korea, Malaysia, Indonesia, Philippines, Thailand, Vietnam, Taiwan, UAE, United Arab Emirates, Saudi Arabia, Israel, Pakistan, Bangladesh, Sri Lanka
+- Australia & Oceania: Australia, New Zealand
+
+These were proposed without visibility into the real `company_country`
+data in this account -- the **"Unmapped countries" list** on
+`country_groups.php` (same pattern as Role Groups' "Unclassified
+titles": distinct unmapped values, most common first, one-click "Add
+to..." per row) is the fast way to see exactly what's actually in the
+data and expand/correct the seed lists accordingly, then run
+"Reclassify all leads now" (`lead_reclassify_country_groups.php`).
+
+Computed automatically on import (`LeadImporter.php`, same
+never-blocks-the-row pattern as `role_group_id`/`employee_count_range`).
+Available as a filter on Dashboard and Add Leads to Campaign
+(`campaign_select_leads.php`, single-select alongside the existing
+Role Group filter), and as an **additional, optional** single-select
+criterion on ICP Segments (`icp_segments.country_group_id`) -- alongside,
+not replacing, the existing multi-value `company_country` text-list
+criterion, so an ICP can target a whole region or specific countries or
+both.
 
 ## Role Groups: CSV import
 
