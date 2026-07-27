@@ -76,11 +76,31 @@ $activeCountryGroups = array_values(array_filter($countryGroups, static fn (arra
 $unmappedCount = (int) db()->query("SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND country_group_id IS NULL AND company_country IS NOT NULL AND company_country != ''")->fetchColumn();
 // Distinct unmapped company_country values, most common first -- so
 // mapping effort goes to the countries affecting the most leads first.
-$unmappedCountries = db()->query(
+//
+// country_group_id IS NULL alone isn't enough: a country already listed
+// on an active group still has country_group_id = NULL on rows
+// imported/edited before "Reclassify all leads now" was last run, which
+// would otherwise make an already-mapped country keep reappearing here
+// until that button is clicked. Re-run the real classifier against each
+// candidate and only list the ones that genuinely don't match anything --
+// using the same id-ordered group list (first match wins) that
+// LeadImporter/lead_reclassify_country_groups.php actually classify
+// with, not the label-ordered $activeCountryGroups used for display.
+$classifyOrderCountryGroups = db()->query('SELECT id, countries FROM country_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
+$unmappedCountriesCandidates = db()->query(
     "SELECT company_country, COUNT(*) AS cnt FROM leads
       WHERE deleted_at IS NULL AND country_group_id IS NULL AND company_country IS NOT NULL AND company_country != ''
-      GROUP BY company_country ORDER BY cnt DESC, company_country LIMIT 200"
+      GROUP BY company_country ORDER BY cnt DESC, company_country"
 )->fetchAll();
+$unmappedCountries = [];
+foreach ($unmappedCountriesCandidates as $row) {
+    if (CountryGroupClassifier::classify($row['company_country'], $classifyOrderCountryGroups) === null) {
+        $unmappedCountries[] = $row;
+        if (count($unmappedCountries) >= 200) {
+            break;
+        }
+    }
+}
 
 render_header('Country Groups');
 ?>

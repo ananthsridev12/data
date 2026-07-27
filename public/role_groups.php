@@ -157,11 +157,31 @@ $unclassifiedCount = (int) db()->query("SELECT COUNT(*) FROM leads WHERE deleted
 // goes to the titles affecting the most leads first, and the raw text
 // is right there to copy/pick into an active group's keywords via the
 // one-click "Add as keyword" action below, instead of just a count.
-$unclassifiedTitles = db()->query(
+//
+// role_group_id IS NULL alone isn't enough: a title already covered by
+// an active group's keywords still has role_group_id = NULL on rows
+// imported/edited before "Reclassify all leads now" was last run, which
+// would otherwise make an already-mapped title keep reappearing here
+// until that button is clicked. Re-run the real classifier against each
+// candidate and only list the ones that genuinely don't match anything --
+// using the same id-ordered group list (first match wins) that
+// LeadImporter/lead_reclassify_roles.php actually classify with, not the
+// label-ordered $activeRoleGroups used for this page's own display.
+$classifyOrderRoleGroups = db()->query('SELECT id, keywords FROM role_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
+$unclassifiedTitlesCandidates = db()->query(
     "SELECT title, COUNT(*) AS cnt FROM leads
       WHERE deleted_at IS NULL AND role_group_id IS NULL AND title IS NOT NULL AND title != ''
-      GROUP BY title ORDER BY cnt DESC, title LIMIT 200"
+      GROUP BY title ORDER BY cnt DESC, title"
 )->fetchAll();
+$unclassifiedTitles = [];
+foreach ($unclassifiedTitlesCandidates as $row) {
+    if (RoleGroupClassifier::classify($row['title'], $classifyOrderRoleGroups) === null) {
+        $unclassifiedTitles[] = $row;
+        if (count($unclassifiedTitles) >= 200) {
+            break;
+        }
+    }
+}
 // Every distinct title already in the leads table -- lets an admin pick
 // from real data via the checkbox dropdown below instead of guessing
 // keyword phrases blind. Same source/widget already used for Dashboard's
