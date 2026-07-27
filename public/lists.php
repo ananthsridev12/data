@@ -98,4 +98,19 @@ $renderTable = static function (string $type, string $title, array $rows): void 
   <?php $renderTable('vertical', 'Verticals', $verticals); ?>
   <?php $renderTable('service', 'Services', $services); ?>
 </div>
+
+<div class="card mb-4">
+  <div class="card-header">
+    Employee Count Ranges
+    <?= info_icon('leads.employee_count keeps the exact number as imported; leads.employee_count_range buckets it into a standard band (1-10, 11-50, 51-200, 201-500, 501-1,000, 1,001-5,000, 5,001-10,000, 10,001+) for filtering and ICP criteria, where the exact number is too granular to be a useful checkbox list. Computed automatically on import -- this button only re-applies it to leads already in the system (e.g. after a data fix, or the first time after this feature was added).') ?>
+  </div>
+  <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+    <form method="post" action="lead_recalculate_employee_ranges.php" onsubmit="return confirm('Recalculate the employee count range for every lead with an employee count? This may take a moment for a large leads table.');">
+      <?= csrf_field() ?>
+      <button type="submit" class="btn btn-sm btn-outline-secondary">Recalculate employee count ranges</button>
+    </form>
+    <span class="text-muted small">Fixed bands, not admin-editable -- see <code>EmployeeCountRangeClassifier.php</code>.</span>
+  </div>
+</div>
+
 <?php render_footer(); ?>

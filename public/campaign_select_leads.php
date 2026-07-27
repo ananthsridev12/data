@@ -3,6 +3,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 require_once __DIR__ . '/../app/includes/TagRepository.php';
+require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
 
 $user = require_login();
 
@@ -31,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         'industry' => (array) ($rawFilters['industry'] ?? []),
         'country' => (array) ($rawFilters['country'] ?? []),
         'company_country' => (array) ($rawFilters['company_country'] ?? []),
-        'employee_count' => (array) ($rawFilters['employee_count'] ?? []),
+        'employee_count_range' => (array) ($rawFilters['employee_count_range'] ?? []),
         'vertical_id' => $rawFilters['vertical_id'] ?? '',
         'service_id' => $rawFilters['service_id'] ?? '',
         'role_group_id' => $rawFilters['role_group_id'] ?? '',
@@ -48,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
     // from a single click. Require a filter rather than allow that.
     $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
         || $filters['title'] || $filters['seniority'] || $filters['departments']
-        || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count']
+        || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count_range']
         || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== ''
         || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
     if (!$hasRealFilter) {
@@ -157,7 +158,7 @@ $filters = [
     'industry' => $multiParam('industry'),
     'country' => $multiParam('country'),
     'company_country' => $multiParam('company_country'),
-    'employee_count' => $multiParam('employee_count'),
+    'employee_count_range' => $multiParam('employee_count_range'),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
     'role_group_id' => trim((string) ($_GET['role_group_id'] ?? '')),
@@ -176,7 +177,7 @@ $filters = [
 // an otherwise-unfiltered scan.
 $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
     || $filters['title'] || $filters['seniority'] || $filters['departments']
-    || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count']
+    || $filters['industry'] || $filters['country'] || $filters['company_country'] || $filters['employee_count_range']
     || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== ''
     || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
 
@@ -199,7 +200,7 @@ $departmentOptions = LeadRepository::distinctValues(db(), 'departments');
 $industries = LeadRepository::distinctValues(db(), 'industry');
 $countries = LeadRepository::distinctValues(db(), 'country');
 $companyCountries = LeadRepository::distinctValues(db(), 'company_country');
-$employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
+$employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
 $roleGroups = LeadRepository::activeLookupOptions(db(), 'role_groups');
@@ -246,7 +247,7 @@ render_header('Select leads');
       <?php render_multiselect_filter('company_country', 'Company Country', $companyCountries, $filters['company_country']); ?>
     </div>
     <div class="col-md-1">
-      <?php render_multiselect_filter('employee_count', 'Size', $employeeCounts, $filters['employee_count']); ?>
+      <?php render_multiselect_filter('employee_count_range', 'Size', $employeeCountRanges, $filters['employee_count_range']); ?>
     </div>
     <div class="col-md-2">
       <select name="vertical_id" class="form-select form-select-sm">

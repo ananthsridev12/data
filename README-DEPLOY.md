@@ -47,8 +47,9 @@ and import, in order:
 23. `sql/023_reply_sentiment.sql`
 24. `sql/024_send_events.sql`
 25. `sql/025_icp_segments.sql`
+26. `sql/026_employee_count_range.sql`
 
-(If you're setting up a brand-new site, import all twenty-five in order. If
+(If you're setting up a brand-new site, import all twenty-six in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -757,6 +758,40 @@ title already present in that group's keywords is a no-op with an info
 flash, not a duplicate entry). Same as editing keywords directly, this
 doesn't reclassify by itself -- **"Reclassify all leads now" still needs
 a click** to apply it to leads already in the system.
+
+## Employee Count Ranges
+
+`leads.employee_count` was a plain free-text passthrough (exact numbers
+as imported, e.g. "245") -- fine for the lead detail page, but a poor
+filter, since the checkbox list ended up as one row per distinct exact
+number instead of a small, useful set of bands. `sql/026_employee_count_range.sql`
+adds `leads.employee_count_range` (e.g. "201-500"), computed by
+`EmployeeCountRangeClassifier::classify()` from 8 fixed, non-admin-editable
+bands (`EmployeeCountRangeClassifier::BANDS`: 1-10, 11-50, 51-200, 201-500,
+501-1,000, 1,001-5,000, 5,001-10,000, 10,001+). **`employee_count` itself
+is left untouched** -- this is purely an additional, coarser field; the
+exact number is still visible on the lead detail page and in CSV export.
+A value that already looks like a range/open-ended band (contains `-` or
+`+`) is passed through unchanged rather than re-parsed.
+
+Computed automatically on import (`LeadImporter.php`, same "derived,
+never blocks the row" pattern as `role_group_id`). For leads already in
+the system before this feature existed, **Lists** has a one-time
+"Recalculate employee count ranges" button
+(`lead_recalculate_employee_ranges.php`) -- same idea as Role Groups'
+"Reclassify all leads now", but for a fixed ruleset rather than an
+admin-editable one, so it doesn't need its own dedicated admin page.
+
+**The "Size" filter on Dashboard, Add Leads to Campaign
+(`campaign_select_leads.php`), and the Employee Count criterion on ICP
+Segments now all filter/match on `employee_count_range`, not the raw
+number** -- `EmployeeCountRangeClassifier::allLabels()` gives the 8
+band labels in ascending size order (distinct raw values would sort
+alphabetically instead, e.g. "1,001-5,000" before "11-50", which is
+wrong). Bulk actions that re-apply Dashboard's current filter (bulk
+tag, bulk delete, CSV export) were updated to match the renamed filter
+key -- worth checking for if any other page ever adds its own copy of
+Dashboard's filter-rebuilding pattern in the future.
 
 ## Role Groups: CSV import
 

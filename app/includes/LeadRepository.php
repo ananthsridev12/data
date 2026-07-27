@@ -155,6 +155,9 @@ class LeadRepository
         if (!empty($filters['employee_count'])) {
             $in('employee_count', (array) $filters['employee_count']);
         }
+        if (!empty($filters['employee_count_range'])) {
+            $in('employee_count_range', (array) $filters['employee_count_range']);
+        }
         // 'none' is a sentinel (never a real id) for "no vertical/service
         // set" -- matches AnalyticsRepository::groupExpr()'s '(none)'
         // group, so an Analytics drill-through link can reproduce that
@@ -368,7 +371,7 @@ class LeadRepository
      */
     public static function distinctValues(PDO $db, string $column, int $limit = 0): array
     {
-        $allowed = ['seniority', 'industry', 'country', 'employee_count', 'company_country', 'title', 'departments'];
+        $allowed = ['seniority', 'industry', 'country', 'employee_count', 'employee_count_range', 'company_country', 'title', 'departments'];
         if (!in_array($column, $allowed, true)) {
             throw new InvalidArgumentException("Column not filterable: {$column}");
         }

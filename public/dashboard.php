@@ -3,6 +3,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/ColumnPreferences.php';
 require_once __DIR__ . '/../app/includes/TagRepository.php';
+require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
 
 $user = require_login();
 
@@ -20,7 +21,7 @@ $filters = [
     'departments' => $multiParam('departments'),
     'industry' => $multiParam('industry'),
     'country' => $multiParam('country'),
-    'employee_count' => $multiParam('employee_count'),
+    'employee_count_range' => $multiParam('employee_count_range'),
     'domain' => trim((string) ($_GET['domain'] ?? '')),
     'vertical_id' => trim((string) ($_GET['vertical_id'] ?? '')),
     'service_id' => trim((string) ($_GET['service_id'] ?? '')),
@@ -51,7 +52,7 @@ $page = max(1, (int) ($_GET['page'] ?? 1));
 // doesn't yet narrow anything by itself.
 $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters['domain'] !== ''
     || $filters['title'] || $filters['seniority'] || $filters['departments']
-    || $filters['industry'] || $filters['country'] || $filters['employee_count']
+    || $filters['industry'] || $filters['country'] || $filters['employee_count_range']
     || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== '' || $filters['imported_by'] !== ''
     || $filters['campaign_id'] !== '' || $filters['company_country']
     || $filters['assigned_campaign_id'] !== '' || $filters['imported'] !== '' || $filters['email_sent'] !== '';
@@ -68,7 +69,7 @@ $departmentOptions = LeadRepository::distinctValues(db(), 'departments');
 $industries = LeadRepository::distinctValues(db(), 'industry');
 $countries = LeadRepository::distinctValues(db(), 'country');
 $companyCountries = LeadRepository::distinctValues(db(), 'company_country');
-$employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
+$employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
 $verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), 'services');
 $roleGroups = LeadRepository::activeLookupOptions(db(), 'role_groups');
@@ -115,7 +116,7 @@ render_header('Dashboard');
         <?php render_multiselect_filter('departments', 'Department', $departmentOptions, $filters['departments']); ?>
       </div>
       <div class="col-md-1">
-        <?php render_multiselect_filter('employee_count', 'Size', $employeeCounts, $filters['employee_count']); ?>
+        <?php render_multiselect_filter('employee_count_range', 'Size', $employeeCountRanges, $filters['employee_count_range']); ?>
       </div>
 
       <div class="col-md-2">

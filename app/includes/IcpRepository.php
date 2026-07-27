@@ -140,7 +140,11 @@ class IcpRepository
             'company_country' => RoleGroupClassifier::parseKeywords($icp['company_country'] ?? ''),
             'industry' => RoleGroupClassifier::parseKeywords($icp['industry'] ?? ''),
             'seniority' => RoleGroupClassifier::parseKeywords($icp['seniority'] ?? ''),
-            'employee_count' => RoleGroupClassifier::parseKeywords($icp['employee_count'] ?? ''),
+            // icp_segments.employee_count stores range-band text (e.g.
+            // "51-200"), not raw exact numbers -- mapped onto
+            // LeadRepository's employee_count_range filter key, which
+            // matches against leads.employee_count_range.
+            'employee_count_range' => RoleGroupClassifier::parseKeywords($icp['employee_count'] ?? ''),
             'vertical_id' => $icp['vertical_id'] ?: '',
             'service_id' => $icp['service_id'] ?: '',
             'role_group_id' => $icp['role_group_id'] ?: '',

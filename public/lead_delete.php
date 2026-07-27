@@ -40,7 +40,7 @@ if ($action === 'bulk_delete') {
         'departments' => (array) ($rawFilters['departments'] ?? []),
         'industry' => (array) ($rawFilters['industry'] ?? []),
         'country' => (array) ($rawFilters['country'] ?? []),
-        'employee_count' => (array) ($rawFilters['employee_count'] ?? []),
+        'employee_count_range' => (array) ($rawFilters['employee_count_range'] ?? []),
         'vertical_id' => $rawFilters['vertical_id'] ?? '',
         'service_id' => $rawFilters['service_id'] ?? '',
         'imported_by' => $rawFilters['imported_by'] ?? '',

@@ -3,6 +3,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/IcpRepository.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/RoleGroupClassifier.php';
+require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
 
 $admin = require_admin();
 
@@ -76,7 +77,7 @@ $campaigns = db()->query("SELECT id, name FROM campaigns WHERE saleshandy_sequen
 $companyCountries = LeadRepository::distinctValues(db(), 'company_country');
 $industries = LeadRepository::distinctValues(db(), 'industry');
 $seniorities = LeadRepository::distinctValues(db(), 'seniority');
-$employeeCounts = LeadRepository::distinctValues(db(), 'employee_count');
+$employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
 
 $linksByIcp = [];
 foreach ($icps as $icp) {
@@ -178,7 +179,7 @@ render_header('ICP Segments');
         <?php render_multiselect_filter('seniority', 'Seniority', $seniorities, []); ?>
       </div>
       <div class="col-md-2">
-        <?php render_multiselect_filter('employee_count', 'Employee Count', $employeeCounts, []); ?>
+        <?php render_multiselect_filter('employee_count', 'Employee Count', $employeeCountRanges, []); ?>
       </div>
       <div class="col-md-2">
         <button type="submit" class="btn btn-primary btn-sm w-100">Add</button>
@@ -324,7 +325,7 @@ render_header('ICP Segments');
             </div>
             <div class="col-md-6">
               <label class="form-label small mb-0">Employee Count</label>
-              <?php render_multiselect_filter('employee_count', 'Employee Count', $employeeCounts, RoleGroupClassifier::parseKeywords($icp['employee_count'] ?? '')); ?>
+              <?php render_multiselect_filter('employee_count', 'Employee Count', $employeeCountRanges, RoleGroupClassifier::parseKeywords($icp['employee_count'] ?? '')); ?>
             </div>
             <div class="col-12 form-check">
               <input class="form-check-input" type="checkbox" name="auto_push_enabled" value="1" id="autoPush<?= (int) $icp['id'] ?>" <?= $icp['auto_push_enabled'] ? 'checked' : '' ?>>

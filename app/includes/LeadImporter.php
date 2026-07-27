@@ -4,6 +4,7 @@ require_once __DIR__ . '/../config/constants.php';
 require_once __DIR__ . '/../vendor/simplexlsx/SimpleXLSX.php';
 require_once __DIR__ . '/TagRepository.php';
 require_once __DIR__ . '/RoleGroupClassifier.php';
+require_once __DIR__ . '/EmployeeCountRangeClassifier.php';
 
 use Shuchkin\SimpleXLSX;
 
@@ -181,8 +182,10 @@ class LeadImporter
         // role_group_id is deliberately NOT a LOOKUP_FIELDS entry -- an
         // unmatched title must never error the row the way an unrecognized
         // Vertical/Service value does (see RoleGroupClassifier's docblock),
-        // it just classifies to null ("Unclassified").
-        $allColumns = array_merge($columns, $extraColumns, ['role_group_id']);
+        // it just classifies to null ("Unclassified"). employee_count_range
+        // is the same idea applied to employee_count -- a derived, coarser
+        // bucket that never blocks the row.
+        $allColumns = array_merge($columns, $extraColumns, ['role_group_id', 'employee_count_range']);
         $placeholders = implode(', ', array_fill(0, count($allColumns), '?'));
         $updateClause = implode(', ', array_map(
             static fn($c) => "{$c} = VALUES({$c})",
@@ -327,6 +330,7 @@ class LeadImporter
                 $values[] = $lookupIds[$col] ?? null;
             }
             $values[] = RoleGroupClassifier::classify($data['title'] ?? null, $roleGroups);
+            $values[] = EmployeeCountRangeClassifier::classify($data['employee_count'] ?? null);
             $values[] = $batchId;
 
             $stmt->execute($values);
