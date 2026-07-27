@@ -132,6 +132,89 @@
     });
 })();
 
+// Dark/light theme toggle -- persists to localStorage under the same
+// 'theme' key the pre-paint <script> in render_header() reads, so the
+// choice survives a reload without a flash of the old theme.
+(function () {
+  var btn = document.getElementById('themeToggle');
+  if (!btn) return;
+
+  var label = btn.querySelector('.theme-toggle-label');
+
+  function currentTheme() {
+    return document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'dark' : 'light';
+  }
+
+  function render() {
+    var theme = currentTheme();
+    if (label) {
+      label.textContent = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+    }
+  }
+
+  btn.addEventListener('click', function () {
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-bs-theme', next);
+    localStorage.setItem('theme', next);
+    render();
+  });
+
+  render();
+})();
+
+// Sidebar collapse toggle (desktop: shrinks the sidebar to width 0 and
+// shows a small reopen button) -- persists to localStorage under
+// 'sidebarCollapsed' so the state survives a reload. On mobile the
+// sidebar is off-canvas by default regardless of this preference (see
+// the separate mobile open/close handler below), so this toggle just
+// mirrors that same collapsed state there too without doing any harm.
+(function () {
+  var toggle = document.getElementById('sidebarToggle');
+  var openBtn = document.getElementById('sidebarOpenBtn');
+
+  function setCollapsed(collapsed) {
+    document.documentElement.classList.toggle('sidebar-collapsed', collapsed);
+    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+  }
+
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      setCollapsed(true);
+    });
+  }
+  if (openBtn) {
+    openBtn.addEventListener('click', function () {
+      if (window.matchMedia && window.matchMedia('(max-width: 991.98px)').matches) {
+        var sidebar = document.getElementById('appSidebar');
+        var backdrop = document.getElementById('sidebarBackdrop');
+        if (sidebar) sidebar.classList.add('mobile-open');
+        if (backdrop) backdrop.classList.add('show');
+      } else {
+        setCollapsed(false);
+      }
+    });
+  }
+})();
+
+// Mobile off-canvas sidebar: tapping the backdrop, or a nav link inside
+// the sidebar, closes it again -- otherwise it stays pinned open over
+// the page content after navigating, hiding whatever loaded underneath.
+(function () {
+  var sidebar = document.getElementById('appSidebar');
+  var backdrop = document.getElementById('sidebarBackdrop');
+  if (!sidebar || !backdrop) return;
+
+  function close() {
+    sidebar.classList.remove('mobile-open');
+    backdrop.classList.remove('show');
+  }
+
+  backdrop.addEventListener('click', close);
+  sidebar.querySelectorAll('.sidebar-link').forEach(function (link) {
+    link.addEventListener('click', close);
+  });
+})();
+
 // Multi-select checkbox filter dropdowns (render_multiselect_filter() in helpers.php).
 (function () {
   function updateLabel(toggle) {

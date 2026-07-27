@@ -49,9 +49,47 @@ function flash_take(): array
     return $flashes;
 }
 
+/**
+ * @return array<int,array{href:string,label:string}> every nav link the
+ *   current user can see, in display order -- shared by the sidebar
+ *   markup below and anything else that needs "what pages exist" (kept
+ *   here rather than inlined in render_header() so it's one list to
+ *   update when a page is added, not two).
+ */
+function nav_links(array $user): array
+{
+    $links = [
+        ['href' => 'dashboard.php', 'label' => 'Dashboard'],
+        ['href' => 'accounts.php', 'label' => 'Accounts'],
+        ['href' => 'analytics.php', 'label' => 'Analytics'],
+        ['href' => 'reports.php', 'label' => 'Reports'],
+    ];
+    if ($user['role'] === ROLE_ADMIN) {
+        $links = array_merge($links, [
+            ['href' => 'import.php', 'label' => 'Import'],
+            ['href' => 'import_history.php', 'label' => 'Import History'],
+            ['href' => 'campaigns.php', 'label' => 'Campaigns'],
+            ['href' => 'lists.php', 'label' => 'Lists'],
+            ['href' => 'role_groups.php', 'label' => 'Role Groups'],
+            ['href' => 'country_groups.php', 'label' => 'Country Groups'],
+            ['href' => 'icp_segments.php', 'label' => 'ICP Segments'],
+            ['href' => 'tags.php', 'label' => 'Tags'],
+            ['href' => 'custom_fields.php', 'label' => 'Custom Fields'],
+            ['href' => 'bounce_import.php', 'label' => 'Bounces'],
+            ['href' => 'bounce_settings.php', 'label' => 'Bounce Settings'],
+            ['href' => 'saleshandy_field_mapping.php', 'label' => 'SH Field Mapping'],
+            ['href' => 'import_campaign_history.php', 'label' => 'Backfill History'],
+            ['href' => 'deleted_leads.php', 'label' => 'Deleted Leads'],
+            ['href' => 'users.php', 'label' => 'Users'],
+        ]);
+    }
+    return $links;
+}
+
 function render_header(string $title): void
 {
     $user = current_user();
+    $currentPage = basename($_SERVER['SCRIPT_NAME'] ?? '');
     ?>
 <!doctype html>
 <html lang="en">
@@ -61,47 +99,51 @@ function render_header(string $title): void
 <title><?= e($title) ?> - Lead Dashboard</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="assets/css/app.css" rel="stylesheet">
+<script>
+// Applied before first paint (blocking, in <head>) so there's no flash of
+// the wrong theme/sidebar-state on load -- an external/deferred script
+// would run too late, after Bootstrap's default (light) styles already
+// painted. Both preferences are per-browser (localStorage), not tied to
+// the user's account.
+(function () {
+  var theme = localStorage.getItem('theme');
+  if (theme !== 'dark' && theme !== 'light') {
+    theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-bs-theme', theme);
+  if (localStorage.getItem('sidebarCollapsed') === '1') {
+    document.documentElement.classList.add('sidebar-collapsed');
+  }
+})();
+</script>
 </head>
 <body>
 <?php if ($user): ?>
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
-  <div class="container-fluid">
-    <a class="navbar-brand" href="dashboard.php">Lead Dashboard</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navMain">
-      <ul class="navbar-nav me-auto">
-        <li class="nav-item"><a class="nav-link" href="dashboard.php">Dashboard</a></li>
-        <li class="nav-item"><a class="nav-link" href="accounts.php">Accounts</a></li>
-        <li class="nav-item"><a class="nav-link" href="analytics.php">Analytics</a></li>
-        <li class="nav-item"><a class="nav-link" href="reports.php">Reports</a></li>
-        <?php if ($user['role'] === ROLE_ADMIN): ?>
-        <li class="nav-item"><a class="nav-link" href="import.php">Import</a></li>
-        <li class="nav-item"><a class="nav-link" href="import_history.php">Import History</a></li>
-        <li class="nav-item"><a class="nav-link" href="campaigns.php">Campaigns</a></li>
-        <li class="nav-item"><a class="nav-link" href="lists.php">Lists</a></li>
-        <li class="nav-item"><a class="nav-link" href="role_groups.php">Role Groups</a></li>
-        <li class="nav-item"><a class="nav-link" href="country_groups.php">Country Groups</a></li>
-        <li class="nav-item"><a class="nav-link" href="icp_segments.php">ICP Segments</a></li>
-        <li class="nav-item"><a class="nav-link" href="tags.php">Tags</a></li>
-        <li class="nav-item"><a class="nav-link" href="custom_fields.php">Custom Fields</a></li>
-        <li class="nav-item"><a class="nav-link" href="bounce_import.php">Bounces</a></li>
-        <li class="nav-item"><a class="nav-link" href="bounce_settings.php">Bounce Settings</a></li>
-        <li class="nav-item"><a class="nav-link" href="saleshandy_field_mapping.php">SH Field Mapping</a></li>
-        <li class="nav-item"><a class="nav-link" href="import_campaign_history.php">Backfill History</a></li>
-        <li class="nav-item"><a class="nav-link" href="deleted_leads.php">Deleted Leads</a></li>
-        <li class="nav-item"><a class="nav-link" href="users.php">Users</a></li>
-        <?php endif; ?>
-      </ul>
-      <span class="navbar-text me-3"><?= e($user['name']) ?> (<?= e($user['role']) ?>)</span>
-      <a class="btn btn-outline-light btn-sm me-2" href="change_password.php">Change password</a>
-      <a class="btn btn-outline-light btn-sm" href="logout.php">Log out</a>
+<div class="app-shell">
+  <nav class="sidebar" id="appSidebar">
+    <div class="sidebar-header">
+      <a class="sidebar-brand" href="dashboard.php">Lead Dashboard</a>
+      <button class="btn btn-sm btn-outline-secondary sidebar-toggle" id="sidebarToggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">&laquo;</button>
     </div>
-  </div>
-</nav>
+    <div class="sidebar-links">
+      <?php foreach (nav_links($user) as $link): ?>
+        <a class="sidebar-link<?= $link['href'] === $currentPage ? ' active' : '' ?>" href="<?= e($link['href']) ?>"><?= e($link['label']) ?></a>
+      <?php endforeach; ?>
+    </div>
+    <div class="sidebar-footer">
+      <button class="btn btn-sm btn-outline-secondary w-100 mb-2" id="themeToggle" type="button">
+        <span class="theme-toggle-label">Toggle theme</span>
+      </button>
+      <div class="small text-muted mb-2"><?= e($user['name']) ?> (<?= e($user['role']) ?>)</div>
+      <a class="btn btn-outline-secondary btn-sm w-100 mb-1" href="change_password.php">Change password</a>
+      <a class="btn btn-outline-secondary btn-sm w-100" href="logout.php">Log out</a>
+    </div>
+  </nav>
+  <button class="btn btn-sm btn-outline-secondary sidebar-open-btn" id="sidebarOpenBtn" type="button" aria-label="Open menu" title="Open menu">&#9776;</button>
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+  <div class="main-content">
 <?php endif; ?>
-<div class="container-fluid px-4">
+<div class="container-fluid px-4 py-4">
 <?php foreach (flash_take() as $flash): ?>
   <div class="alert alert-<?= e($flash['type']) ?> alert-dismissible fade show" role="alert">
     <?= e($flash['message']) ?>
@@ -185,8 +227,13 @@ function render_hidden_filter_fields(array $filterValues, string $namePrefix = '
 
 function render_footer(): void
 {
+    $user = current_user();
     ?>
 </div>
+<?php if ($user): ?>
+  </div>
+</div>
+<?php endif; ?>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="assets/js/app.js"></script>
 </body>

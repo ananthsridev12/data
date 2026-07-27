@@ -1099,6 +1099,40 @@ behind an earlier step (not yet emailed) won't show up here yet, so the
 count pulled in can legitimately be lower than Saleshandy's own prospect
 count for the sequence until those prospects are actually reached.
 
+## UI: left sidebar + dark/light theme
+
+The old top navbar is now a left sidebar (`.app-shell` / `.sidebar` /
+`.main-content` in `app/includes/helpers.php`'s `render_header()`/
+`render_footer()`), with the same nav links in the same order (now
+extracted into `nav_links()` so there's one list to update when a page
+is added). The current page gets a `.sidebar-link.active` highlight via
+`basename($_SERVER['SCRIPT_NAME'])`.
+
+A theme toggle button lives in the sidebar footer. It flips `<html
+data-bs-theme="dark|light">`, which is all Bootstrap 5.3 needs to
+restyle its own components -- the app's own hardcoded colors in
+`public/assets/css/app.css` (page background, `.table-responsive`,
+`.filter-card`) were switched to `var(--bs-tertiary-bg)` /
+`var(--bs-body-bg)` so they follow the theme too instead of staying
+white/light in dark mode.
+
+Both the theme and the sidebar's collapsed/expanded state are
+**per-browser, via `localStorage`** (`theme`, `sidebarCollapsed` keys)
+-- not tied to the user account, no DB migration. A blocking inline
+`<script>` in `<head>` (before any CSS paints) reads `localStorage`
+(falling back to the OS `prefers-color-scheme: dark` setting if nothing
+is stored yet) and applies `data-bs-theme` / `.sidebar-collapsed`
+immediately, so there's no flash of the wrong theme or a
+briefly-expanded sidebar on load.
+
+Below ~992px width the sidebar becomes an off-canvas panel (hidden by
+default, slides in over the page) instead of a permanent column, opened
+via a hamburger button (`#sidebarOpenBtn`) and closed by tapping the
+backdrop or any nav link -- this mobile open/close state is transient
+(not persisted) and independent of the desktop collapsed preference.
+All of the toggle/collapse/mobile-open behavior lives in
+`public/assets/js/app.js`.
+
 ## Deploying updates via cPanel Git Version Control
 
 This is the actual deploy path for this app -- steps 1, 2, 4, and 5 above
