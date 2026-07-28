@@ -26,10 +26,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'auto_push_enabled' => !empty($_POST['auto_push_enabled']),
         ];
 
+        $hasAnyCriterion = $data['role_group_id'] || $data['vertical_id'] || $data['service_id'] || $data['country_group_id']
+            || $data['company_country'] !== '' || $data['industry'] !== '' || $data['seniority'] !== '' || $data['employee_count'] !== '';
+
         if ($name === '') {
             flash_set('danger', 'A name is required.');
-        } elseif (!$data['role_group_id']) {
-            flash_set('danger', 'Pick a Role Group -- an ICP represents one buyer persona.');
+        } elseif (!$hasAnyCriterion) {
+            flash_set('danger', 'Pick at least one match criterion (Role Group, Vertical, Service, Country Group, or one of the other fields) -- an ICP with nothing set would match every lead in the database.');
         } else {
             try {
                 if ($action === 'create') {
@@ -113,10 +116,13 @@ render_header('ICP Segments');
 ?>
 <h1 class="h4 mb-3">ICP Segments</h1>
 <p class="text-muted">
-  A named, reusable match rule for one buyer persona (company country, vertical, service, seniority, employee
-  count, and one Role Group) linked to 2 or more campaigns with a percentage split -- for A/B testing the same
-  persona across campaigns. A cron job (<code>icp_distribution_cron.php</code>) periodically finds newly
-  matching, not-yet-assigned leads and distributes them across the linked campaigns according to the weights.
+  A named, reusable match rule (company country, vertical, service, seniority, employee count, and optionally
+  one Role Group) linked to 2 or more campaigns with a percentage split -- for A/B testing the same audience
+  across campaigns. A cron job (<code>icp_distribution_cron.php</code>) periodically finds newly matching,
+  not-yet-assigned leads and distributes them across the linked campaigns according to the weights.
+  <strong>Role Group is optional</strong> -- leave it as "Any persona" if this ICP shouldn't be restricted by
+  job title at all (e.g. targeting by country/industry/size only); at least one other criterion is still
+  required so an ICP can't accidentally match every lead in the database.
   <strong>The split is automatic</strong> -- link one campaign and it gets 100%; link a second or third and every
   linked campaign is instantly re-split evenly (e.g. 50/50, then 34/33/33), no manual percentages required.
   Want an uneven weighting instead (e.g. 70/30)? Edit the percentages below and click "Save split" -- click
@@ -156,8 +162,8 @@ render_header('ICP Segments');
         <input type="text" name="name" id="addIcpName" class="form-control form-control-sm" placeholder="Name, e.g. Healthcare CFOs" required>
       </div>
       <div class="col-md-2">
-        <select name="role_group_id" id="addIcpRoleGroup" class="form-select form-select-sm" required>
-          <option value="">Role Group (persona)...</option>
+        <select name="role_group_id" id="addIcpRoleGroup" class="form-select form-select-sm">
+          <option value="">Role Group (any persona)</option>
           <?php foreach ($roleGroups as $rg): ?>
             <option value="<?= (int) $rg['id'] ?>"><?= e($rg['label']) ?></option>
           <?php endforeach; ?>
@@ -236,7 +242,7 @@ render_header('ICP Segments');
     </div>
     <div class="card-body">
       <p class="small text-muted mb-2">
-        Persona: <strong><?= e($icp['role_group_label'] ?? 'Unclassified') ?></strong>
+        Persona: <strong><?= $icp['role_group_label'] ? e($icp['role_group_label']) : 'Any (no title restriction)' ?></strong>
         <?php if ($icp['vertical_label']): ?> | Vertical: <?= e($icp['vertical_label']) ?><?php endif; ?>
         <?php if ($icp['service_label']): ?> | Service: <?= e($icp['service_label']) ?><?php endif; ?>
         <?php if ($icp['country_group_label']): ?> | Country Group: <?= e($icp['country_group_label']) ?><?php endif; ?>
@@ -325,8 +331,8 @@ render_header('ICP Segments');
             </div>
             <div class="col-md-6">
               <label class="form-label small">Role Group (persona)</label>
-              <select name="role_group_id" class="form-select form-select-sm" required>
-                <option value="">...</option>
+              <select name="role_group_id" class="form-select form-select-sm">
+                <option value="">Any persona</option>
                 <?php foreach ($roleGroups as $rg): ?>
                   <option value="<?= (int) $rg['id'] ?>" <?= (int) $icp['role_group_id'] === (int) $rg['id'] ? 'selected' : '' ?>><?= e($rg['label']) ?></option>
                 <?php endforeach; ?>

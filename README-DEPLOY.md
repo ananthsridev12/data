@@ -876,13 +876,23 @@ periodically finds newly-matching, never-before-assigned leads and
 distributes them across the linked campaigns according to the weights.
 `sql/025_icp_segments.sql` adds `icp_segments` + `icp_campaign_links`.
 
-**One ICP = one persona** (at most one Role Group) -- to target multiple
-personas, create multiple ICPs, each with its own campaign links. Match
-criteria are optional multi-value fields (company country/industry/
-seniority/employee count, comma-separated same as `role_groups.keywords`,
-parsed with `RoleGroupClassifier::parseKeywords()`) plus optional
-single-value Vertical/Service, mapped straight onto
-`LeadRepository::matchingIds()`'s existing filter keys
+**One ICP = at most one persona** (at most one Role Group) -- to target
+multiple personas, create multiple ICPs, each with its own campaign
+links. Role Group is optional: leave it as "Any persona" if an ICP
+shouldn't be restricted by job title at all (e.g. targeting purely by
+country/industry/size). `icp_segments.role_group_id` is a nullable FK,
+and `LeadRepository::buildWhere()` already treats an empty `role_group_id`
+filter as "no restriction" the same way it does for Vertical/Service --
+so this needed no repository changes, only relaxing the form's `required`
+attribute and its server-side validation (`public/icp_segments.php`).
+**At least one match criterion is still required** (Role Group, Vertical,
+Service, Country Group, or one of the multi-value fields) so an ICP can't
+be saved with literally nothing set, which would match every lead in the
+database. Match criteria are optional multi-value fields (company
+country/industry/seniority/employee count, comma-separated same as
+`role_groups.keywords`, parsed with `RoleGroupClassifier::parseKeywords()`)
+plus optional single-value Vertical/Service/Country Group, mapped
+straight onto `LeadRepository::matchingIds()`'s existing filter keys
 (`IcpRepository::toFilters()`) -- no new filtering logic, just a new way
 to save and reuse a filter combination.
 
