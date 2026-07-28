@@ -112,106 +112,132 @@ $unmappedPersonas = db()->query(
       ORDER BY lead_count DESC, rg.label"
 )->fetchAll();
 
+$activeIcpCount = count(array_filter($icps, static fn (array $i): bool => (bool) $i['is_active']));
+
+// Cycled per linked-campaign row so the split preview bar and its rows
+// below share a color, in a fixed order (not randomized/hashed) so a
+// campaign's color stays stable across page loads within one ICP.
+$splitPalette = ['bg-primary', 'bg-info', 'bg-warning', 'bg-success', 'bg-danger', 'bg-secondary'];
+
+/** Renders one "Label: value" pill in the criteria row below an ICP's name. */
+$renderChip = static function (string $label, string $value, bool $accent = false): string {
+    return '<span class="icp-chip' . ($accent ? ' icp-chip-accent' : '') . '"><span class="icp-chip-label">' . e($label) . '</span>' . e($value) . '</span>';
+};
+
 render_header('ICP Segments');
 ?>
-<h1 class="h4 mb-3">ICP Segments</h1>
-<p class="text-muted">
-  A named, reusable match rule (company country, vertical, service, seniority, employee count, and optionally
-  one Role Group) linked to 2 or more campaigns with a percentage split -- for A/B testing the same audience
-  across campaigns. A cron job (<code>icp_distribution_cron.php</code>) periodically finds newly matching,
-  not-yet-assigned leads and distributes them across the linked campaigns according to the weights.
-  <strong>Role Group is optional</strong> -- leave it as "Any persona" if this ICP shouldn't be restricted by
-  job title at all (e.g. targeting by country/industry/size only); at least one other criterion is still
-  required so an ICP can't accidentally match every lead in the database.
-  <strong>The split is automatic</strong> -- link one campaign and it gets 100%; link a second or third and every
-  linked campaign is instantly re-split evenly (e.g. 50/50, then 34/33/33), no manual percentages required.
-  Want an uneven weighting instead (e.g. 70/30)? Edit the percentages below and click "Save split" -- click
-  "Auto-split evenly" any time to go back to the automatic split.
-</p>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div style="max-width: 760px;">
+    <h1 class="h4 mb-1">ICP Segments</h1>
+    <p class="text-muted mb-0">
+      Define a buyer persona once, link it to 2+ campaigns with a percentage split, and the distribution cron
+      keeps feeding newly-matching leads into the right test automatically.
+      <?= info_icon('Match criteria: company country, vertical, service, seniority, employee count, and optionally one Role Group. Role Group is optional -- leave it as "Any persona" to target purely by country/industry/size; at least one criterion is still required so an ICP can\'t accidentally match every lead in the database. The split is automatic: link one campaign and it gets 100%; add a second or third and every linked campaign instantly re-splits evenly (50/50, then 34/33/33). Want an uneven weighting instead (e.g. 70/30)? Edit the percentages and click "Save split" -- "Auto-split evenly" resets it back any time.') ?>
+    </p>
+  </div>
+  <div class="d-flex gap-2 flex-shrink-0">
+    <span class="badge rounded-pill bg-success-subtle text-success-emphasis px-3 py-2"><?= $activeIcpCount ?> active</span>
+    <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis px-3 py-2"><?= count($icps) ?> total</span>
+  </div>
+</div>
 
 <?php if ($unmappedPersonas): ?>
-<div class="card mb-4 border-warning">
-  <div class="card-header">
-    Personas without an ICP yet
+<div class="card icp-card mb-4">
+  <div class="card-header bg-warning-subtle d-flex align-items-center gap-2">
+    <span class="fw-semibold">Personas without an ICP yet</span>
     <?= info_icon('Active Role Groups that have no ICP built for them at all, most classified leads first. These personas are being recognized on import but nothing is targeting them via a campaign split -- click "Create ICP" to jump to the Add form with this persona pre-selected.') ?>
   </div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0">
-      <thead><tr><th>Role Group (persona)</th><th class="text-end">Leads classified</th><th style="width: 140px;"></th></tr></thead>
-      <tbody>
-        <?php foreach ($unmappedPersonas as $p): ?>
-          <tr>
-            <td><?= e($p['label']) ?></td>
-            <td class="text-end"><?= number_format($p['lead_count']) ?></td>
-            <td><a href="#addIcpForm" class="btn btn-sm btn-outline-warning" onclick="document.getElementById('addIcpRoleGroup').value='<?= (int) $p['id'] ?>'; document.getElementById('addIcpName').focus();">Create ICP</a></td>
-          </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table>
+  <div class="list-group list-group-flush" style="max-height: 320px; overflow-y: auto;">
+    <?php foreach ($unmappedPersonas as $p): ?>
+      <div class="list-group-item d-flex justify-content-between align-items-center gap-3">
+        <div>
+          <div class="fw-semibold"><?= e($p['label']) ?></div>
+          <div class="small text-muted"><?= number_format($p['lead_count']) ?> lead(s) classified</div>
+        </div>
+        <a href="#addIcpForm" class="btn btn-sm btn-outline-warning rounded-pill px-3 flex-shrink-0" onclick="document.getElementById('addIcpRoleGroup').value='<?= (int) $p['id'] ?>'; document.getElementById('addIcpName').focus();">Create ICP</a>
+      </div>
+    <?php endforeach; ?>
   </div>
 </div>
 <?php endif; ?>
 
-<div class="card mb-4" id="addIcpForm">
-  <div class="card-header">Add an ICP segment</div>
+<div class="card icp-card mb-4" id="addIcpForm">
+  <div class="card-header fw-semibold">New ICP segment</div>
   <div class="card-body">
-    <form method="post" action="icp_segments.php" class="row g-2">
+    <form method="post" action="icp_segments.php">
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="create">
-      <div class="col-md-3">
-        <input type="text" name="name" id="addIcpName" class="form-control form-control-sm" placeholder="Name, e.g. Healthcare CFOs" required>
+
+      <div class="row g-3 align-items-end mb-4">
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">Name</label>
+          <input type="text" name="name" id="addIcpName" class="form-control" placeholder="e.g. Healthcare CFOs" required>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">Role Group (persona)</label>
+          <select name="role_group_id" id="addIcpRoleGroup" class="form-select">
+            <option value="">Any persona</option>
+            <?php foreach ($roleGroups as $rg): ?>
+              <option value="<?= (int) $rg['id'] ?>"><?= e($rg['label']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="col-md-4 form-check form-switch pt-2 ps-5">
+          <input class="form-check-input" type="checkbox" role="switch" name="auto_push_enabled" value="1" id="autoPushNew">
+          <label class="form-check-label small" for="autoPushNew">Auto-push to Saleshandy after assignment</label>
+        </div>
       </div>
-      <div class="col-md-2">
-        <select name="role_group_id" id="addIcpRoleGroup" class="form-select form-select-sm">
-          <option value="">Role Group (any persona)</option>
-          <?php foreach ($roleGroups as $rg): ?>
-            <option value="<?= (int) $rg['id'] ?>"><?= e($rg['label']) ?></option>
-          <?php endforeach; ?>
-        </select>
+
+      <div class="icp-section-label mb-2">Match criteria <span class="fw-normal text-muted" style="text-transform: none; letter-spacing: normal;">(at least one required)</span></div>
+      <div class="row g-3 mb-3">
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Vertical</label>
+          <select name="vertical_id" class="form-select">
+            <option value="">Any</option>
+            <?php foreach ($verticals as $v): ?>
+              <option value="<?= (int) $v['id'] ?>"><?= e($v['label']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Service</label>
+          <select name="service_id" class="form-select">
+            <option value="">Any</option>
+            <?php foreach ($services as $s): ?>
+              <option value="<?= (int) $s['id'] ?>"><?= e($s['label']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Country Group</label>
+          <select name="country_group_id" class="form-select">
+            <option value="">Any</option>
+            <?php foreach ($countryGroups as $cg): ?>
+              <option value="<?= (int) $cg['id'] ?>"><?= e($cg['label']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small text-muted mb-1">Company Country</label>
+          <?php render_multiselect_filter('company_country', 'Company Country', $companyCountries, []); ?>
+        </div>
       </div>
-      <div class="col-md-2">
-        <select name="vertical_id" class="form-select form-select-sm">
-          <option value="">Vertical (any)</option>
-          <?php foreach ($verticals as $v): ?>
-            <option value="<?= (int) $v['id'] ?>"><?= e($v['label']) ?></option>
-          <?php endforeach; ?>
-        </select>
+      <div class="row g-3 mb-4">
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">Industry</label>
+          <?php render_multiselect_filter('industry', 'Industry', $industries, []); ?>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">Seniority</label>
+          <?php render_multiselect_filter('seniority', 'Seniority', $seniorities, []); ?>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">Employee Count</label>
+          <?php render_multiselect_filter('employee_count', 'Employee Count', $employeeCountRanges, []); ?>
+        </div>
       </div>
-      <div class="col-md-2">
-        <select name="service_id" class="form-select form-select-sm">
-          <option value="">Service (any)</option>
-          <?php foreach ($services as $s): ?>
-            <option value="<?= (int) $s['id'] ?>"><?= e($s['label']) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </div>
-      <div class="col-md-2">
-        <select name="country_group_id" class="form-select form-select-sm">
-          <option value="">Country Group (any)</option>
-          <?php foreach ($countryGroups as $cg): ?>
-            <option value="<?= (int) $cg['id'] ?>"><?= e($cg['label']) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </div>
-      <div class="col-md-3 form-check pt-2">
-        <input class="form-check-input" type="checkbox" name="auto_push_enabled" value="1" id="autoPushNew">
-        <label class="form-check-label small" for="autoPushNew">Auto-push to Saleshandy after assignment</label>
-      </div>
-      <div class="col-md-2">
-        <?php render_multiselect_filter('company_country', 'Company Country', $companyCountries, []); ?>
-      </div>
-      <div class="col-md-2">
-        <?php render_multiselect_filter('industry', 'Industry', $industries, []); ?>
-      </div>
-      <div class="col-md-2">
-        <?php render_multiselect_filter('seniority', 'Seniority', $seniorities, []); ?>
-      </div>
-      <div class="col-md-2">
-        <?php render_multiselect_filter('employee_count', 'Employee Count', $employeeCountRanges, []); ?>
-      </div>
-      <div class="col-md-2">
-        <button type="submit" class="btn btn-primary btn-sm w-100">Add</button>
-      </div>
+
+      <button type="submit" class="btn btn-primary px-4">Create ICP</button>
     </form>
   </div>
 </div>
@@ -221,62 +247,70 @@ render_header('ICP Segments');
     $total = $icp['percentage_total'];
     $ready = $total === 100;
 ?>
-  <div class="card mb-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <span>
-        <?= e($icp['name']) ?>
-        <span class="badge bg-<?= $icp['is_active'] ? 'success' : 'secondary' ?> ms-1"><?= $icp['is_active'] ? 'Active' : 'Inactive' ?></span>
+  <div class="card icp-card mb-4">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <span class="fw-semibold"><?= e($icp['name']) ?></span>
+        <span class="badge rounded-pill bg-<?= $icp['is_active'] ? 'success' : 'secondary' ?>-subtle text-<?= $icp['is_active'] ? 'success' : 'secondary' ?>-emphasis"><?= $icp['is_active'] ? 'Active' : 'Inactive' ?></span>
         <?php if ($icp['is_active']): ?>
-          <span class="badge bg-<?= $ready ? 'success' : 'warning text-dark' ?> ms-1"><?= $ready ? 'Ready -- ' . $total . '%' : 'Not running -- links sum to ' . $total . '%, needs 100%' ?></span>
+          <span class="badge rounded-pill bg-<?= $ready ? 'success' : 'warning' ?>-subtle text-<?= $ready ? 'success' : 'warning' ?>-emphasis"><?= $ready ? 'Ready &middot; ' . $total . '%' : 'Not running &middot; ' . $total . '%' ?></span>
         <?php endif; ?>
-      </span>
-      <span>
-        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editIcp<?= (int) $icp['id'] ?>">Edit</button>
+      </div>
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#editIcp<?= (int) $icp['id'] ?>">Edit</button>
         <form method="post" action="icp_segments.php" class="d-inline" onsubmit="return confirm('Toggle active status for <?= e($icp['name']) ?>?');">
           <?= csrf_field() ?>
           <input type="hidden" name="action" value="toggle_active">
           <input type="hidden" name="id" value="<?= (int) $icp['id'] ?>">
-          <button type="submit" class="btn btn-sm btn-outline-secondary"><?= $icp['is_active'] ? 'Deactivate' : 'Activate' ?></button>
+          <button type="submit" class="btn btn-sm btn-outline-secondary rounded-pill px-3"><?= $icp['is_active'] ? 'Deactivate' : 'Activate' ?></button>
         </form>
-      </span>
+      </div>
     </div>
     <div class="card-body">
-      <p class="small text-muted mb-2">
-        Persona: <strong><?= $icp['role_group_label'] ? e($icp['role_group_label']) : 'Any (no title restriction)' ?></strong>
-        <?php if ($icp['vertical_label']): ?> | Vertical: <?= e($icp['vertical_label']) ?><?php endif; ?>
-        <?php if ($icp['service_label']): ?> | Service: <?= e($icp['service_label']) ?><?php endif; ?>
-        <?php if ($icp['country_group_label']): ?> | Country Group: <?= e($icp['country_group_label']) ?><?php endif; ?>
-        <?php if ($icp['company_country']): ?> | Country: <?= e($icp['company_country']) ?><?php endif; ?>
-        <?php if ($icp['industry']): ?> | Industry: <?= e($icp['industry']) ?><?php endif; ?>
-        <?php if ($icp['seniority']): ?> | Seniority: <?= e($icp['seniority']) ?><?php endif; ?>
-        <?php if ($icp['employee_count']): ?> | Size: <?= e($icp['employee_count']) ?><?php endif; ?>
-        <?php if ($icp['auto_push_enabled']): ?> | <span class="badge bg-info text-dark">Auto-push enabled</span><?php endif; ?>
-      </p>
+      <div class="d-flex flex-wrap gap-2 mb-4">
+        <?= $renderChip('Persona', $icp['role_group_label'] ?: 'Any persona') ?>
+        <?php if ($icp['vertical_label']): ?><?= $renderChip('Vertical', $icp['vertical_label']) ?><?php endif; ?>
+        <?php if ($icp['service_label']): ?><?= $renderChip('Service', $icp['service_label']) ?><?php endif; ?>
+        <?php if ($icp['country_group_label']): ?><?= $renderChip('Country Group', $icp['country_group_label']) ?><?php endif; ?>
+        <?php if ($icp['company_country']): ?><?= $renderChip('Country', $icp['company_country']) ?><?php endif; ?>
+        <?php if ($icp['industry']): ?><?= $renderChip('Industry', $icp['industry']) ?><?php endif; ?>
+        <?php if ($icp['seniority']): ?><?= $renderChip('Seniority', $icp['seniority']) ?><?php endif; ?>
+        <?php if ($icp['employee_count']): ?><?= $renderChip('Size', $icp['employee_count']) ?><?php endif; ?>
+        <?php if ($icp['auto_push_enabled']): ?><?= $renderChip('Saleshandy', 'Auto-push on', true) ?><?php endif; ?>
+      </div>
 
       <?php if ($links): ?>
+      <div class="mb-2">
+        <div class="d-flex justify-content-between small text-muted mb-1">
+          <span>Campaign split</span>
+          <span><?= $total ?>%</span>
+        </div>
+        <div class="progress" style="height: 8px;">
+          <?php foreach ($links as $i => $link): ?>
+            <div class="progress-bar <?= $splitPalette[$i % count($splitPalette)] ?>" role="progressbar"
+                 style="width: <?= (int) $link['percentage'] ?>%" title="<?= e($link['campaign_name']) ?>: <?= (int) $link['percentage'] ?>%"></div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+
       <form method="post" action="icp_segments.php" class="icp-split-form mb-2" data-icp-id="<?= (int) $icp['id'] ?>">
         <?= csrf_field() ?>
         <input type="hidden" name="action" value="update_split">
         <input type="hidden" name="icp_id" value="<?= (int) $icp['id'] ?>">
-        <table class="table table-sm mb-2">
-          <thead><tr><th>Linked campaign</th><th style="width: 140px;" class="text-end">Percentage</th><th style="width: 90px;"></th></tr></thead>
-          <tbody>
-            <?php foreach ($links as $link): ?>
-              <tr>
-                <td><?= e($link['campaign_name']) ?></td>
-                <td class="text-end">
-                  <input type="number" name="percentage[<?= (int) $link['id'] ?>]" value="<?= (int) $link['percentage'] ?>"
-                         min="1" max="100" class="form-control form-control-sm icp-split-input d-inline-block text-end" style="width: 70px;">%
-                </td>
-                <td class="text-end">
-                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeIcpLink(<?= (int) $icp['id'] ?>, <?= (int) $link['id'] ?>)">Remove</button>
-                </td>
-              </tr>
-            <?php endforeach; ?>
-          </tbody>
-        </table>
+        <div class="icp-split-rows mb-2">
+          <?php foreach ($links as $i => $link): ?>
+            <div class="d-flex align-items-center gap-2 py-1">
+              <span class="icp-swatch <?= $splitPalette[$i % count($splitPalette)] ?>"></span>
+              <span class="flex-grow-1"><?= e($link['campaign_name']) ?></span>
+              <input type="number" name="percentage[<?= (int) $link['id'] ?>]" value="<?= (int) $link['percentage'] ?>"
+                     min="1" max="100" class="form-control form-control-sm icp-split-input text-end" style="width: 72px;">
+              <span class="text-muted small" style="width: 12px;">%</span>
+              <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="removeIcpLink(<?= (int) $icp['id'] ?>, <?= (int) $link['id'] ?>)">Remove</button>
+            </div>
+          <?php endforeach; ?>
+        </div>
         <div class="d-flex align-items-center gap-2 mb-3">
-          <button type="submit" class="btn btn-sm btn-outline-primary">Save split</button>
+          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3">Save split</button>
           <span class="small icp-split-total" data-expected="100">Total: <?= (int) $icp['percentage_total'] ?>%</span>
         </div>
       </form>
@@ -284,7 +318,7 @@ render_header('ICP Segments');
         <?= csrf_field() ?>
         <input type="hidden" name="action" value="rebalance">
         <input type="hidden" name="icp_id" value="<?= (int) $icp['id'] ?>">
-        <button type="submit" class="btn btn-sm btn-outline-secondary mb-3">Auto-split evenly</button>
+        <button type="submit" class="btn btn-sm btn-outline-secondary rounded-pill px-3 mb-3">Auto-split evenly</button>
       </form>
       <form method="post" action="icp_segments.php" id="removeLinkForm<?= (int) $icp['id'] ?>" class="d-none">
         <?= csrf_field() ?>
@@ -294,21 +328,17 @@ render_header('ICP Segments');
       <?php else: ?>
       <p class="text-muted small">No campaigns linked yet.</p>
       <?php endif; ?>
-      <form method="post" action="icp_segments.php" class="row g-2 align-items-end">
+      <form method="post" action="icp_segments.php" class="d-flex gap-2 align-items-end icp-add-link-form">
         <?= csrf_field() ?>
         <input type="hidden" name="action" value="add_link">
         <input type="hidden" name="icp_id" value="<?= (int) $icp['id'] ?>">
-        <div class="col-md-9">
-          <select name="campaign_id" class="form-select form-select-sm" required>
-            <option value="">Link a campaign...</option>
-            <?php foreach ($campaigns as $c): ?>
-              <option value="<?= (int) $c['id'] ?>"><?= e($c['name']) ?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div class="col-md-3">
-          <button type="submit" class="btn btn-outline-primary btn-sm w-100">Add link</button>
-        </div>
+        <select name="campaign_id" class="form-select form-select-sm" required>
+          <option value="">Link a campaign&hellip;</option>
+          <?php foreach ($campaigns as $c): ?>
+            <option value="<?= (int) $c['id'] ?>"><?= e($c['name']) ?></option>
+          <?php endforeach; ?>
+        </select>
+        <button type="submit" class="btn btn-outline-primary btn-sm rounded-pill px-3 text-nowrap">Add link</button>
       </form>
     </div>
   </div>
@@ -324,23 +354,24 @@ render_header('ICP Segments');
             <h5 class="modal-title">Edit "<?= e($icp['name']) ?>"</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
           </div>
-          <div class="modal-body row g-2">
+          <div class="modal-body row g-3">
             <div class="col-md-6">
-              <label class="form-label small">Name</label>
-              <input type="text" name="name" class="form-control form-control-sm" value="<?= e($icp['name']) ?>" required>
+              <label class="form-label small text-muted">Name</label>
+              <input type="text" name="name" class="form-control" value="<?= e($icp['name']) ?>" required>
             </div>
             <div class="col-md-6">
-              <label class="form-label small">Role Group (persona)</label>
-              <select name="role_group_id" class="form-select form-select-sm">
+              <label class="form-label small text-muted">Role Group (persona)</label>
+              <select name="role_group_id" class="form-select">
                 <option value="">Any persona</option>
                 <?php foreach ($roleGroups as $rg): ?>
                   <option value="<?= (int) $rg['id'] ?>" <?= (int) $icp['role_group_id'] === (int) $rg['id'] ? 'selected' : '' ?>><?= e($rg['label']) ?></option>
                 <?php endforeach; ?>
               </select>
             </div>
+            <div class="col-12 icp-section-label mt-2">Match criteria</div>
             <div class="col-md-6">
-              <label class="form-label small">Vertical</label>
-              <select name="vertical_id" class="form-select form-select-sm">
+              <label class="form-label small text-muted">Vertical</label>
+              <select name="vertical_id" class="form-select">
                 <option value="">Any</option>
                 <?php foreach ($verticals as $v): ?>
                   <option value="<?= (int) $v['id'] ?>" <?= (int) $icp['vertical_id'] === (int) $v['id'] ? 'selected' : '' ?>><?= e($v['label']) ?></option>
@@ -348,8 +379,8 @@ render_header('ICP Segments');
               </select>
             </div>
             <div class="col-md-6">
-              <label class="form-label small">Service</label>
-              <select name="service_id" class="form-select form-select-sm">
+              <label class="form-label small text-muted">Service</label>
+              <select name="service_id" class="form-select">
                 <option value="">Any</option>
                 <?php foreach ($services as $s): ?>
                   <option value="<?= (int) $s['id'] ?>" <?= (int) $icp['service_id'] === (int) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
@@ -357,8 +388,8 @@ render_header('ICP Segments');
               </select>
             </div>
             <div class="col-md-6">
-              <label class="form-label small">Country Group</label>
-              <select name="country_group_id" class="form-select form-select-sm">
+              <label class="form-label small text-muted">Country Group</label>
+              <select name="country_group_id" class="form-select">
                 <option value="">Any</option>
                 <?php foreach ($countryGroups as $cg): ?>
                   <option value="<?= (int) $cg['id'] ?>" <?= (int) $icp['country_group_id'] === (int) $cg['id'] ? 'selected' : '' ?>><?= e($cg['label']) ?></option>
@@ -366,29 +397,29 @@ render_header('ICP Segments');
               </select>
             </div>
             <div class="col-md-6">
-              <label class="form-label small mb-0">Company Country</label>
+              <label class="form-label small text-muted mb-1">Company Country</label>
               <?php render_multiselect_filter('company_country', 'Company Country', $companyCountries, RoleGroupClassifier::parseKeywords($icp['company_country'] ?? '')); ?>
             </div>
             <div class="col-md-6">
-              <label class="form-label small mb-0">Industry</label>
+              <label class="form-label small text-muted mb-1">Industry</label>
               <?php render_multiselect_filter('industry', 'Industry', $industries, RoleGroupClassifier::parseKeywords($icp['industry'] ?? '')); ?>
             </div>
             <div class="col-md-6">
-              <label class="form-label small mb-0">Seniority</label>
+              <label class="form-label small text-muted mb-1">Seniority</label>
               <?php render_multiselect_filter('seniority', 'Seniority', $seniorities, RoleGroupClassifier::parseKeywords($icp['seniority'] ?? '')); ?>
             </div>
             <div class="col-md-6">
-              <label class="form-label small mb-0">Employee Count</label>
+              <label class="form-label small text-muted mb-1">Employee Count</label>
               <?php render_multiselect_filter('employee_count', 'Employee Count', $employeeCountRanges, RoleGroupClassifier::parseKeywords($icp['employee_count'] ?? '')); ?>
             </div>
-            <div class="col-12 form-check">
-              <input class="form-check-input" type="checkbox" name="auto_push_enabled" value="1" id="autoPush<?= (int) $icp['id'] ?>" <?= $icp['auto_push_enabled'] ? 'checked' : '' ?>>
+            <div class="col-12 form-check form-switch mt-2">
+              <input class="form-check-input" type="checkbox" role="switch" name="auto_push_enabled" value="1" id="autoPush<?= (int) $icp['id'] ?>" <?= $icp['auto_push_enabled'] ? 'checked' : '' ?>>
               <label class="form-check-label small" for="autoPush<?= (int) $icp['id'] ?>">Auto-push to Saleshandy after assignment (otherwise assignment only -- push manually per campaign as usual)</label>
             </div>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
           </div>
         </form>
       </div>
@@ -396,7 +427,11 @@ render_header('ICP Segments');
   </div>
 <?php endforeach; ?>
 <?php if (!$icps): ?>
-  <p class="text-muted text-center py-4">No ICP segments yet.</p>
+  <div class="card icp-card">
+    <div class="card-body text-center py-5">
+      <p class="text-muted mb-0">No ICP segments yet -- create one above to start auto-distributing leads across campaigns.</p>
+    </div>
+  </div>
 <?php endif; ?>
 
 <?php render_footer(); ?>

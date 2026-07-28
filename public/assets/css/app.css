@@ -199,3 +199,64 @@ html.sidebar-collapsed .sidebar-open-btn {
 .multiselect-filter .ms-option-label {
     cursor: pointer;
 }
+
+/* ---- ICP Segments ---- */
+
+.icp-card {
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+}
+
+.icp-card > .card-header {
+    font-size: 0.95rem;
+}
+
+.icp-section-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--bs-secondary-color);
+}
+
+.icp-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    background: var(--bs-tertiary-bg);
+    border: 1px solid var(--bs-border-color);
+    font-size: 0.8rem;
+    line-height: 1.2;
+}
+
+.icp-chip-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--bs-secondary-color);
+}
+
+.icp-chip-accent {
+    background: var(--bs-info-bg-subtle, var(--bs-tertiary-bg));
+    border-color: var(--bs-info-border-subtle, var(--bs-border-color));
+}
+
+.icp-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.icp-split-rows > div + div {
+    border-top: 1px solid var(--bs-border-color);
+}
+
+.icp-add-link-form select {
+    flex: 1 1 auto;
+}
