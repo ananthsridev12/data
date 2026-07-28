@@ -955,6 +955,52 @@ class SaleshandyClient
     }
 
     /**
+     * Runs both directions of the sync (syncCampaign() + pullNewProspects())
+     * across every Saleshandy-linked campaign -- the exact combined loop
+     * cron_saleshandy_sync.php runs on its schedule, extracted here so a
+     * manual "Run now" button (saleshandy_sync_run.php) can trigger the
+     * identical behavior on demand instead of only being reachable via a
+     * cron hit. Returns both a human-readable summary line (for a flash
+     * message / cron log line) and the per-campaign detail.
+     *
+     * @return array{summary:string,campaigns:array<int,array{name:string,ok:bool,detail:string}>}
+     */
+    public function syncAllLinkedCampaigns(PDO $db, int $userId): array
+    {
+        $campaigns = $db->query('SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL')->fetchAll();
+        $detail = [];
+        $totalMatched = 0;
+        $totalCreated = 0;
+        $failures = 0;
+
+        foreach ($campaigns as $campaign) {
+            try {
+                $syncStats = $this->syncCampaign($db, $campaign, $userId);
+                $pullStats = $this->pullNewProspects($db, $campaign, $userId);
+                $totalMatched += $syncStats['matched'];
+                $totalCreated += $pullStats['leads_created'];
+                $line = "{$syncStats['matched']} updated ({$syncStats['bounced']} bounced, {$syncStats['replied']} replied, "
+                    . "{$syncStats['released']} wave-1 group(s) released, {$syncStats['verified']} verification status(es) refreshed); "
+                    . "{$pullStats['leads_created']} new lead(s), {$pullStats['assignments_created']} new assignment(s) pulled in";
+                if (!empty($syncStats['verification_error'])) {
+                    $line .= " -- email verification check failed: {$syncStats['verification_error']}";
+                }
+                $detail[] = ['name' => $campaign['name'], 'ok' => true, 'detail' => $line];
+            } catch (SaleshandyApiException $ex) {
+                $failures++;
+                $detail[] = ['name' => $campaign['name'], 'ok' => false, 'detail' => $ex->getMessage()];
+            }
+        }
+
+        $summary = $campaigns
+            ? "{$totalMatched} lead(s) updated, {$totalCreated} new lead(s) pulled in across " . count($campaigns) . ' campaign(s)'
+                . ($failures ? ", {$failures} campaign(s) failed" : '')
+            : 'No campaigns linked to Saleshandy -- nothing to sync.';
+
+        return ['summary' => $summary, 'campaigns' => $detail];
+    }
+
+    /**
      * Repairs everything the normal "Refresh statuses" sync (syncCampaign())
      * can never reach once its narrow window has moved past a lead's actual
      * activity, because it only fetches events since saleshandy_last_synced_at

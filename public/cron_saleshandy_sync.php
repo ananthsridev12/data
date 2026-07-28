@@ -11,6 +11,7 @@
  */
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
+require_once __DIR__ . '/../app/includes/CronRunLog.php';
 
 header('Content-Type: text/plain');
 
@@ -37,25 +38,14 @@ try {
     $client = SaleshandyClient::fromConfig($config);
 } catch (SaleshandyApiException $ex) {
     echo "Saleshandy not configured: {$ex->getMessage()}\n";
+    CronRunLog::record(db(), 'saleshandy_sync', 'cron', 'Failed: ' . $ex->getMessage());
     exit;
 }
 
-$campaigns = db()->query('SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL')->fetchAll();
-if (!$campaigns) {
-    echo "No campaigns linked to Saleshandy -- nothing to sync.\n";
-    exit;
+$result = $client->syncAllLinkedCampaigns(db(), $systemUserId);
+foreach ($result['campaigns'] as $c) {
+    echo $c['ok'] ? "\"{$c['name']}\": {$c['detail']}\n" : "\"{$c['name']}\": FAILED -- {$c['detail']}\n";
 }
+echo "\n{$result['summary']}\n";
 
-foreach ($campaigns as $campaign) {
-    try {
-        $syncStats = $client->syncCampaign(db(), $campaign, $systemUserId);
-        $pullStats = $client->pullNewProspects(db(), $campaign, $systemUserId);
-        echo "\"{$campaign['name']}\": {$syncStats['matched']} updated ({$syncStats['bounced']} bounced, {$syncStats['replied']} replied, {$syncStats['released']} wave-1 group(s) released, {$syncStats['verified']} verification status(es) refreshed); "
-            . "{$pullStats['leads_created']} new lead(s), {$pullStats['assignments_created']} new assignment(s) pulled in\n";
-        if (!empty($syncStats['verification_error'])) {
-            echo "  -- email verification check failed: {$syncStats['verification_error']}\n";
-        }
-    } catch (SaleshandyApiException $ex) {
-        echo "\"{$campaign['name']}\": FAILED -- {$ex->getMessage()}\n";
-    }
-}
+CronRunLog::record(db(), 'saleshandy_sync', 'cron', $result['summary']);

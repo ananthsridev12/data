@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/includes/IcpRepository.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/RoleGroupClassifier.php';
 require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
+require_once __DIR__ . '/../app/includes/CronRunLog.php';
 
 $admin = require_admin();
 
@@ -119,6 +120,23 @@ $unmappedPersonas = db()->query(
 )->fetchAll();
 
 $activeIcpCount = count(array_filter($icps, static fn (array $i): bool => (bool) $i['is_active']));
+$lastSyncRun = CronRunLog::lastRun(db(), 'saleshandy_sync');
+$lastDistributionRun = CronRunLog::lastRun(db(), 'icp_distribution');
+
+/** Renders a "how long ago" string from a MySQL DATETIME, for the cron-status card. */
+$timeAgo = static function (string $mysqlDatetime): string {
+    $diff = time() - strtotime($mysqlDatetime);
+    if ($diff < 60) {
+        return 'just now';
+    }
+    if ($diff < 3600) {
+        return floor($diff / 60) . ' min ago';
+    }
+    if ($diff < 86400) {
+        return floor($diff / 3600) . ' hr ago';
+    }
+    return floor($diff / 86400) . ' day(s) ago';
+};
 
 // Cycled per linked-campaign row so the split preview bar and its rows
 // below share a color, in a fixed order (not randomized/hashed) so a
@@ -144,6 +162,48 @@ render_header('ICP Segments');
   <div class="d-flex gap-2 flex-shrink-0">
     <span class="badge rounded-pill bg-success-subtle text-success-emphasis px-3 py-2"><?= $activeIcpCount ?> active</span>
     <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis px-3 py-2"><?= count($icps) ?> total</span>
+  </div>
+</div>
+
+<div class="card icp-card mb-4">
+  <div class="card-header fw-semibold">Cron status</div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6 d-flex justify-content-between align-items-center gap-2">
+        <div>
+          <div class="fw-semibold">Saleshandy sync</div>
+          <?php if ($lastSyncRun): ?>
+            <div class="small text-muted">
+              Last run <?= $timeAgo($lastSyncRun['ran_at']) ?> (<?= e($lastSyncRun['triggered_by']) ?>)
+              <?php if ($lastSyncRun['summary']): ?><br><?= e($lastSyncRun['summary']) ?><?php endif; ?>
+            </div>
+          <?php else: ?>
+            <div class="small text-muted">Never run yet -- set up the cron job, or run it now.</div>
+          <?php endif; ?>
+        </div>
+        <form method="post" action="saleshandy_sync_run.php" class="flex-shrink-0">
+          <?= csrf_field() ?>
+          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
+        </form>
+      </div>
+      <div class="col-md-6 d-flex justify-content-between align-items-center gap-2">
+        <div>
+          <div class="fw-semibold">ICP distribution</div>
+          <?php if ($lastDistributionRun): ?>
+            <div class="small text-muted">
+              Last run <?= $timeAgo($lastDistributionRun['ran_at']) ?> (<?= e($lastDistributionRun['triggered_by']) ?>)
+              <?php if ($lastDistributionRun['summary']): ?><br><?= e($lastDistributionRun['summary']) ?><?php endif; ?>
+            </div>
+          <?php else: ?>
+            <div class="small text-muted">Never run yet -- set up the cron job, or run it now.</div>
+          <?php endif; ?>
+        </div>
+        <form method="post" action="icp_distribution_run.php" class="flex-shrink-0">
+          <?= csrf_field() ?>
+          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 
