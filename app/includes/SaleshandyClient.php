@@ -997,6 +997,24 @@ class SaleshandyClient
                 . ($failures ? ", {$failures} campaign(s) failed" : '')
             : 'No campaigns linked to Saleshandy -- nothing to sync.';
 
+        // A bare failure count ("15 campaign(s) failed") isn't actionable
+        // on its own -- append a handful of the actual error messages
+        // (deduped, since the same misconfiguration/outage usually
+        // produces the identical error on every campaign) so whoever
+        // reads this summary (the flash message, or the persisted
+        // cron_runs row) can actually diagnose it without digging
+        // through the full per-campaign detail array.
+        if ($failures) {
+            $sampleErrors = array_values(array_unique(array_map(
+                static fn (array $d): string => $d['detail'],
+                array_filter($detail, static fn (array $d): bool => !$d['ok'])
+            )));
+            $summary .= '. Error(s): ' . implode(' | ', array_slice($sampleErrors, 0, 3));
+            if (count($sampleErrors) > 3) {
+                $summary .= ' | ...';
+            }
+        }
+
         return ['summary' => $summary, 'campaigns' => $detail];
     }
 
