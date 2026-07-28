@@ -49,20 +49,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'add_link') {
         $icpId = (int) ($_POST['icp_id'] ?? 0);
         $campaignId = (int) ($_POST['campaign_id'] ?? 0);
-        $percentage = (int) ($_POST['percentage'] ?? 0);
-        if (!$campaignId || $percentage < 1 || $percentage > 100) {
-            flash_set('danger', 'Pick a campaign and a percentage between 1 and 100.');
+        if (!$campaignId) {
+            flash_set('danger', 'Pick a campaign to link.');
         } else {
             try {
-                IcpRepository::addLink(db(), $icpId, $campaignId, $percentage);
-                flash_set('success', 'Campaign linked.');
+                IcpRepository::addLink(db(), $icpId, $campaignId);
+                flash_set('success', 'Campaign linked -- percentages auto-split evenly across all linked campaigns.');
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'That campaign is already linked to this ICP.' : 'Could not link campaign.');
             }
         }
     } elseif ($action === 'remove_link') {
         IcpRepository::removeLink(db(), (int) ($_POST['link_id'] ?? 0));
-        flash_set('success', 'Link removed.');
+        flash_set('success', 'Link removed -- remaining campaigns auto-split evenly.');
+    } elseif ($action === 'rebalance') {
+        IcpRepository::rebalanceEvenly(db(), (int) ($_POST['icp_id'] ?? 0));
+        flash_set('success', 'Split reset to an even percentage across all linked campaigns.');
+    } elseif ($action === 'update_split') {
+        $icpId = (int) ($_POST['icp_id'] ?? 0);
+        $percentages = array_map('intval', (array) ($_POST['percentage'] ?? []));
+        if (IcpRepository::updateLinkPercentages(db(), $icpId, $percentages)) {
+            flash_set('success', 'Custom split saved.');
+        } else {
+            flash_set('danger', 'Could not save split -- percentages must be 1-100 each and sum to exactly 100.');
+        }
     }
 
     header('Location: icp_segments.php');
@@ -107,8 +117,10 @@ render_header('ICP Segments');
   count, and one Role Group) linked to 2 or more campaigns with a percentage split -- for A/B testing the same
   persona across campaigns. A cron job (<code>icp_distribution_cron.php</code>) periodically finds newly
   matching, not-yet-assigned leads and distributes them across the linked campaigns according to the weights.
-  An ICP only runs once its linked campaigns' percentages sum to exactly 100 -- one still short of 100% is
-  simply skipped by the cron until fixed, not treated as an error.
+  <strong>The split is automatic</strong> -- link one campaign and it gets 100%; link a second or third and every
+  linked campaign is instantly re-split evenly (e.g. 50/50, then 34/33/33), no manual percentages required.
+  Want an uneven weighting instead (e.g. 70/30)? Edit the percentages below and click "Save split" -- click
+  "Auto-split evenly" any time to go back to the automatic split.
 </p>
 
 <?php if ($unmappedPersonas): ?>
@@ -235,42 +247,58 @@ render_header('ICP Segments');
         <?php if ($icp['auto_push_enabled']): ?> | <span class="badge bg-info text-dark">Auto-push enabled</span><?php endif; ?>
       </p>
 
-      <table class="table table-sm mb-2">
-        <thead><tr><th>Linked campaign</th><th class="text-end">Percentage</th><th></th></tr></thead>
-        <tbody>
-          <?php foreach ($links as $link): ?>
-            <tr>
-              <td><?= e($link['campaign_name']) ?></td>
-              <td class="text-end"><?= (int) $link['percentage'] ?>%</td>
-              <td>
-                <form method="post" action="icp_segments.php" class="d-inline" onsubmit="return confirm('Remove this campaign link?');">
-                  <?= csrf_field() ?>
-                  <input type="hidden" name="action" value="remove_link">
-                  <input type="hidden" name="link_id" value="<?= (int) $link['id'] ?>">
-                  <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
-                </form>
-              </td>
-            </tr>
-          <?php endforeach; ?>
-          <?php if (!$links): ?>
-            <tr><td colspan="3" class="text-center text-muted py-2">No campaigns linked yet.</td></tr>
-          <?php endif; ?>
-        </tbody>
-      </table>
+      <?php if ($links): ?>
+      <form method="post" action="icp_segments.php" class="icp-split-form mb-2" data-icp-id="<?= (int) $icp['id'] ?>">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="update_split">
+        <input type="hidden" name="icp_id" value="<?= (int) $icp['id'] ?>">
+        <table class="table table-sm mb-2">
+          <thead><tr><th>Linked campaign</th><th style="width: 140px;" class="text-end">Percentage</th><th style="width: 90px;"></th></tr></thead>
+          <tbody>
+            <?php foreach ($links as $link): ?>
+              <tr>
+                <td><?= e($link['campaign_name']) ?></td>
+                <td class="text-end">
+                  <input type="number" name="percentage[<?= (int) $link['id'] ?>]" value="<?= (int) $link['percentage'] ?>"
+                         min="1" max="100" class="form-control form-control-sm icp-split-input d-inline-block text-end" style="width: 70px;">%
+                </td>
+                <td class="text-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeIcpLink(<?= (int) $icp['id'] ?>, <?= (int) $link['id'] ?>)">Remove</button>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <button type="submit" class="btn btn-sm btn-outline-primary">Save split</button>
+          <span class="small icp-split-total" data-expected="100">Total: <?= (int) $icp['percentage_total'] ?>%</span>
+        </div>
+      </form>
+      <form method="post" action="icp_segments.php" class="d-inline">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="rebalance">
+        <input type="hidden" name="icp_id" value="<?= (int) $icp['id'] ?>">
+        <button type="submit" class="btn btn-sm btn-outline-secondary mb-3">Auto-split evenly</button>
+      </form>
+      <form method="post" action="icp_segments.php" id="removeLinkForm<?= (int) $icp['id'] ?>" class="d-none">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="remove_link">
+        <input type="hidden" name="link_id" id="removeLinkId<?= (int) $icp['id'] ?>" value="">
+      </form>
+      <?php else: ?>
+      <p class="text-muted small">No campaigns linked yet.</p>
+      <?php endif; ?>
       <form method="post" action="icp_segments.php" class="row g-2 align-items-end">
         <?= csrf_field() ?>
         <input type="hidden" name="action" value="add_link">
         <input type="hidden" name="icp_id" value="<?= (int) $icp['id'] ?>">
-        <div class="col-md-6">
+        <div class="col-md-9">
           <select name="campaign_id" class="form-select form-select-sm" required>
             <option value="">Link a campaign...</option>
             <?php foreach ($campaigns as $c): ?>
               <option value="<?= (int) $c['id'] ?>"><?= e($c['name']) ?></option>
             <?php endforeach; ?>
           </select>
-        </div>
-        <div class="col-md-3">
-          <input type="number" name="percentage" class="form-control form-control-sm" placeholder="% of matches" min="1" max="100" required>
         </div>
         <div class="col-md-3">
           <button type="submit" class="btn btn-outline-primary btn-sm w-100">Add link</button>

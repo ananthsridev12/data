@@ -215,6 +215,45 @@
   });
 })();
 
+// ICP Segments: remove-link buttons submit a hidden per-ICP form (not
+// nested inside the percentage-split <form> they're rendered next to --
+// HTML doesn't allow nested forms) after a confirm prompt.
+function removeIcpLink(icpId, linkId) {
+  if (!window.confirm('Remove this campaign link?')) return false;
+  var idField = document.getElementById('removeLinkId' + icpId);
+  var form = document.getElementById('removeLinkForm' + icpId);
+  if (idField) idField.value = linkId;
+  if (form) form.submit();
+  return false;
+}
+
+// ICP Segments: live running total for the percentage-split inputs, so
+// an admin editing a custom split (e.g. 70/30) can see before submitting
+// whether it actually adds up to 100 -- the server re-validates this
+// regardless, this is just feedback while typing.
+(function () {
+  document.querySelectorAll('.icp-split-form').forEach(function (form) {
+    var inputs = form.querySelectorAll('.icp-split-input');
+    var total = form.querySelector('.icp-split-total');
+    if (!inputs.length || !total) return;
+
+    function recompute() {
+      var sum = 0;
+      inputs.forEach(function (input) {
+        sum += parseInt(input.value, 10) || 0;
+      });
+      total.textContent = 'Total: ' + sum + '%';
+      total.classList.toggle('text-danger', sum !== 100);
+      total.classList.toggle('text-muted', sum === 100);
+    }
+
+    inputs.forEach(function (input) {
+      input.addEventListener('input', recompute);
+    });
+    recompute();
+  });
+})();
+
 // Multi-select checkbox filter dropdowns (render_multiselect_filter() in helpers.php).
 (function () {
   function updateLabel(toggle) {

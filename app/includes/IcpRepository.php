@@ -112,15 +112,100 @@ class IcpRepository
         $db->prepare('UPDATE icp_segments SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
     }
 
-    public static function addLink(PDO $db, int $icpId, int $campaignId, int $percentage): void
+    /**
+     * Links a campaign at a placeholder 0% and immediately rebalances
+     * every link on this ICP to an even split -- so an admin never has
+     * to hand-pick a percentage that happens to make the total land on
+     * 100 (1 link -> 100%, 2 -> 50/50, 3 -> 34/33/33, etc).
+     */
+    public static function addLink(PDO $db, int $icpId, int $campaignId): void
     {
-        $stmt = $db->prepare('INSERT INTO icp_campaign_links (icp_id, campaign_id, percentage) VALUES (?, ?, ?)');
-        $stmt->execute([$icpId, $campaignId, $percentage]);
+        $stmt = $db->prepare('INSERT INTO icp_campaign_links (icp_id, campaign_id, percentage) VALUES (?, ?, 0)');
+        $stmt->execute([$icpId, $campaignId]);
+        self::rebalanceEvenly($db, $icpId);
     }
 
+    /** Removes a link, then rebalances whatever campaigns remain back to an even split. */
     public static function removeLink(PDO $db, int $linkId): void
     {
+        $stmt = $db->prepare('SELECT icp_id FROM icp_campaign_links WHERE id = ?');
+        $stmt->execute([$linkId]);
+        $icpId = $stmt->fetchColumn();
+
         $db->prepare('DELETE FROM icp_campaign_links WHERE id = ?')->execute([$linkId]);
+
+        if ($icpId !== false) {
+            self::rebalanceEvenly($db, (int) $icpId);
+        }
+    }
+
+    /**
+     * Resets every link on an ICP to an even percentage split summing to
+     * exactly 100 (any remainder from an uneven division goes to the
+     * first links, by id order). Called automatically by addLink()/
+     * removeLink() so the total is always valid without an admin doing
+     * the arithmetic; also callable directly (an "Auto-split evenly"
+     * button) to discard a manual custom split, or to fix an ICP whose
+     * links don't currently sum to 100 for any other reason.
+     */
+    public static function rebalanceEvenly(PDO $db, int $icpId): void
+    {
+        $stmt = $db->prepare('SELECT id FROM icp_campaign_links WHERE icp_id = ? ORDER BY id');
+        $stmt->execute([$icpId]);
+        $linkIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        $count = count($linkIds);
+        if ($count === 0) {
+            return;
+        }
+
+        $base = intdiv(100, $count);
+        $remainder = 100 % $count;
+
+        $update = $db->prepare('UPDATE icp_campaign_links SET percentage = ? WHERE id = ?');
+        foreach ($linkIds as $i => $linkId) {
+            $update->execute([$base + ($i < $remainder ? 1 : 0), $linkId]);
+        }
+    }
+
+    /**
+     * Applies an admin-chosen custom split (e.g. 70/30 weighting for
+     * A/B testing) instead of the even default -- rejects the whole
+     * update (no writes at all) unless every currently-linked campaign
+     * is present, each value is 1-100, and they sum to exactly 100, so
+     * an ICP can never be left half-updated or not summing to 100.
+     *
+     * @param array<int,int> $percentagesByLinkId link_id => percentage
+     */
+    public static function updateLinkPercentages(PDO $db, int $icpId, array $percentagesByLinkId): bool
+    {
+        $stmt = $db->prepare('SELECT id FROM icp_campaign_links WHERE icp_id = ?');
+        $stmt->execute([$icpId]);
+        $existingIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+        if (!$existingIds || count($existingIds) !== count($percentagesByLinkId)) {
+            return false;
+        }
+
+        $sum = 0;
+        foreach ($existingIds as $id) {
+            if (!array_key_exists($id, $percentagesByLinkId)) {
+                return false;
+            }
+            $pct = (int) $percentagesByLinkId[$id];
+            if ($pct < 1 || $pct > 100) {
+                return false;
+            }
+            $sum += $pct;
+        }
+        if ($sum !== 100) {
+            return false;
+        }
+
+        $update = $db->prepare('UPDATE icp_campaign_links SET percentage = ? WHERE id = ? AND icp_id = ?');
+        foreach ($percentagesByLinkId as $linkId => $pct) {
+            $update->execute([(int) $pct, (int) $linkId, $icpId]);
+        }
+        return true;
     }
 
     /**

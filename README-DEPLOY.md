@@ -885,12 +885,29 @@ single-value Vertical/Service, mapped straight onto
 (`IcpRepository::toFilters()`) -- no new filtering logic, just a new way
 to save and reuse a filter combination.
 
-**Percentages must sum to exactly 100 to run.** This isn't enforced as a
-hard block on activating an ICP (ordering an ICP's own creation before
-its links exist would make that awkward) -- instead, an ICP whose links
-don't currently sum to 100 is simply skipped by the cron every run until
-fixed, shown on the page as a "Not running -- links sum to N%, needs
-100%" warning badge rather than treated as an error.
+**Percentages are managed automatically, not typed in by hand.**
+Linking a campaign no longer asks for a percentage -- `IcpRepository::
+addLink()`/`removeLink()` call `rebalanceEvenly()` after every add/remove,
+which resets every linked campaign on that ICP to an even split summing
+to exactly 100 (1 link -> 100%, 2 -> 50/50, 3 -> 34/33/33, any rounding
+remainder going to the first-added links). This is what keeps an ICP
+"Ready" without an admin ever computing percentages by hand.
+
+Want an uneven weighting instead (e.g. 70/30 for a bigger test on one
+campaign)? Edit each campaign's percentage inline under "Linked
+campaign" and click "Save split" -- `IcpRepository::updateLinkPercentages()`
+rejects the whole update (no partial writes) unless every linked
+campaign is present with a value 1-100 and they sum to exactly 100. A
+"Auto-split evenly" button resets a custom split back to even at any
+time, and also fixes a legacy ICP whose links don't currently sum to
+100 for any other reason.
+
+Because the total is now always kept at 100 by the add/remove path
+itself, "links don't sum to 100" is mostly a legacy-data / manual-SQL
+edge case rather than something that comes up in normal use -- the cron
+still just skips (not errors on) any ICP where it's not currently true,
+shown on the page as a "Not running -- links sum to N%, needs 100%"
+warning badge.
 
 **Split happens per individual lead** (weighted random, via
 `IcpRepository::splitLeadIds()` -- shuffle the matching pool, then slice
