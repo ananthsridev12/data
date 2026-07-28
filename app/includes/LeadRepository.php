@@ -403,6 +403,20 @@ class LeadRepository
     }
 
     /**
+     * Just the count for the given filters -- COUNT(*) instead of
+     * fetching every matching row's id like matchingIds() does, for
+     * callers (e.g. icp_segments.php's "N leads eligible now") that only
+     * need the number, not the actual IDs.
+     */
+    public static function matchingCount(PDO $db, array $filters): int
+    {
+        [$where, $params] = self::buildWhere($filters);
+        $stmt = $db->prepare("SELECT COUNT(*) FROM leads l {$where}");
+        $stmt->execute($params);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
      * Active rows from a lookup table (verticals/services/role_groups), for
      * filter dropdowns and inline-edit selects. Table name is never user
      * input.

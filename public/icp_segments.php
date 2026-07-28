@@ -95,8 +95,14 @@ $seniorities = LeadRepository::distinctValues(db(), 'seniority');
 $employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
 
 $linksByIcp = [];
+$matchingCountByIcp = [];
 foreach ($icps as $icp) {
     $linksByIcp[(int) $icp['id']] = IcpRepository::links(db(), (int) $icp['id']);
+    // Same filters + "never assigned to any campaign before" scoping the
+    // distribution cron itself uses (IcpRepository::toFilters()) -- so
+    // this is exactly the pool the next cron run would pick up and split,
+    // not "every lead that could ever match this ICP".
+    $matchingCountByIcp[(int) $icp['id']] = LeadRepository::matchingCount(db(), IcpRepository::toFilters($icp));
 }
 
 // Active Role Groups (personas) with zero ICPs referencing them at all
@@ -267,6 +273,13 @@ render_header('ICP Segments');
       </div>
     </div>
     <div class="card-body">
+      <div class="d-flex align-items-baseline gap-2 mb-3">
+        <span class="fs-4 fw-bold"><?= number_format($matchingCountByIcp[(int) $icp['id']]) ?></span>
+        <span class="text-muted small">
+          lead(s) eligible right now
+          <?= info_icon('Leads matching this ICP\'s current criteria that have never been assigned to any campaign before -- exactly the pool the next distribution cron run would pick up and split across the linked campaigns. Leads already assigned here or to any other campaign are intentionally excluded, since the cron never reconsiders them.') ?>
+        </span>
+      </div>
       <div class="d-flex flex-wrap gap-2 mb-4">
         <?= $renderChip('Persona', $icp['role_group_label'] ?: 'Any persona') ?>
         <?php if ($icp['vertical_label']): ?><?= $renderChip('Vertical', $icp['vertical_label']) ?><?php endif; ?>

@@ -896,6 +896,18 @@ straight onto `LeadRepository::matchingIds()`'s existing filter keys
 (`IcpRepository::toFilters()`) -- no new filtering logic, just a new way
 to save and reuse a filter combination.
 
+**Each ICP shows a live "N lead(s) eligible right now" count** in its
+card, via a new `LeadRepository::matchingCount()` (a `COUNT(*)` query,
+not `matchingIds()` -- no reason to fetch every matching row's id just
+to count them). It runs the exact same filters + scoping the
+distribution cron itself uses (`IcpRepository::toFilters()`, which
+includes `assigned_campaign_id = 'none'`), so this number is precisely
+the pool the next cron run would pick up and split across the linked
+campaigns -- not "every lead that could ever match this ICP" (leads
+already assigned anywhere, including to one of this ICP's own linked
+campaigns from a previous run, are correctly excluded, since the cron
+never reconsiders them).
+
 **Percentages are managed automatically, not typed in by hand.**
 Linking a campaign no longer asks for a percentage -- `IcpRepository::
 addLink()`/`removeLink()` call `rebalanceEvenly()` after every add/remove,
