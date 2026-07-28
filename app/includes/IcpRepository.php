@@ -209,6 +209,60 @@ class IcpRepository
     }
 
     /**
+     * One row per ICP with Saleshandy performance aggregated across every
+     * lead this ICP's own distribution cron run(s) actually assigned
+     * (lead_campaign_assignments.icp_id, sql/028) -- deliberately NOT
+     * "every lead in this ICP's linked campaigns", since a campaign can
+     * be linked to more than one ICP (verified safe elsewhere in this
+     * app) and a lead added to it manually was never caused by this ICP.
+     * Assignments made before icp_id tracking existed have icp_id = NULL
+     * and so are invisible here even if they're sitting in a linked
+     * campaign -- only newly-made assignments are attributed.
+     *
+     * "Pending push" mirrors SaleshandyClient::pushCampaignLeads()'s
+     * exact eligibility check (wave_status active, not yet pushed, lead
+     * not domain-suppressed, not soft-deleted) -- i.e. what the next
+     * auto-push cron run (or a manual "Push to Saleshandy" click) would
+     * actually pick up right now.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public static function performanceStats(PDO $db): array
+    {
+        $rows = $db->query(
+            "SELECT icp.id, icp.name, icp.is_active, icp.auto_push_enabled,
+                    (SELECT GROUP_CONCAT(c.name ORDER BY c.name SEPARATOR ', ')
+                       FROM icp_campaign_links lk JOIN campaigns c ON c.id = lk.campaign_id
+                      WHERE lk.icp_id = icp.id) AS campaign_names,
+                    COUNT(a.id) AS leads_assigned,
+                    SUM(CASE WHEN a.wave_status = 'active' AND a.status != 'pushed'
+                              AND NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1))
+                             THEN 1 ELSE 0 END) AS pending_push,
+                    SUM(CASE WHEN a.status = 'pushed' THEN 1 ELSE 0 END) AS pushed,
+                    SUM(CASE WHEN a.email_sent = 1 THEN 1 ELSE 0 END) AS emails_sent,
+                    SUM(CASE WHEN a.bounce_status = 'delivered' THEN 1 ELSE 0 END) AS delivered,
+                    SUM(CASE WHEN a.bounce_status = 'bounced' THEN 1 ELSE 0 END) AS bounced,
+                    SUM(CASE WHEN a.open_count > 0 THEN 1 ELSE 0 END) AS opened,
+                    SUM(CASE WHEN a.reply_sentiment IS NOT NULL THEN 1 ELSE 0 END) AS replied
+               FROM icp_segments icp
+               LEFT JOIN lead_campaign_assignments a ON a.icp_id = icp.id
+               LEFT JOIN leads l ON l.id = a.lead_id
+              WHERE l.deleted_at IS NULL OR a.id IS NULL
+              GROUP BY icp.id
+              ORDER BY icp.name"
+        )->fetchAll();
+
+        foreach ($rows as &$r) {
+            foreach (['leads_assigned', 'pending_push', 'pushed', 'emails_sent', 'delivered', 'bounced', 'opened', 'replied'] as $col) {
+                $r[$col] = (int) $r[$col];
+            }
+        }
+        unset($r);
+
+        return $rows;
+    }
+
+    /**
      * Maps an icp_segments row to the exact filter shape
      * LeadRepository::buildWhere()/matchingIds() already accepts --
      * comma-lists parsed the same way RoleGroupClassifier::parseKeywords()

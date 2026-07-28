@@ -190,7 +190,7 @@ class WaveAssigner
      * @param string[] $titlePriority ordered, case-insensitive substring keywords (e.g. ["VP Engineering", "CTO"])
      * @return array{leaders:int, held:int, suppressed_skipped:int, already_elsewhere_skipped:int, pending_elsewhere_skipped:int, pending_elsewhere_campaigns:array<string,int>, already_in_campaign:int, domains:int}
      */
-    public static function assign(PDO $db, array $leadIds, int $campaignId, int $userId, array $titlePriority): array
+    public static function assign(PDO $db, array $leadIds, int $campaignId, int $userId, array $titlePriority, ?int $icpId = null): array
     {
         $stats = [
             'leaders' => 0, 'held' => 0, 'suppressed_skipped' => 0,
@@ -223,7 +223,7 @@ class WaveAssigner
         $stats['domains'] = count($byDomain);
 
         $insertStmt = $db->prepare(
-            'INSERT IGNORE INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by, wave_status, wave_leader_id) VALUES (?, ?, ?, ?, ?)'
+            'INSERT IGNORE INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by, icp_id, wave_status, wave_leader_id) VALUES (?, ?, ?, ?, ?, ?)'
         );
         $findStmt = $db->prepare('SELECT id FROM lead_campaign_assignments WHERE lead_id = ? AND campaign_id = ?');
 
@@ -231,7 +231,7 @@ class WaveAssigner
             $leader = self::pickLeader($domainLeads, $titlePriority);
             $others = array_filter($domainLeads, static fn($l) => $l['id'] !== $leader['id']);
 
-            $insertStmt->execute([$leader['id'], $campaignId, $userId, 'active', null]);
+            $insertStmt->execute([$leader['id'], $campaignId, $userId, $icpId, 'active', null]);
             if ($insertStmt->rowCount() === 1) {
                 $leaderAssignmentId = (int) $db->lastInsertId();
                 $stats['leaders']++;
@@ -242,7 +242,7 @@ class WaveAssigner
             }
 
             foreach ($others as $lead) {
-                $insertStmt->execute([$lead['id'], $campaignId, $userId, 'held', $leaderAssignmentId]);
+                $insertStmt->execute([$lead['id'], $campaignId, $userId, $icpId, 'held', $leaderAssignmentId]);
                 if ($insertStmt->rowCount() === 1) {
                     $stats['held']++;
                 } else {

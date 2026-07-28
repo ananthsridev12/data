@@ -49,8 +49,9 @@ and import, in order:
 25. `sql/025_icp_segments.sql`
 26. `sql/026_employee_count_range.sql`
 27. `sql/027_country_groups.sql`
+28. `sql/028_icp_assignment_tracking.sql`
 
-(If you're setting up a brand-new site, import all twenty-seven in order. If
+(If you're setting up a brand-new site, import all twenty-eight in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -950,6 +951,39 @@ wget -q -O /dev/null "https://yoursite.com/icp_distribution_cron.php?token=YOUR_
 Add as a separate cPanel Cron Job entry alongside `cron_saleshandy_sync.php`
 (a few-hours interval is reasonable -- there's no benefit to running it
 more often than leads actually get imported).
+
+## ICP Report (`public/icp_report.php`)
+
+One row per ICP with Saleshandy performance: leads assigned, pending
+push, pushed, emails sent, delivered, bounced (+ rate), opened (+ rate),
+replied (+ rate). Answers "is auto-push actually doing anything, and is
+there anything stuck" without reading the cron's plain-text log output.
+
+**"Pending push" mirrors the real push eligibility check exactly** --
+`SaleshandyClient::pushCampaignLeads()`'s own query (wave-1 active, not
+yet marked `status = 'pushed'`, not domain-suppressed, lead not
+soft-deleted). That's the honest answer to "how does auto-push know
+there's pending data": it doesn't track a separate queue -- every run
+(cron or the manual button) just re-asks "who in this campaign is
+wave-1-active and not yet pushed", so it also mops up anything left over
+from a previous run that failed partway, not only brand-new leads.
+
+**Numbers are attributed per-ICP, not per-campaign**, via a new
+`lead_campaign_assignments.icp_id` column (`sql/028_icp_assignment_tracking.sql`)
+set by `WaveAssigner::assign()`'s new optional `$icpId` parameter, passed
+by `icp_distribution_cron.php` on every assignment it makes. This
+matters because a campaign can be linked to more than one ICP (by
+design, verified safe elsewhere in this app) -- counting "every lead in
+this ICP's linked campaigns" would double-count leads that actually came
+from a sibling ICP sharing that campaign, or from a manual add via
+`campaign_select_leads.php`. Manual assignments keep `icp_id = NULL` and
+so never show up in this report, by design.
+
+**Existing assignments made before this migration show as 0** here even
+if the ICP cron already ran for them in the past -- there's no reliable
+way to retroactively determine which pre-existing rows came from which
+ICP (or from a manual add) after the fact, so the report only reflects
+assignments made from this point forward.
 
 ## Notes on the Saleshandy CSV export
 

@@ -73,6 +73,7 @@ function nav_links(array $user): array
             ['href' => 'role_groups.php', 'label' => 'Role Groups'],
             ['href' => 'country_groups.php', 'label' => 'Country Groups'],
             ['href' => 'icp_segments.php', 'label' => 'ICP Segments'],
+            ['href' => 'icp_report.php', 'label' => 'ICP Report'],
             ['href' => 'tags.php', 'label' => 'Tags'],
             ['href' => 'custom_fields.php', 'label' => 'Custom Fields'],
             ['href' => 'bounce_import.php', 'label' => 'Bounces'],

@@ -75,7 +75,7 @@ foreach ($icps as $icp) {
                 echo "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): 0 lead(s)\n";
                 continue;
             }
-            $stats = WaveAssigner::assign(db(), $bucket, (int) $link['campaign_id'], $systemUserId, $titlePriority);
+            $stats = WaveAssigner::assign(db(), $bucket, (int) $link['campaign_id'], $systemUserId, $titlePriority, (int) $icp['id']);
             echo "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): {$stats['leaders']} leader(s), {$stats['held']} held, "
                 . "{$stats['suppressed_skipped']} suppressed, {$stats['already_elsewhere_skipped']} already elsewhere, "
                 . "{$stats['pending_elsewhere_skipped']} pending elsewhere\n";
