@@ -517,6 +517,20 @@ class SaleshandyClient
             }
             $hasMore = !empty($payload['hasMore']);
             $page++;
+            if ($hasMore) {
+                // A busy campaign's 2-year backfill can mean dozens of
+                // pages -- firing them back-to-back with zero delay can
+                // trip Saleshandy's rate limiter on its own, regardless
+                // of how far apart different campaigns' cron runs are
+                // spaced (confirmed in practice: a backfill's own
+                // pagination burst triggered "Rate Limit exceeded",
+                // code 4000). request()'s own retry-with-backoff only
+                // helps once a call has already been throttled; this
+                // reduces how often that happens in the first place. A
+                // typical incremental sync is usually just 1 page, so
+                // this adds no delay for the common case.
+                usleep(500_000);
+            }
         } while ($hasMore);
 
         return $rows;

@@ -1045,6 +1045,21 @@ shape but additionally excludes a campaign for good once it's
 successfully backfilled once -- see "Automating this across every
 linked campaign" above.
 
+**Round-robin alone wasn't enough -- confirmed in practice**: even with
+different campaigns' cron runs spaced apart, a *single* campaign's own
+`fetchSequenceActivity()` call can trip Saleshandy's rate limiter
+(`error_code 4000`) on its own. That method paginates internally
+(100 rows/page) and, until this fix, fired every page back-to-back with
+zero delay -- a busy campaign's 2-year backfill can mean dozens of pages
+in one tight burst, independent of how the cron itself is scheduled.
+Fixed with a 0.5s `usleep()` between pages when there's more to fetch
+(no delay after the last page, and none at all for the common
+single-page case a routine incremental sync usually is). This is on top
+of, not instead of, `request()`'s existing retry-with-backoff for a
+call that gets rate-limited anyway (1s/2s/4s, 3 retries) -- the delay
+reduces how often that retry path gets hit in the first place, since
+retrying only helps once a call has already been throttled.
+
 **Deliberately a separate "last ATTEMPT" column, not reusing "last
 success"** (`saleshandy_last_synced_at`, which also drives the
 incremental fetch window and must only advance on real success): the
