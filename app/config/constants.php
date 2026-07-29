@@ -1,6 +1,7 @@
 <?php
 
 const ROLE_ADMIN = 'admin';
+const ROLE_TEAM_LEAD = 'team_lead';
 const ROLE_MEMBER = 'member';
 
 /**

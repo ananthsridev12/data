@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/CsvExporter.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 // Export everything currently assigned to one campaign (stamps exported_at/status).
 if (!empty($_GET['campaign_export'])) {
@@ -57,6 +58,6 @@ $filters = [
     'show_suppressed' => !empty($_GET['show_suppressed']),
 ];
 
-$leadIds = LeadRepository::matchingIds(db(), $filters);
+$leadIds = LeadRepository::matchingIds(db(), $scope, $filters);
 CsvExporter::streamLeads(db(), $leadIds, 'leads-export-' . date('Ymd-His') . '.csv');
 exit;

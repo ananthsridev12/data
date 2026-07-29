@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/includes/RoleGroupClassifier.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $admin = require_admin();
+$scope = Scope::fromUser(db(), $admin);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -186,7 +187,7 @@ foreach ($unclassifiedTitlesCandidates as $row) {
 // from real data via the checkbox dropdown below instead of guessing
 // keyword phrases blind. Same source/widget already used for Dashboard's
 // Title filter.
-$titleOptions = LeadRepository::distinctValues(db(), 'title', 1000);
+$titleOptions = LeadRepository::distinctValues(db(), $scope, 'title', 1000);
 
 render_header('Role Groups');
 ?>

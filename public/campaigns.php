@@ -3,6 +3,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $admin = require_admin();
+$scope = Scope::fromUser(db(), $admin);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -63,8 +64,8 @@ $campaigns = db()->query(
      LEFT JOIN services s ON s.id = c.service_id
      ORDER BY c.created_at DESC"
 )->fetchAll();
-$verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
-$services = LeadRepository::activeLookupOptions(db(), 'services');
+$verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
+$services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 
 // Touch/step notes already saved via Campaign Flow (campaign_flow.php) --
 // shown inline as an accordion below, straight from our own DB, so

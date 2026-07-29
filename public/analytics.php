@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/includes/AnalyticsRepository.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $filters = [
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
@@ -17,9 +18,9 @@ $filters = [
 ];
 
 $campaigns = db()->query('SELECT id, name FROM campaigns ORDER BY name')->fetchAll();
-$verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
-$services = LeadRepository::activeLookupOptions(db(), 'services');
-$industries = LeadRepository::distinctValues(db(), 'industry');
+$verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
+$services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
+$industries = LeadRepository::distinctValues(db(), $scope, 'industry');
 
 $campaignFunnel = AnalyticsRepository::campaignFunnel(db());
 $funnelMaxStep = 0;

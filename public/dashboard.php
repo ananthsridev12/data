@@ -6,6 +6,7 @@ require_once __DIR__ . '/../app/includes/TagRepository.php';
 require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $columns = ColumnPreferences::getForUser(db(), $user['id'], 'dashboard');
 
@@ -59,22 +60,22 @@ $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters[
     || $filters['assigned_campaign_id'] !== '' || $filters['imported'] !== '' || $filters['email_sent'] !== '';
 
 if ($hasRealFilter) {
-    $result = LeadRepository::search(db(), $filters, $page);
+    $result = LeadRepository::search(db(), $scope, $filters, $page);
 } else {
     $result = ['rows' => [], 'total' => 0, 'page' => 1, 'perPage' => 0, 'totalPages' => 1];
 }
 
-$titleOptions = LeadRepository::distinctValues(db(), 'title', 1000);
-$seniorities = LeadRepository::distinctValues(db(), 'seniority');
-$departmentOptions = LeadRepository::distinctValues(db(), 'departments');
-$industries = LeadRepository::distinctValues(db(), 'industry');
-$countries = LeadRepository::distinctValues(db(), 'country');
-$companyCountries = LeadRepository::distinctValues(db(), 'company_country');
+$titleOptions = LeadRepository::distinctValues(db(), $scope, 'title', 1000);
+$seniorities = LeadRepository::distinctValues(db(), $scope, 'seniority');
+$departmentOptions = LeadRepository::distinctValues(db(), $scope, 'departments');
+$industries = LeadRepository::distinctValues(db(), $scope, 'industry');
+$countries = LeadRepository::distinctValues(db(), $scope, 'country');
+$companyCountries = LeadRepository::distinctValues(db(), $scope, 'company_country');
 $employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
-$verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
-$services = LeadRepository::activeLookupOptions(db(), 'services');
-$roleGroups = LeadRepository::activeLookupOptions(db(), 'role_groups');
-$countryGroups = LeadRepository::activeLookupOptions(db(), 'country_groups');
+$verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
+$services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
+$roleGroups = LeadRepository::activeLookupOptions(db(), $scope, 'role_groups');
+$countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
 $campaigns = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORDER BY name')->fetchAll();
 $importers = db()->query(
     "SELECT DISTINCT u.id, u.name FROM users u JOIN import_batches ib ON ib.uploaded_by = u.id ORDER BY u.name"

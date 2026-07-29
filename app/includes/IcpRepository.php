@@ -3,6 +3,7 @@
 require_once __DIR__ . '/RoleGroupClassifier.php';
 require_once __DIR__ . '/WaveAssigner.php';
 require_once __DIR__ . '/LeadRepository.php';
+require_once __DIR__ . '/Scope.php';
 
 /**
  * CRUD + matching/splitting logic for ICP (Ideal Customer Profile) segments
@@ -413,7 +414,17 @@ class IcpRepository
         try {
             $links = self::links($db, (int) $icp['id']);
             $filters = self::toFilters($icp);
-            $matchingIds = LeadRepository::matchingIds($db, $filters);
+            // The cron processes ICPs across every company in rotation --
+            // icp_segments.company_id (not the cron's own caller identity)
+            // is what determines which tenant's leads this particular
+            // ICP is allowed to match against.
+            $scope = Scope::fromUser($db, [
+                'id' => $systemUserId,
+                'company_id' => (int) $icp['company_id'],
+                'role' => ROLE_ADMIN,
+                'team_id' => null,
+            ]);
+            $matchingIds = LeadRepository::matchingIds($db, $scope, $filters);
 
             $buckets = [];
             $titlePriority = [];

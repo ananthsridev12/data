@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/Scope.php';
 
 function auth_boot(): void
 {
@@ -36,7 +37,7 @@ function current_user(): ?array
         return $cached;
     }
 
-    $stmt = db()->prepare('SELECT id, name, email, role, is_active FROM users WHERE id = ? LIMIT 1');
+    $stmt = db()->prepare('SELECT id, name, email, role, is_active, company_id, team_id, is_team_lead FROM users WHERE id = ? LIMIT 1');
     $stmt->execute([$_SESSION['user_id']]);
     $user = $stmt->fetch();
 
@@ -133,4 +134,29 @@ function require_admin(): array
         exit;
     }
     return $user;
+}
+
+function require_team_lead(): array
+{
+    $user = require_login();
+    if ($user['role'] !== ROLE_ADMIN && $user['role'] !== ROLE_TEAM_LEAD) {
+        http_response_code(403);
+        echo '403 Forbidden - team lead access required.';
+        exit;
+    }
+    return $user;
+}
+
+/**
+ * The logged-in user's Scope, for pages that only need it to call
+ * company-scoped repository methods (not the full $user array). Pages
+ * that already call require_login()/require_admin()/require_team_lead()
+ * for the $user array should build their Scope from that same array via
+ * Scope::fromUser($db, $user) instead of calling this too -- it's a
+ * second (cheap, cached) DB round trip for the same information.
+ */
+function require_scope(): Scope
+{
+    $user = require_login();
+    return Scope::fromUser(db(), $user);
 }

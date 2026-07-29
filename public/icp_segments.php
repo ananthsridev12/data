@@ -7,6 +7,7 @@ require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
 require_once __DIR__ . '/../app/includes/CronRunLog.php';
 
 $admin = require_admin();
+$scope = Scope::fromUser(db(), $admin);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -84,15 +85,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $icps = IcpRepository::list(db());
-$roleGroups = LeadRepository::activeLookupOptions(db(), 'role_groups');
-$verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
-$services = LeadRepository::activeLookupOptions(db(), 'services');
-$countryGroups = LeadRepository::activeLookupOptions(db(), 'country_groups');
+$roleGroups = LeadRepository::activeLookupOptions(db(), $scope, 'role_groups');
+$verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
+$services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
+$countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
 $campaigns = db()->query("SELECT id, name FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL ORDER BY name")->fetchAll();
 
-$companyCountries = LeadRepository::distinctValues(db(), 'company_country');
-$industries = LeadRepository::distinctValues(db(), 'industry');
-$seniorities = LeadRepository::distinctValues(db(), 'seniority');
+$companyCountries = LeadRepository::distinctValues(db(), $scope, 'company_country');
+$industries = LeadRepository::distinctValues(db(), $scope, 'industry');
+$seniorities = LeadRepository::distinctValues(db(), $scope, 'seniority');
 $employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
 
 $linksByIcp = [];
@@ -103,7 +104,7 @@ foreach ($icps as $icp) {
     // distribution cron itself uses (IcpRepository::toFilters()) -- so
     // this is exactly the pool the next cron run would pick up and split,
     // not "every lead that could ever match this ICP".
-    $matchingCountByIcp[(int) $icp['id']] = LeadRepository::matchingCount(db(), IcpRepository::toFilters($icp));
+    $matchingCountByIcp[(int) $icp['id']] = LeadRepository::matchingCount(db(), $scope, IcpRepository::toFilters($icp));
 }
 
 // Active Role Groups (personas) with zero ICPs referencing them at all

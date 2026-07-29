@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/TagRepository.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $leadId = (int) ($_GET['id'] ?? 0);
 
@@ -18,9 +19,9 @@ $stmt = db()->prepare(
        LEFT JOIN import_batches ib ON ib.id = l.last_import_batch_id
        LEFT JOIN users iu ON iu.id = ib.uploaded_by
        LEFT JOIN users du ON du.id = l.deleted_by
-      WHERE l.id = ?"
+      WHERE l.id = ? AND l.company_id = ?"
 );
-$stmt->execute([$leadId]);
+$stmt->execute([$leadId, $scope->companyId]);
 $lead = $stmt->fetch();
 
 if (!$lead) {
@@ -233,7 +234,7 @@ $field = static function (string $label, ?string $value) {
             <label class="form-label">Vertical</label>
             <select name="vertical_id" class="form-select form-select-sm">
               <option value="">--</option>
-              <?php foreach (LeadRepository::activeLookupOptions(db(), 'verticals') as $v): ?>
+              <?php foreach (LeadRepository::activeLookupOptions(db(), $scope, 'verticals') as $v): ?>
                 <option value="<?= (int) $v['id'] ?>" <?= (int) $lead['vertical_id'] === (int) $v['id'] ? 'selected' : '' ?>><?= e($v['label']) ?></option>
               <?php endforeach; ?>
             </select>
@@ -242,7 +243,7 @@ $field = static function (string $label, ?string $value) {
             <label class="form-label">Service</label>
             <select name="service_id" class="form-select form-select-sm">
               <option value="">--</option>
-              <?php foreach (LeadRepository::activeLookupOptions(db(), 'services') as $s): ?>
+              <?php foreach (LeadRepository::activeLookupOptions(db(), $scope, 'services') as $s): ?>
                 <option value="<?= (int) $s['id'] ?>" <?= (int) $lead['service_id'] === (int) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
               <?php endforeach; ?>
             </select>

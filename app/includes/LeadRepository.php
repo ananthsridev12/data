@@ -1,12 +1,18 @@
 <?php
 
 require_once __DIR__ . '/WaveAssigner.php';
+require_once __DIR__ . '/ScopeFilter.php';
 
 /**
  * Server-side filter/search/pagination for the leads dashboard. All
  * filter values are bound via PDO placeholders -- never string-interpolated
  * into SQL -- and only columns from FILTERABLE_COLUMNS below are ever
  * used to build a WHERE clause.
+ *
+ * Every public method here takes a required Scope so a company_id filter
+ * can never be forgotten -- see ScopeFilter::apply(), always called from
+ * buildWhere() (or, for the handful of methods that don't build a WHERE
+ * via that helper, applied directly).
  */
 class LeadRepository
 {
@@ -20,12 +26,12 @@ class LeadRepository
      *   are excluded entirely)
      * @return array{rows: array<int,array>, total: int, page: int, perPage: int, totalPages: int}
      */
-    public static function search(PDO $db, array $filters, int $page = 1): array
+    public static function search(PDO $db, Scope $scope, array $filters, int $page = 1): array
     {
         $page = max(1, $page);
         $perPage = self::PER_PAGE;
 
-        [$where, $params] = self::buildWhere($filters);
+        [$where, $params] = self::buildWhere($scope, $filters);
 
         $countSql = "SELECT COUNT(*) FROM leads l {$where}";
         $countStmt = $db->prepare($countSql);
@@ -47,6 +53,17 @@ class LeadRepository
                     WHERE a.lead_id = l.id) AS used_in_campaigns,
                   (SELECT sd.reason FROM suppressed_domains sd
                     WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)) AS suppressed_reason,
+                  -- When this lead becomes eligible again for a different
+                  -- campaign / a different owner, per the company's
+                  -- lead_cooldown_days -- NULL if never assigned, or if
+                  -- already past (i.e. eligible now). Mirrors
+                  -- WaveAssigner::COOLDOWN_ACTIVE_SQL's window so this
+                  -- display value and that eligibility check never drift
+                  -- apart. All rows in one search() call belong to the
+                  -- same company (see the scope filter below), so a
+                  -- single bound :cooldown_days applies to every row.
+                  (SELECT DATE_ADD(MAX(a4.assigned_at), INTERVAL :cooldown_days DAY)
+                     FROM lead_campaign_assignments a4 WHERE a4.lead_id = l.id) AS cooldown_eligible_again_at,
                   -- Which campaign(s) a *different* persona at this lead's domain is
                   -- currently pending in -- shares WaveAssigner::PENDING_ASSIGNMENT_SQL
                   -- so the two never drift apart.
@@ -80,7 +97,10 @@ class LeadRepository
                 ORDER BY l.id DESC
                 LIMIT {$perPage} OFFSET {$offset}";
         $stmt = $db->prepare($sql);
-        $stmt->execute($params);
+        // cooldown_days is only referenced by the SELECT list above, not
+        // by $where -- kept out of $params (shared with countStmt above)
+        // so the COUNT(*) query isn't handed a bound value it never uses.
+        $stmt->execute($params + ['cooldown_days' => $scope->leadCooldownDays]);
         $rows = $stmt->fetchAll();
 
         return [
@@ -95,10 +115,11 @@ class LeadRepository
     /**
      * @return array{0:string,1:array<string,mixed>} [WHERE clause string, bound params]
      */
-    private static function buildWhere(array $filters): array
+    private static function buildWhere(Scope $scope, array $filters): array
     {
         $clauses = [];
         $params = [];
+        ScopeFilter::apply($clauses, $params, $scope);
 
         $like = static function (string $col, string $value) use (&$clauses, &$params): void {
             $clauses[] = "l.{$col} LIKE :" . $col;
@@ -349,9 +370,9 @@ class LeadRepository
      * used for the campaign page's "pick allowed titles" manual persona
      * checklist. Ordered most-common first, capped to keep the checklist short.
      */
-    public static function distinctTitlesForFilter(PDO $db, array $filters, int $limit = 40): array
+    public static function distinctTitlesForFilter(PDO $db, Scope $scope, array $filters, int $limit = 40): array
     {
-        [$where, $params] = self::buildWhere($filters);
+        [$where, $params] = self::buildWhere($scope, $filters);
         $titleClause = "l.title IS NOT NULL AND l.title <> ''";
         $where = $where === '' ? "WHERE {$titleClause}" : "{$where} AND {$titleClause}";
 
@@ -366,9 +387,9 @@ class LeadRepository
      * given filters -- shown on the campaign selection page alongside the
      * lead count, since wave-1 assigns one contact per domain.
      */
-    public static function domainCountForFilter(PDO $db, array $filters): int
+    public static function domainCountForFilter(PDO $db, Scope $scope, array $filters): int
     {
-        [$where, $params] = self::buildWhere($filters);
+        [$where, $params] = self::buildWhere($scope, $filters);
         $stmt = $db->prepare("SELECT COUNT(DISTINCT SUBSTRING_INDEX(l.email, '@', -1)) FROM leads l {$where}");
         $stmt->execute($params);
         return (int) $stmt->fetchColumn();
@@ -379,14 +400,15 @@ class LeadRepository
      *   columns (e.g. title) used in checkbox-dropdown filters -- 0 means
      *   no cap.
      */
-    public static function distinctValues(PDO $db, string $column, int $limit = 0): array
+    public static function distinctValues(PDO $db, Scope $scope, string $column, int $limit = 0): array
     {
         $allowed = ['seniority', 'industry', 'country', 'employee_count', 'employee_count_range', 'company_country', 'title', 'departments'];
         if (!in_array($column, $allowed, true)) {
             throw new InvalidArgumentException("Column not filterable: {$column}");
         }
         $limitSql = $limit > 0 ? " LIMIT {$limit}" : '';
-        $stmt = $db->query("SELECT DISTINCT {$column} FROM leads WHERE {$column} IS NOT NULL AND {$column} <> '' ORDER BY {$column}{$limitSql}");
+        $stmt = $db->prepare("SELECT DISTINCT {$column} FROM leads WHERE company_id = :scope_company_id AND {$column} IS NOT NULL AND {$column} <> '' ORDER BY {$column}{$limitSql}");
+        $stmt->execute(['scope_company_id' => $scope->companyId]);
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }
 
@@ -394,9 +416,9 @@ class LeadRepository
      * All lead IDs matching the given filters, ignoring pagination. Used
      * for "assign/export everything matching this filter" bulk actions.
      */
-    public static function matchingIds(PDO $db, array $filters): array
+    public static function matchingIds(PDO $db, Scope $scope, array $filters): array
     {
-        [$where, $params] = self::buildWhere($filters);
+        [$where, $params] = self::buildWhere($scope, $filters);
         $stmt = $db->prepare("SELECT l.id FROM leads l {$where}");
         $stmt->execute($params);
         return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
@@ -408,9 +430,9 @@ class LeadRepository
      * callers (e.g. icp_segments.php's "N leads eligible now") that only
      * need the number, not the actual IDs.
      */
-    public static function matchingCount(PDO $db, array $filters): int
+    public static function matchingCount(PDO $db, Scope $scope, array $filters): int
     {
-        [$where, $params] = self::buildWhere($filters);
+        [$where, $params] = self::buildWhere($scope, $filters);
         $stmt = $db->prepare("SELECT COUNT(*) FROM leads l {$where}");
         $stmt->execute($params);
         return (int) $stmt->fetchColumn();
@@ -421,23 +443,25 @@ class LeadRepository
      * filter dropdowns and inline-edit selects. Table name is never user
      * input.
      */
-    public static function activeLookupOptions(PDO $db, string $table): array
+    public static function activeLookupOptions(PDO $db, Scope $scope, string $table): array
     {
         if (!in_array($table, ['verticals', 'services', 'role_groups', 'country_groups'], true)) {
             throw new InvalidArgumentException("Not a lookup table: {$table}");
         }
-        return $db->query("SELECT id, code, label FROM {$table} WHERE is_active = 1 ORDER BY label")->fetchAll();
+        $stmt = $db->prepare("SELECT id, code, label FROM {$table} WHERE company_id = :scope_company_id AND is_active = 1 ORDER BY label");
+        $stmt->execute(['scope_company_id' => $scope->companyId]);
+        return $stmt->fetchAll();
     }
 
-    public static function findByIds(PDO $db, array $ids): array
+    public static function findByIds(PDO $db, Scope $scope, array $ids): array
     {
         $ids = array_values(array_filter(array_map('intval', $ids)));
         if (!$ids) {
             return [];
         }
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
-        $stmt = $db->prepare("SELECT * FROM leads WHERE id IN ({$placeholders})");
-        $stmt->execute($ids);
+        $stmt = $db->prepare("SELECT * FROM leads WHERE company_id = ? AND id IN ({$placeholders})");
+        $stmt->execute([$scope->companyId, ...$ids]);
         return $stmt->fetchAll();
     }
 }

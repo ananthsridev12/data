@@ -3,6 +3,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $admin = require_admin();
+$scope = Scope::fromUser(db(), $admin);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: dashboard.php');
@@ -48,7 +49,7 @@ if ($action === 'bulk_delete') {
         'hide_used_in_campaign' => !empty($rawFilters['hide_used_in_campaign']),
         'show_suppressed' => !empty($rawFilters['show_suppressed']),
     ];
-    $leadIds = LeadRepository::matchingIds(db(), $filters);
+    $leadIds = LeadRepository::matchingIds(db(), $scope, $filters);
 
     if (!$leadIds) {
         flash_set('danger', 'No leads matched this filter.');

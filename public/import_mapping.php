@@ -6,6 +6,7 @@ require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/TagRepository.php';
 
 $admin = require_admin();
+$scope = Scope::fromUser(db(), $admin);
 $config = require __DIR__ . '/../app/config/config.php';
 $uploadsDir = rtrim($config['uploads_dir'], '/');
 
@@ -33,8 +34,8 @@ $customFieldRows = db()->query('SELECT field_key, label FROM custom_fields WHERE
 $customFieldLabels = array_column($customFieldRows, 'label', 'field_key');
 
 $lookupOptions = [
-    'vertical' => LeadRepository::activeLookupOptions(db(), 'verticals'),
-    'service' => LeadRepository::activeLookupOptions(db(), 'services'),
+    'vertical' => LeadRepository::activeLookupOptions(db(), $scope, 'verticals'),
+    'service' => LeadRepository::activeLookupOptions(db(), $scope, 'services'),
 ];
 $campaignOptions = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORDER BY name')->fetchAll();
 $allTags = TagRepository::all(db());

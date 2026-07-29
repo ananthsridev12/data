@@ -6,6 +6,7 @@ require_once __DIR__ . '/../app/includes/TagRepository.php';
 require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $campaignId = (int) ($_GET['campaign_id'] ?? $_POST['campaign_id'] ?? 0);
 $campStmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
@@ -59,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         exit;
     }
 
-    $leadIds = LeadRepository::matchingIds(db(), $filters);
+    $leadIds = LeadRepository::matchingIds(db(), $scope, $filters);
 
     if (!$leadIds) {
         flash_set('danger', 'No leads match this filter.');
@@ -184,11 +185,11 @@ $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters[
     || $filters['pending_elsewhere'] !== '' || $filters['account_used_elsewhere'] !== '';
 
 if ($hasRealFilter) {
-    $leadCount = count(LeadRepository::matchingIds(db(), $filters));
-    $domainCount = LeadRepository::domainCountForFilter(db(), $filters);
-    $titles = LeadRepository::distinctTitlesForFilter(db(), $filters);
+    $leadCount = count(LeadRepository::matchingIds(db(), $scope, $filters));
+    $domainCount = LeadRepository::domainCountForFilter(db(), $scope, $filters);
+    $titles = LeadRepository::distinctTitlesForFilter(db(), $scope, $filters);
     $previewPage = max(1, (int) ($_GET['page'] ?? 1));
-    $preview = LeadRepository::search(db(), $filters, $previewPage);
+    $preview = LeadRepository::search(db(), $scope, $filters, $previewPage);
 } else {
     $leadCount = null;
     $domainCount = null;
@@ -196,17 +197,17 @@ if ($hasRealFilter) {
     $preview = ['rows' => [], 'total' => 0, 'page' => 1, 'totalPages' => 1];
 }
 
-$titleOptions = LeadRepository::distinctValues(db(), 'title', 1000);
-$seniorities = LeadRepository::distinctValues(db(), 'seniority');
-$departmentOptions = LeadRepository::distinctValues(db(), 'departments');
-$industries = LeadRepository::distinctValues(db(), 'industry');
-$countries = LeadRepository::distinctValues(db(), 'country');
-$companyCountries = LeadRepository::distinctValues(db(), 'company_country');
+$titleOptions = LeadRepository::distinctValues(db(), $scope, 'title', 1000);
+$seniorities = LeadRepository::distinctValues(db(), $scope, 'seniority');
+$departmentOptions = LeadRepository::distinctValues(db(), $scope, 'departments');
+$industries = LeadRepository::distinctValues(db(), $scope, 'industry');
+$countries = LeadRepository::distinctValues(db(), $scope, 'country');
+$companyCountries = LeadRepository::distinctValues(db(), $scope, 'company_country');
 $employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
-$verticals = LeadRepository::activeLookupOptions(db(), 'verticals');
-$services = LeadRepository::activeLookupOptions(db(), 'services');
-$roleGroups = LeadRepository::activeLookupOptions(db(), 'role_groups');
-$countryGroups = LeadRepository::activeLookupOptions(db(), 'country_groups');
+$verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
+$services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
+$roleGroups = LeadRepository::activeLookupOptions(db(), $scope, 'role_groups');
+$countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
 $existingTags = TagRepository::all(db());
 
 render_header('Select leads');
