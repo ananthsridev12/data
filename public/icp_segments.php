@@ -124,6 +124,8 @@ $activeIcpCount = count(array_filter($icps, static fn (array $i): bool => (bool)
 $lastSyncRun = CronRunLog::lastRun(db(), 'saleshandy_sync');
 $lastDistributionRun = CronRunLog::lastRun(db(), 'icp_distribution');
 $lastBackfillRun = CronRunLog::lastRun(db(), 'saleshandy_backfill');
+$lastFieldSyncRun = CronRunLog::lastRun(db(), 'saleshandy_field_sync');
+$fieldSyncEnabledCount = (int) db()->query('SELECT COUNT(*) FROM companies WHERE saleshandy_field_sync_cron_enabled = 1')->fetchColumn();
 
 /** Renders a "how long ago" string from a MySQL DATETIME, for the cron-status card. */
 $timeAgo = static function (string $mysqlDatetime): string {
@@ -223,6 +225,26 @@ render_header('ICP Segments');
           <?php endif; ?>
         </div>
         <form method="post" action="campaign_saleshandy_backfill_run.php" class="flex-shrink-0">
+          <?= csrf_field() ?>
+          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
+        </form>
+      </div>
+      <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
+        <div>
+          <div class="fw-semibold">Saleshandy field sync</div>
+          <?php if ($fieldSyncEnabledCount === 0): ?>
+            <div class="small text-muted">Scheduled cron is off for every company -- enable it on <a href="company_profile.php">Company Profile</a>, or use "Run now" any time regardless.</div>
+          <?php endif; ?>
+          <?php if ($lastFieldSyncRun): ?>
+            <div class="small text-muted">
+              Last run <?= $timeAgo($lastFieldSyncRun['ran_at']) ?> (<?= e($lastFieldSyncRun['triggered_by']) ?>)
+              <?php if ($lastFieldSyncRun['summary']): ?><br><?= e($lastFieldSyncRun['summary']) ?><?php endif; ?>
+            </div>
+          <?php else: ?>
+            <div class="small text-muted">Never run yet -- set up the cron job, or run it now. Keeps already-pushed leads' custom fields (Vertical, Service, etc.) current on Saleshandy.</div>
+          <?php endif; ?>
+        </div>
+        <form method="post" action="campaign_saleshandy_field_sync_run.php" class="flex-shrink-0">
           <?= csrf_field() ?>
           <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
         </form>

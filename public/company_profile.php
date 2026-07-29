@@ -11,13 +11,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'update_company') {
         $name = trim((string) ($_POST['name'] ?? ''));
         $cooldownDays = (int) ($_POST['lead_cooldown_days'] ?? 0);
+        $fieldSyncEnabled = !empty($_POST['saleshandy_field_sync_cron_enabled']) ? 1 : 0;
         if ($name === '') {
             flash_set('danger', 'Company name is required.');
         } elseif ($cooldownDays < 1) {
             flash_set('danger', 'Cooldown days must be at least 1.');
         } else {
-            db()->prepare('UPDATE companies SET name = ?, lead_cooldown_days = ? WHERE id = ?')
-                ->execute([$name, $cooldownDays, $scope->companyId]);
+            db()->prepare('UPDATE companies SET name = ?, lead_cooldown_days = ?, saleshandy_field_sync_cron_enabled = ? WHERE id = ?')
+                ->execute([$name, $cooldownDays, $fieldSyncEnabled, $scope->companyId]);
             flash_set('success', 'Company profile updated.');
         }
     } elseif ($action === 'create_team') {
@@ -59,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$companyStmt = db()->prepare('SELECT id, name, lead_cooldown_days FROM companies WHERE id = ?');
+$companyStmt = db()->prepare('SELECT id, name, lead_cooldown_days, saleshandy_field_sync_cron_enabled FROM companies WHERE id = ?');
 $companyStmt->execute([$scope->companyId]);
 $company = $companyStmt->fetch();
 
@@ -103,6 +104,15 @@ render_header('Company Profile');
         <label class="form-label">Lead cool-off (days)</label>
         <input type="number" name="lead_cooldown_days" class="form-control" min="1" value="<?= (int) $company['lead_cooldown_days'] ?>" required>
         <div class="form-text">How long a lead must sit idle before it's eligible for a different campaign or a different owner again.</div>
+      </div>
+      <div class="col-12">
+        <div class="form-check">
+          <input type="checkbox" name="saleshandy_field_sync_cron_enabled" value="1" class="form-check-input" id="fieldSyncEnabled" <?= $company['saleshandy_field_sync_cron_enabled'] ? 'checked' : '' ?>>
+          <label class="form-check-label" for="fieldSyncEnabled">Enable automatic Saleshandy field-sync cron</label>
+        </div>
+        <div class="form-text">
+          When on, the scheduled cron keeps already-pushed leads' Saleshandy custom fields (Vertical, Service, etc.) current in the background, one campaign and up to 50 leads at a time. Off by default -- see <a href="icp_segments.php">ICP Segments</a> for cron status and a manual "Run now" button, which works regardless of this setting.
+        </div>
       </div>
       <div class="col-md-2 d-flex align-items-end">
         <button type="submit" class="btn btn-primary w-100">Save</button>

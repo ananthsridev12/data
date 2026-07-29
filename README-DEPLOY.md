@@ -375,6 +375,37 @@ The existing per-campaign "Backfill dates & status" button still works
 exactly as before for an immediate one-off, and now also marks that
 campaign as done so the cron doesn't redundantly repeat it later.
 
+**Keeping already-pushed leads' custom fields current** (Vertical,
+Service, and anything else enabled on Saleshandy Field Mapping):
+`campaign_saleshandy_field_sync_cron.php` runs
+`SaleshandyClient::syncFieldsForNextCampaign()` -- same round-robin
+pattern as the other three crons, but with two batching levels instead
+of one: it picks the campaign that's gone longest without a field-sync
+attempt (`campaigns.saleshandy_field_sync_last_attempt_at`), then within
+that campaign syncs up to 50 already-pushed leads at a time, oldest-
+synced-first (`lead_campaign_assignments.saleshandy_fields_synced_at`)
+-- so a campaign with more than 50 pushed leads still reaches all of
+them across successive runs instead of the same first 50 forever.
+
+Unlike the other three crons, **this one is opt-in per company** --
+check "Enable automatic Saleshandy field-sync cron" on Company Profile
+before adding the cPanel job below, or it'll just log "not enabled for
+any company" on every hit and do nothing. Field-syncing can mean a lot
+of Saleshandy API calls for a large campaign, so it shouldn't start
+firing the moment this URL exists in cPanel without an explicit
+decision to turn it on.
+
+Add as a fourth cPanel Cron Job entry:
+```
+wget -q -O /dev/null "https://yoursite.com/campaign_saleshandy_field_sync_cron.php?token=YOUR_CRON_TOKEN"
+```
+A manual "Run now" button lives alongside the other three on the ICP
+Segments page's "Cron status" card -- it always works regardless of the
+Company Profile toggle, same as every other "Run now" button (an
+explicit click is its own consent). The existing per-lead "Sync fields
+to Saleshandy" bulk action on Campaign Leads still works exactly as
+before for an immediate, hand-picked sync.
+
 **Campaign Leads was redesigned for clarity** -- it had grown to four
 separate cards below the contact table (Mark Imported/Email Sent,
 Delivery Status, Sync to Saleshandy, Remove/Delete), each with its own

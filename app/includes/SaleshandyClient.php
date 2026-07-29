@@ -254,7 +254,7 @@ class SaleshandyClient
 
         $placeholders = implode(',', array_fill(0, count($assignmentIds), '?'));
         $stmt = $db->prepare(
-            "SELECT a.status, l.*, v.label AS vertical_label, s.label AS service_label
+            "SELECT a.id AS assignment_id, a.status, l.*, v.label AS vertical_label, s.label AS service_label
                FROM lead_campaign_assignments a
                JOIN leads l ON l.id = a.lead_id
                LEFT JOIN verticals v ON v.id = l.vertical_id
@@ -321,6 +321,14 @@ class SaleshandyClient
         };
 
         $updateProspectId = $db->prepare('UPDATE leads SET saleshandy_prospect_id = ? WHERE id = ?');
+        // Stamped for every lead an update was actually attempted on
+        // (success, partial, full failure, or API exception alike) --
+        // same "last ATTEMPT, not last SUCCESS" principle as the
+        // campaign-level round-robin columns (see syncNextCampaign()'s
+        // docblock): a chronically-failing lead must still stop being
+        // picked first, or it starves every other lead in the campaign
+        // from ever reaching syncFieldsForNextCampaign()'s batch.
+        $stampSynced = $db->prepare('UPDATE lead_campaign_assignments SET saleshandy_fields_synced_at = NOW() WHERE id = ?');
 
         foreach ($eligible as $i => $lead) {
             if ($i > 0) {
@@ -399,6 +407,8 @@ class SaleshandyClient
                 array_keys($fieldIdToValue)
             );
 
+            $stampSynced->execute([(int) $lead['assignment_id']]);
+
             try {
                 $failedFieldIds = $this->updateProspectAttributes($prospectId, $fieldIdToValue);
                 if (!$failedFieldIds) {
@@ -432,6 +442,93 @@ class SaleshandyClient
         }
 
         return $stats;
+    }
+
+    /**
+     * Round-robin batch runner for syncFieldsToSaleshandy() -- keeps
+     * already-pushed leads' custom fields (Vertical, Service, etc.)
+     * current on Saleshandy without looping every linked campaign in one
+     * request, same "one unit per call" shape as syncNextCampaign() /
+     * backfillNextCampaign(). Two nested rotations: which CAMPAIGN goes
+     * next (oldest saleshandy_field_sync_last_attempt_at, NULL/never
+     * treated as oldest), then which up-to-$limit LEADS within that
+     * campaign go next (oldest saleshandy_fields_synced_at) -- so a
+     * campaign with more pushed leads than one batch covers still
+     * reaches all of them across successive runs instead of the same
+     * first N forever.
+     *
+     * @param int[]|null $eligibleCompanyIds restrict campaign selection to
+     *   these companies' campaigns (the scheduled cron passes the
+     *   companies that have opted in via saleshandy_field_sync_cron_enabled);
+     *   null means no restriction (the manual "Run now" button -- an
+     *   explicit click is its own consent, independent of the toggle).
+     *   An empty array means "opted in nowhere," so nothing runs.
+     * @return array{campaign:?string,summary:string,ok:bool}
+     */
+    public function syncFieldsForNextCampaign(PDO $db, int $userId, ?array $eligibleCompanyIds, int $limit = 50): array
+    {
+        if ($eligibleCompanyIds !== null && !$eligibleCompanyIds) {
+            return ['campaign' => null, 'summary' => 'Field-sync cron is not enabled for any company -- nothing to do.', 'ok' => true];
+        }
+
+        $params = [];
+        $companyFilterSql = '';
+        if ($eligibleCompanyIds !== null) {
+            $placeholders = implode(',', array_fill(0, count($eligibleCompanyIds), '?'));
+            $companyFilterSql = " AND company_id IN ({$placeholders})";
+            $params = $eligibleCompanyIds;
+        }
+
+        $campaignStmt = $db->prepare(
+            "SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL{$companyFilterSql}
+              ORDER BY (saleshandy_field_sync_last_attempt_at IS NOT NULL), saleshandy_field_sync_last_attempt_at ASC
+              LIMIT 1"
+        );
+        $campaignStmt->execute($params);
+        $campaign = $campaignStmt->fetch();
+
+        if (!$campaign) {
+            $summary = $eligibleCompanyIds !== null
+                ? 'No Saleshandy-linked campaign found among companies with field-sync enabled -- nothing to do.'
+                : 'No campaigns linked to Saleshandy -- nothing to sync.';
+            return ['campaign' => null, 'summary' => $summary, 'ok' => true];
+        }
+
+        $markAttempted = $db->prepare('UPDATE campaigns SET saleshandy_field_sync_last_attempt_at = NOW() WHERE id = ?');
+
+        $idsStmt = $db->prepare(
+            "SELECT a.id FROM lead_campaign_assignments a
+               JOIN leads l ON l.id = a.lead_id
+              WHERE a.campaign_id = ? AND a.status = 'pushed' AND l.deleted_at IS NULL
+              ORDER BY (a.saleshandy_fields_synced_at IS NOT NULL), a.saleshandy_fields_synced_at ASC, a.id ASC
+              LIMIT ?"
+        );
+        $idsStmt->bindValue(1, (int) $campaign['id'], PDO::PARAM_INT);
+        $idsStmt->bindValue(2, $limit, PDO::PARAM_INT);
+        $idsStmt->execute();
+        $assignmentIds = array_map('intval', $idsStmt->fetchAll(PDO::FETCH_COLUMN));
+
+        if (!$assignmentIds) {
+            $markAttempted->execute([$campaign['id']]);
+            return ['campaign' => $campaign['name'], 'summary' => "\"{$campaign['name']}\": no pushed leads to sync.", 'ok' => true];
+        }
+
+        try {
+            $stats = $this->syncFieldsToSaleshandy($db, $assignmentIds, (int) $campaign['id']);
+            $markAttempted->execute([$campaign['id']]);
+
+            $summary = "\"{$campaign['name']}\": {$stats['updated']} fully updated, {$stats['partial']} partially rejected, "
+                . "{$stats['full_failure']} fully rejected, {$stats['not_found']} no Saleshandy contact found, "
+                . "{$stats['no_fields']} nothing to send (of " . count($assignmentIds) . ' batched)';
+            if ($stats['stale_mapping_labels']) {
+                $summary .= ' -- stale mapping(s): ' . implode(', ', array_unique($stats['stale_mapping_labels']));
+            }
+            $ok = !$stats['errors'] || $stats['updated'] > 0 || $stats['partial'] > 0;
+            return ['campaign' => $campaign['name'], 'summary' => $summary, 'ok' => $ok];
+        } catch (SaleshandyApiException $ex) {
+            $markAttempted->execute([$campaign['id']]);
+            return ['campaign' => $campaign['name'], 'summary' => "\"{$campaign['name']}\": FAILED -- {$ex->getMessage()}", 'ok' => false];
+        }
     }
 
     /**
