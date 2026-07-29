@@ -122,6 +122,7 @@ $unmappedPersonas = db()->query(
 $activeIcpCount = count(array_filter($icps, static fn (array $i): bool => (bool) $i['is_active']));
 $lastSyncRun = CronRunLog::lastRun(db(), 'saleshandy_sync');
 $lastDistributionRun = CronRunLog::lastRun(db(), 'icp_distribution');
+$lastBackfillRun = CronRunLog::lastRun(db(), 'saleshandy_backfill');
 
 /** Renders a "how long ago" string from a MySQL DATETIME, for the cron-status card. */
 $timeAgo = static function (string $mysqlDatetime): string {
@@ -174,7 +175,7 @@ render_header('ICP Segments');
       out with many campaigns/ICPs. Successive runs rotate through all of them automatically.
     </p>
     <div class="row g-3">
-      <div class="col-md-6 d-flex justify-content-between align-items-center gap-2">
+      <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
         <div>
           <div class="fw-semibold">Saleshandy sync</div>
           <?php if ($lastSyncRun): ?>
@@ -191,7 +192,7 @@ render_header('ICP Segments');
           <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
         </form>
       </div>
-      <div class="col-md-6 d-flex justify-content-between align-items-center gap-2">
+      <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
         <div>
           <div class="fw-semibold">ICP distribution</div>
           <?php if ($lastDistributionRun): ?>
@@ -204,6 +205,23 @@ render_header('ICP Segments');
           <?php endif; ?>
         </div>
         <form method="post" action="icp_distribution_run.php" class="flex-shrink-0">
+          <?= csrf_field() ?>
+          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
+        </form>
+      </div>
+      <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
+        <div>
+          <div class="fw-semibold">Saleshandy backfill</div>
+          <?php if ($lastBackfillRun): ?>
+            <div class="small text-muted">
+              Last run <?= $timeAgo($lastBackfillRun['ran_at']) ?> (<?= e($lastBackfillRun['triggered_by']) ?>)
+              <?php if ($lastBackfillRun['summary']): ?><br><?= e($lastBackfillRun['summary']) ?><?php endif; ?>
+            </div>
+          <?php else: ?>
+            <div class="small text-muted">Never run yet -- set up the cron job, or run it now. Optional: only useful once, per campaign, for older history predating this app.</div>
+          <?php endif; ?>
+        </div>
+        <form method="post" action="campaign_saleshandy_backfill_run.php" class="flex-shrink-0">
           <?= csrf_field() ?>
           <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
         </form>

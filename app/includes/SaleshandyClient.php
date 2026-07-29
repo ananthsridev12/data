@@ -1142,6 +1142,64 @@ class SaleshandyClient
     }
 
     /**
+     * Automates the manual "Backfill dates & status" button (previously
+     * a one-off, click-per-campaign action) via the same round-robin
+     * pattern as syncNextCampaign() -- processes ONE Saleshandy-linked
+     * campaign that's never been backfilled per call, whichever has gone
+     * longest without a backfill attempt, so an admin doesn't have to
+     * click through every linked campaign by hand.
+     *
+     * Unlike syncNextCampaign() (which cycles forever, since ongoing
+     * status IS supposed to be re-synced regularly), a campaign is
+     * excluded here for good once it succeeds -- backfillHistoricalDates()
+     * re-fetches a full 2-year window (multiple paginated API calls),
+     * so repeating it forever would be expensive and pointless once a
+     * campaign is done; the regular sync cron keeps it current from
+     * there. This naturally becomes a fast no-op once every linked
+     * campaign has been backfilled at least once.
+     *
+     * Same "last ATTEMPT, separate from last SUCCESS" reasoning as
+     * syncNextCampaign() for the ordering -- a campaign that keeps
+     * failing to backfill still needs its attempt timestamp to move
+     * forward, or it would get retried every call forever and starve
+     * every other not-yet-backfilled campaign from ever getting a turn.
+     *
+     * @return array{campaign:?string,summary:string,ok:bool}
+     */
+    public function backfillNextCampaign(PDO $db, int $userId): array
+    {
+        $campaign = $db->query(
+            "SELECT * FROM campaigns
+              WHERE saleshandy_sequence_id IS NOT NULL AND saleshandy_backfilled_at IS NULL
+              ORDER BY (saleshandy_backfill_last_attempt_at IS NOT NULL), saleshandy_backfill_last_attempt_at ASC
+              LIMIT 1"
+        )->fetch();
+
+        if (!$campaign) {
+            return ['campaign' => null, 'summary' => 'Every Saleshandy-linked campaign has already been backfilled -- nothing to do.', 'ok' => true];
+        }
+
+        $markAttempted = $db->prepare('UPDATE campaigns SET saleshandy_backfill_last_attempt_at = NOW() WHERE id = ?');
+
+        try {
+            $stats = $this->backfillHistoricalDates($db, $campaign, $userId);
+            $markAttempted->execute([$campaign['id']]);
+            $db->prepare('UPDATE campaigns SET saleshandy_backfilled_at = NOW() WHERE id = ?')->execute([$campaign['id']]);
+
+            $summary = "\"{$campaign['name']}\": checked {$stats['checked']} lead(s) against full history -- "
+                . "{$stats['email_date_fixed']} Email Date(s) fixed, {$stats['pushed_at_fixed']} First Pushed date(s) backfilled, "
+                . "{$stats['delivery_status_fixed']} delivery status(es) corrected ({$stats['bounced']} bounced, {$stats['replied']} replied)";
+            if ($stats['released'] > 0) {
+                $summary .= ", {$stats['released']} held lead(s) released";
+            }
+            return ['campaign' => $campaign['name'], 'summary' => $summary, 'ok' => true];
+        } catch (SaleshandyApiException $ex) {
+            $markAttempted->execute([$campaign['id']]);
+            return ['campaign' => $campaign['name'], 'summary' => "\"{$campaign['name']}\": FAILED -- {$ex->getMessage()}", 'ok' => false];
+        }
+    }
+
+    /**
      * Pushes every push-eligible lead in a campaign to its linked
      * Saleshandy sequence step -- the shared implementation behind both
      * the manual "Push to Saleshandy" button (public/campaign_saleshandy_push.php,

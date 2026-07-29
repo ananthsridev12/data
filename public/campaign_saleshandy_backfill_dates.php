@@ -34,6 +34,11 @@ $config = require __DIR__ . '/../app/config/config.php';
 try {
     $client = SaleshandyClient::fromConfig($config);
     $stats = $client->backfillHistoricalDates(db(), $campaign, $admin['id']);
+    // Marked done here too (not just by the automated backfill cron), so
+    // that cron doesn't waste a full 2-year re-fetch on a campaign an
+    // admin already backfilled by hand.
+    db()->prepare('UPDATE campaigns SET saleshandy_backfilled_at = NOW(), saleshandy_backfill_last_attempt_at = NOW() WHERE id = ?')
+        ->execute([$campaignId]);
     $message = "Checked {$stats['checked']} lead(s) against Saleshandy's full history: "
         . "{$stats['email_date_fixed']} Email Date(s) fixed, {$stats['pushed_at_fixed']} First Pushed date(s) backfilled, "
         . "{$stats['delivery_status_fixed']} delivery status(es) corrected ({$stats['bounced']} bounced, {$stats['replied']} replied).";

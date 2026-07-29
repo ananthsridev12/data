@@ -52,8 +52,9 @@ and import, in order:
 28. `sql/028_icp_assignment_tracking.sql`
 29. `sql/029_cron_runs.sql`
 30. `sql/030_round_robin_sync.sql`
+31. `sql/031_backfill_tracking.sql`
 
-(If you're setting up a brand-new site, import all thirty in order. If
+(If you're setting up a brand-new site, import all thirty-one in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -346,6 +347,33 @@ held group in the same pass. Heavier than the normal sync, so it's a
 separate, deliberately-triggered action -- run it whenever historical
 data looks wrong, not routinely. See
 `SaleshandyClient::backfillHistoricalDates()`.
+
+**Automating this across every linked campaign** (so you don't have to
+click it once per campaign by hand): `campaign_saleshandy_backfill_cron.php`
+runs `SaleshandyClient::backfillNextCampaign()` -- same round-robin
+pattern as the other two crons (see "Cron run visibility, round-robin,
+and manual 'Run now' buttons" below), but with one key difference: it
+only targets campaigns that have **never** been backfilled at all
+(`campaigns.saleshandy_backfilled_at IS NULL`), and once a campaign
+succeeds it's excluded for good. Backfilling a campaign that's already
+been done again would just re-fetch the same 2-year window for no
+benefit -- the regular sync cron already keeps things current from
+there. This means the backfill cron naturally winds down to a fast
+no-op once every currently-linked campaign has been backfilled once; it
+only does real work again when you link a *new* campaign to Saleshandy.
+
+Add as a third cPanel Cron Job entry:
+```
+wget -q -O /dev/null "https://yoursite.com/campaign_saleshandy_backfill_cron.php?token=YOUR_CRON_TOKEN"
+```
+Run this **less often** than the other two (e.g. every 30-60 minutes,
+not every 5) -- each unit of work here is heavier (a full 2-year fetch
+can mean many paginated API calls for one campaign), so spacing hits out
+further reduces rate-limit risk. A manual "Run now" button lives
+alongside the other two on the ICP Segments page's "Cron status" card.
+The existing per-campaign "Backfill dates & status" button still works
+exactly as before for an immediate one-off, and now also marks that
+campaign as done so the cron doesn't redundantly repeat it later.
 
 **Campaign Leads was redesigned for clarity** -- it had grown to four
 separate cards below the contact table (Mark Imported/Email Sent,
@@ -980,33 +1008,42 @@ reasonable time, not wasted effort.
 
 ## Cron run visibility, round-robin, and manual "Run now" buttons
 
-Neither scheduled job previously left any trace of having run beyond
-side effects (`campaigns.saleshandy_last_synced_at`, new
+None of the three scheduled jobs (Saleshandy sync, ICP distribution,
+Saleshandy backfill) previously left any trace of having run beyond side
+effects (`campaigns.saleshandy_last_synced_at`, new
 `lead_campaign_assignments` rows) -- there was no way to answer "is my
 cPanel Cron Job actually firing" without digging through data, and no
-way to trigger either job on demand while testing. `sql/029_cron_runs.sql`
+way to trigger a job on demand while testing. `sql/029_cron_runs.sql`
 adds a `cron_runs` table (`job_key`, `triggered_by` cron/manual, `ran_at`,
-`summary`), written to by both cron scripts and two new manual-trigger
-endpoints. The **ICP Segments** page shows a "Cron status" card at the
-top with each job's last-run time (relative, e.g. "2 hr ago") and
-summary, plus a "Run now" button for each -- including when a run
-failed (e.g. Saleshandy API key not configured), so "Run now" always
-updates what's shown instead of silently doing nothing if it errors.
+`summary`), written to by all three cron scripts and their three
+manual-trigger endpoints. The **ICP Segments** page shows a "Cron
+status" card at the top with each job's last-run time (relative, e.g.
+"2 hr ago") and summary, plus a "Run now" button for each -- including
+when a run failed (e.g. Saleshandy API key not configured), so "Run
+now" always updates what's shown instead of silently doing nothing if
+it errors.
 
-**Both jobs process ONE unit per invocation (round-robin), not a full
+**Every job processes ONE unit per invocation (round-robin), not a full
 loop.** The original design looped every Saleshandy-linked campaign (or
 every active ICP) in a single request -- fine with a handful of
 campaigns, but with 15+ campaigns (each up to two Saleshandy API calls,
 each with a 30s timeout), a single request/cron hit could take minutes
 and risked hitting PHP's `max_execution_time` or the web server's own
-request timeout on shared hosting. `sql/030_round_robin_sync.sql` adds
-`campaigns.saleshandy_last_sync_attempt_at` and `icp_segments.
+request timeout on shared hosting (and, observed in practice, could
+trigger Saleshandy's own rate limiter by bursting many calls back to
+back). `sql/030_round_robin_sync.sql` adds `campaigns.
+saleshandy_last_sync_attempt_at` and `icp_segments.
 last_distribution_attempt_at`; each hit now picks whichever campaign/ICP
 has gone longest without an attempt (`SaleshandyClient::syncNextCampaign()`
 / `IcpRepository::runDistributionForNext()`) and processes just that
 one, keeping every single request fast and self-contained. Successive
 hits naturally cycle through everything over time -- with N campaigns
-and a 5-minute interval, a full cycle takes roughly N x 5 minutes.
+and a 5-minute interval, a full cycle takes roughly N x 5 minutes. The
+backfill cron (`sql/031_backfill_tracking.sql`,
+`SaleshandyClient::backfillNextCampaign()`) follows the same round-robin
+shape but additionally excludes a campaign for good once it's
+successfully backfilled once -- see "Automating this across every
+linked campaign" above.
 
 **Deliberately a separate "last ATTEMPT" column, not reusing "last
 success"** (`saleshandy_last_synced_at`, which also drives the
