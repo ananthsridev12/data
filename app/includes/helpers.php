@@ -82,6 +82,7 @@ function nav_links(array $user): array
             ['href' => 'import_campaign_history.php', 'label' => 'Backfill History'],
             ['href' => 'deleted_leads.php', 'label' => 'Deleted Leads'],
             ['href' => 'users.php', 'label' => 'Users'],
+            ['href' => 'company_profile.php', 'label' => 'Company Profile'],
         ]);
     }
     return $links;
