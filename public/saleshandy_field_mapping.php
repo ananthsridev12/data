@@ -3,6 +3,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 
 $admin = require_admin();
+$scope = Scope::fromUser(db(), $admin);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -22,19 +23,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $labels = $_POST['label'] ?? [];
 
         $upsert = db()->prepare(
-            'INSERT INTO saleshandy_field_mappings (lead_field_key, saleshandy_label, enabled) VALUES (?, ?, ?)
+            'INSERT INTO saleshandy_field_mappings (company_id, lead_field_key, saleshandy_label, enabled) VALUES (?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE saleshandy_label = VALUES(saleshandy_label), enabled = VALUES(enabled)'
         );
-        $delete = db()->prepare('DELETE FROM saleshandy_field_mappings WHERE lead_field_key = ?');
+        $delete = db()->prepare('DELETE FROM saleshandy_field_mappings WHERE lead_field_key = ? AND company_id = ?');
 
         $targetKeys = array_unique(array_merge(array_keys(LEAD_FIELDS), array_keys(LOOKUP_FIELDS)));
         foreach ($targetKeys as $key) {
             $label = trim((string) ($labels[$key] ?? ''));
             if ($label === '') {
-                $delete->execute([$key]);
+                $delete->execute([$key, $scope->companyId]);
                 continue;
             }
-            $upsert->execute([$key, $label, !empty($enabled[$key]) ? 1 : 0]);
+            $upsert->execute([$scope->companyId, $key, $label, !empty($enabled[$key]) ? 1 : 0]);
         }
         flash_set('success', 'Saleshandy field mapping saved.');
     }
@@ -43,7 +44,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$mappingRows = db()->query('SELECT lead_field_key, saleshandy_label, enabled FROM saleshandy_field_mappings')->fetchAll();
+$mappingStmt = db()->prepare('SELECT lead_field_key, saleshandy_label, enabled FROM saleshandy_field_mappings WHERE company_id = ?');
+$mappingStmt->execute([$scope->companyId]);
+$mappingRows = $mappingStmt->fetchAll();
 $mappingByKey = array_column($mappingRows, null, 'lead_field_key');
 $knownFields = $_SESSION['saleshandy_known_fields'] ?? [];
 $knownFieldLabels = array_values(array_unique(array_filter(array_map(

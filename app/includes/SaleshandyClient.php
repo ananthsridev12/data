@@ -265,9 +265,17 @@ class SaleshandyClient
             return $stats;
         }
 
-        $enabledMappings = $db->query(
-            'SELECT lead_field_key, saleshandy_label FROM saleshandy_field_mappings WHERE enabled = 1'
-        )->fetchAll();
+        // Field mappings are per-company (see sql/034_multi_tenant_tighten.sql)
+        // -- resolved from the campaign being synced, not the acting user,
+        // same convention as this class's per-member Saleshandy key
+        // resolution (campaigns.saleshandy_account_owner_id).
+        $companyStmt = $db->prepare('SELECT company_id FROM campaigns WHERE id = ?');
+        $companyStmt->execute([$campaignId]);
+        $mappingsStmt = $db->prepare(
+            'SELECT lead_field_key, saleshandy_label FROM saleshandy_field_mappings WHERE enabled = 1 AND company_id = ?'
+        );
+        $mappingsStmt->execute([(int) $companyStmt->fetchColumn()]);
+        $enabledMappings = $mappingsStmt->fetchAll();
 
         $fieldsByLabel = [];
         foreach ($this->listFields() as $f) {
@@ -1307,9 +1315,14 @@ class SaleshandyClient
             return $result;
         }
 
-        $enabledMappings = $db->query(
-            'SELECT lead_field_key, saleshandy_label FROM saleshandy_field_mappings WHERE enabled = 1'
-        )->fetchAll();
+        // Field mappings are per-company (see sql/034_multi_tenant_tighten.sql)
+        // -- $campaign already carries company_id since callers fetch it via
+        // `SELECT * FROM campaigns`.
+        $mappingsStmt = $db->prepare(
+            'SELECT lead_field_key, saleshandy_label FROM saleshandy_field_mappings WHERE enabled = 1 AND company_id = ?'
+        );
+        $mappingsStmt->execute([(int) $campaign['company_id']]);
+        $enabledMappings = $mappingsStmt->fetchAll();
 
         $staleLabels = [];
         try {
