@@ -1,10 +1,10 @@
 <?php
 /**
- * Manual "Run now" equivalent of icp_distribution_cron.php -- runs the
- * exact same distribution pass (IcpRepository::runDistribution()) on
- * demand instead of only via the scheduled cron hit, so an admin doesn't
- * have to wait for the next cron cycle to see it work while testing, or
- * to force a sweep right after fixing an ICP's percentage split.
+ * Manual "Run now" equivalent of icp_distribution_cron.php -- processes
+ * ONE ICP (round-robin, same as the cron) on demand instead of waiting
+ * for the next scheduled tick, so an admin doesn't have to wait to see
+ * it work while testing, or to force a sweep right after fixing an
+ * ICP's percentage split.
  */
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/IcpRepository.php';
@@ -30,7 +30,7 @@ try {
     flash_set('info', 'Saleshandy not configured -- auto-push ICPs will be skipped this run (' . $ex->getMessage() . ').');
 }
 
-$result = IcpRepository::runDistribution(db(), $client, $systemUserId);
+$result = IcpRepository::runDistributionForNext(db(), $client, $systemUserId);
 CronRunLog::record(db(), 'icp_distribution', 'manual', $result['summary']);
 flash_set('success', 'ICP distribution: ' . $result['summary']);
 

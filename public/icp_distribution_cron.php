@@ -1,17 +1,22 @@
 <?php
 /**
- * Scheduled distributor for ICP segments -- for each active ICP whose
- * linked campaigns' percentages sum to 100, finds newly-matching,
+ * Scheduled distributor for ICP segments -- processes ONE active ICP
+ * (round-robin, IcpRepository::runDistributionForNext()) whose linked
+ * campaigns' percentages sum to 100 per hit: finds newly-matching,
  * never-assigned leads, splits them by weighted percentage across the
  * linked campaigns, and assigns each split via WaveAssigner::assign()
- * (same domain-safety/wave-1 logic every other campaign assignment uses).
- * Optionally also pushes to Saleshandy immediately, per-ICP admin choice
- * (icp_segments.auto_push_enabled). See app/includes/IcpRepository.php.
+ * (same domain-safety/wave-1 logic every other campaign assignment
+ * uses). Optionally also pushes to Saleshandy immediately, per-ICP admin
+ * choice (icp_segments.auto_push_enabled) -- which makes real API calls
+ * per linked campaign, so processing one ICP per hit rather than
+ * looping all of them keeps every hit fast. Run this fairly frequently
+ * (every 5-15 minutes) so the full set of ICPs still cycles through in a
+ * reasonable time. See app/includes/IcpRepository.php.
  *
  * Intended to be hit by a cPanel Cron Job (e.g.
- * `wget -q -O /dev/null "https://yoursite.com/icp_distribution_cron.php?token=..."`
- * every few hours), not a logged-in browser -- same shared-secret token
- * auth as cron_saleshandy_sync.php, reusing the same config value.
+ * `wget -q -O /dev/null "https://yoursite.com/icp_distribution_cron.php?token=..."`),
+ * not a logged-in browser -- same shared-secret token auth as
+ * cron_saleshandy_sync.php, reusing the same config value.
  */
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/IcpRepository.php';
@@ -43,7 +48,7 @@ try {
     echo "Saleshandy not configured (auto-push ICPs will be skipped): {$ex->getMessage()}\n";
 }
 
-$result = IcpRepository::runDistribution(db(), $client, $systemUserId);
+$result = IcpRepository::runDistributionForNext(db(), $client, $systemUserId);
 foreach ($result['lines'] as $line) {
     echo $line . "\n";
 }

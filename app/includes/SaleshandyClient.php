@@ -955,67 +955,57 @@ class SaleshandyClient
     }
 
     /**
-     * Runs both directions of the sync (syncCampaign() + pullNewProspects())
-     * across every Saleshandy-linked campaign -- the exact combined loop
-     * cron_saleshandy_sync.php runs on its schedule, extracted here so a
-     * manual "Run now" button (saleshandy_sync_run.php) can trigger the
-     * identical behavior on demand instead of only being reachable via a
-     * cron hit. Returns both a human-readable summary line (for a flash
-     * message / cron log line) and the per-campaign detail.
+     * Syncs just ONE Saleshandy-linked campaign per call -- whichever has
+     * gone longest without an attempt (oldest saleshandy_last_sync_attempt_at,
+     * NULL/never-attempted treated as oldest so new campaigns get
+     * priority) -- instead of looping every linked campaign in a single
+     * request. A single request touching 15+ campaigns (each up to two
+     * API calls, each with a 30s timeout) can take minutes and risks
+     * hitting PHP's max_execution_time or the web server's own request
+     * timeout on shared hosting; this keeps every request/cron tick fast
+     * and self-contained, naturally round-robining through every linked
+     * campaign over successive calls.
      *
-     * @return array{summary:string,campaigns:array<int,array{name:string,ok:bool,detail:string}>}
+     * Deliberately ordered by "last ATTEMPT", not syncCampaign()'s own
+     * saleshandy_last_synced_at ("last SUCCESS", which also drives the
+     * incremental fetch window and must only advance on real success) --
+     * a campaign that keeps failing still needs its attempt timestamp to
+     * move forward here, or it would get picked again on every single
+     * call forever, starving every other linked campaign from ever being
+     * synced. Updated unconditionally below, success or failure.
+     *
+     * @return array{campaign:?string,summary:string,ok:bool}
      */
-    public function syncAllLinkedCampaigns(PDO $db, int $userId): array
+    public function syncNextCampaign(PDO $db, int $userId): array
     {
-        $campaigns = $db->query('SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL')->fetchAll();
-        $detail = [];
-        $totalMatched = 0;
-        $totalCreated = 0;
-        $failures = 0;
+        $campaign = $db->query(
+            "SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL
+              ORDER BY (saleshandy_last_sync_attempt_at IS NOT NULL), saleshandy_last_sync_attempt_at ASC
+              LIMIT 1"
+        )->fetch();
 
-        foreach ($campaigns as $campaign) {
-            try {
-                $syncStats = $this->syncCampaign($db, $campaign, $userId);
-                $pullStats = $this->pullNewProspects($db, $campaign, $userId);
-                $totalMatched += $syncStats['matched'];
-                $totalCreated += $pullStats['leads_created'];
-                $line = "{$syncStats['matched']} updated ({$syncStats['bounced']} bounced, {$syncStats['replied']} replied, "
-                    . "{$syncStats['released']} wave-1 group(s) released, {$syncStats['verified']} verification status(es) refreshed); "
-                    . "{$pullStats['leads_created']} new lead(s), {$pullStats['assignments_created']} new assignment(s) pulled in";
-                if (!empty($syncStats['verification_error'])) {
-                    $line .= " -- email verification check failed: {$syncStats['verification_error']}";
-                }
-                $detail[] = ['name' => $campaign['name'], 'ok' => true, 'detail' => $line];
-            } catch (SaleshandyApiException $ex) {
-                $failures++;
-                $detail[] = ['name' => $campaign['name'], 'ok' => false, 'detail' => $ex->getMessage()];
-            }
+        if (!$campaign) {
+            return ['campaign' => null, 'summary' => 'No campaigns linked to Saleshandy -- nothing to sync.', 'ok' => true];
         }
 
-        $summary = $campaigns
-            ? "{$totalMatched} lead(s) updated, {$totalCreated} new lead(s) pulled in across " . count($campaigns) . ' campaign(s)'
-                . ($failures ? ", {$failures} campaign(s) failed" : '')
-            : 'No campaigns linked to Saleshandy -- nothing to sync.';
+        $markAttempted = $db->prepare('UPDATE campaigns SET saleshandy_last_sync_attempt_at = NOW() WHERE id = ?');
 
-        // A bare failure count ("15 campaign(s) failed") isn't actionable
-        // on its own -- append a handful of the actual error messages
-        // (deduped, since the same misconfiguration/outage usually
-        // produces the identical error on every campaign) so whoever
-        // reads this summary (the flash message, or the persisted
-        // cron_runs row) can actually diagnose it without digging
-        // through the full per-campaign detail array.
-        if ($failures) {
-            $sampleErrors = array_values(array_unique(array_map(
-                static fn (array $d): string => $d['detail'],
-                array_filter($detail, static fn (array $d): bool => !$d['ok'])
-            )));
-            $summary .= '. Error(s): ' . implode(' | ', array_slice($sampleErrors, 0, 3));
-            if (count($sampleErrors) > 3) {
-                $summary .= ' | ...';
+        try {
+            $syncStats = $this->syncCampaign($db, $campaign, $userId);
+            $pullStats = $this->pullNewProspects($db, $campaign, $userId);
+            $markAttempted->execute([$campaign['id']]);
+
+            $summary = "\"{$campaign['name']}\": {$syncStats['matched']} updated ({$syncStats['bounced']} bounced, {$syncStats['replied']} replied, "
+                . "{$syncStats['released']} wave-1 group(s) released, {$syncStats['verified']} verification status(es) refreshed); "
+                . "{$pullStats['leads_created']} new lead(s), {$pullStats['assignments_created']} new assignment(s) pulled in";
+            if (!empty($syncStats['verification_error'])) {
+                $summary .= " -- email verification check failed: {$syncStats['verification_error']}";
             }
+            return ['campaign' => $campaign['name'], 'summary' => $summary, 'ok' => true];
+        } catch (SaleshandyApiException $ex) {
+            $markAttempted->execute([$campaign['id']]);
+            return ['campaign' => $campaign['name'], 'summary' => "\"{$campaign['name']}\": FAILED -- {$ex->getMessage()}", 'ok' => false];
         }
-
-        return ['summary' => $summary, 'campaigns' => $detail];
     }
 
     /**

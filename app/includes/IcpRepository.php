@@ -337,104 +337,136 @@ class IcpRepository
     }
 
     /**
-     * The distribution pass itself -- for every active ICP whose linked
-     * campaigns sum to 100%, finds newly-matching never-assigned leads,
-     * splits them by percentage, and assigns each split via
-     * WaveAssigner::assign() (same domain-safety/wave-1 rules every
-     * other assignment uses). Extracted from icp_distribution_cron.php
-     * so a manual "Run now" button (icp_distribution_run.php) can
-     * trigger the identical behavior on demand, not only via a cron hit.
+     * The distribution pass, round-robin style: processes just ONE
+     * active ICP (with links summing to 100%) per call -- whichever has
+     * gone longest without an attempt (oldest last_distribution_attempt_at,
+     * NULL/never-attempted treated as oldest) -- instead of looping
+     * every eligible ICP in a single request. An ICP with auto-push
+     * enabled and several linked campaigns makes real Saleshandy API
+     * calls per campaign it's linked to, so looping many such ICPs in
+     * one request carries the same slow/timeout risk a many-campaign
+     * Saleshandy sync does (see SaleshandyClient::syncNextCampaign()).
+     *
+     * Ordered by "last ATTEMPT" (updated unconditionally below, success
+     * or failure) rather than anything tied to success, so a
+     * persistently failing ICP can't get retried on every single call
+     * forever and starve every other ICP from ever being processed.
      *
      * Pass a non-null $client to also auto-push for any ICP with
-     * auto_push_enabled=1. That push is attempted for EVERY linked
-     * campaign of such an ICP on EVERY call, regardless of whether this
-     * particular run assigned anything new to that campaign --
-     * deliberately, not an oversight: pushCampaignLeads() re-checks "who
-     * in this campaign is wave-1-active and not yet pushed" from
-     * scratch, so it naturally sweeps up a lead that was HELD in an
-     * earlier run and only just got released (e.g. by the Saleshandy
-     * sync cron resolving its wave-1 leader as delivered). An earlier
-     * version only called it when this same run also assigned a
-     * brand-new lead to that campaign, which meant a released-but-
-     * unpushed lead could sit indefinitely until an unrelated new lead
-     * happened to land in that same campaign.
+     * auto_push_enabled=1 -- attempted for EVERY linked campaign of that
+     * ICP, regardless of whether this call assigned anything new to it,
+     * since pushCampaignLeads() re-checks "who in this campaign is
+     * wave-1-active and not yet pushed" from scratch every time, so it
+     * naturally sweeps up a lead that was HELD earlier and only just got
+     * released (e.g. by the Saleshandy sync cron resolving its wave-1
+     * leader as delivered).
      *
      * @return array{summary:string,lines:array<int,string>}
      */
-    public static function runDistribution(PDO $db, ?SaleshandyClient $client, int $systemUserId): array
+    public static function runDistributionForNext(PDO $db, ?SaleshandyClient $client, int $systemUserId): array
     {
-        $icps = self::activeWithValidLinks($db);
-        if (!$icps) {
+        $icp = self::nextForDistribution($db);
+        if (!$icp) {
             return ['summary' => 'No active ICP segments with campaign links summing to 100% -- nothing to do.', 'lines' => []];
         }
 
-        $lines = [];
-        $icpsWithMatches = 0;
-        $totalAssigned = 0;
-        $totalPushed = 0;
+        $result = self::processIcp($db, $icp, $client, $systemUserId);
+        $db->prepare('UPDATE icp_segments SET last_distribution_attempt_at = NOW() WHERE id = ?')->execute([(int) $icp['id']]);
+
+        $summary = "\"{$icp['name']}\": " . ($result['had_matches']
+            ? "{$result['assigned']} lead(s) assigned" . ($client !== null ? ", {$result['pushed']} lead(s) auto-pushed" : '')
+            : 'no new matching leads');
+
+        return ['summary' => $summary, 'lines' => $result['lines']];
+    }
+
+    /**
+     * The active ICP (with links summing to 100%) that's gone longest
+     * without a distribution attempt -- skips (without touching its
+     * attempt timestamp) any active ICP whose links don't currently sum
+     * to 100%, since that's a config problem to fix, not something worth
+     * spending an attempt slot retrying every call.
+     */
+    private static function nextForDistribution(PDO $db): ?array
+    {
+        $icps = $db->query(
+            'SELECT * FROM icp_segments WHERE is_active = 1
+              ORDER BY (last_distribution_attempt_at IS NOT NULL), last_distribution_attempt_at ASC'
+        )->fetchAll();
 
         foreach ($icps as $icp) {
-            try {
-                $links = self::links($db, (int) $icp['id']);
-                $filters = self::toFilters($icp);
-                $matchingIds = LeadRepository::matchingIds($db, $filters);
+            if (self::linksSumTo100($db, (int) $icp['id'])) {
+                return $icp;
+            }
+        }
+        return null;
+    }
 
-                $buckets = [];
-                $titlePriority = [];
-                if ($matchingIds) {
-                    $icpsWithMatches++;
-                    shuffle($matchingIds);
+    /** @return array{lines:array<int,string>,had_matches:bool,assigned:int,pushed:int} */
+    private static function processIcp(PDO $db, array $icp, ?SaleshandyClient $client, int $systemUserId): array
+    {
+        $lines = [];
+        $assigned = 0;
+        $pushed = 0;
+        $hadMatches = false;
 
-                    $roleGroupStmt = $db->prepare('SELECT keywords FROM role_groups WHERE id = ?');
-                    $roleGroupStmt->execute([$icp['role_group_id']]);
-                    $titlePriority = RoleGroupClassifier::parseKeywords((string) $roleGroupStmt->fetchColumn());
+        try {
+            $links = self::links($db, (int) $icp['id']);
+            $filters = self::toFilters($icp);
+            $matchingIds = LeadRepository::matchingIds($db, $filters);
 
-                    $buckets = self::splitLeadIds($matchingIds, $links);
-                    $lines[] = "\"{$icp['name']}\": " . count($matchingIds) . ' matching lead(s) split across ' . count($links) . ' campaign(s):';
-                } else {
-                    $lines[] = "\"{$icp['name']}\": no new matching leads.";
+            $buckets = [];
+            $titlePriority = [];
+            if ($matchingIds) {
+                $hadMatches = true;
+                shuffle($matchingIds);
+
+                $roleGroupStmt = $db->prepare('SELECT keywords FROM role_groups WHERE id = ?');
+                $roleGroupStmt->execute([$icp['role_group_id']]);
+                $titlePriority = RoleGroupClassifier::parseKeywords((string) $roleGroupStmt->fetchColumn());
+
+                $buckets = self::splitLeadIds($matchingIds, $links);
+                $lines[] = "\"{$icp['name']}\": " . count($matchingIds) . ' matching lead(s) split across ' . count($links) . ' campaign(s):';
+            } else {
+                $lines[] = "\"{$icp['name']}\": no new matching leads.";
+            }
+
+            foreach ($links as $link) {
+                $bucket = $buckets[(int) $link['campaign_id']] ?? [];
+                if ($bucket) {
+                    $stats = WaveAssigner::assign($db, $bucket, (int) $link['campaign_id'], $systemUserId, $titlePriority, (int) $icp['id']);
+                    $assigned += $stats['leaders'] + $stats['held'];
+                    $lines[] = "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): {$stats['leaders']} leader(s), {$stats['held']} held, "
+                        . "{$stats['suppressed_skipped']} suppressed, {$stats['already_elsewhere_skipped']} already elsewhere, "
+                        . "{$stats['pending_elsewhere_skipped']} pending elsewhere";
+                } elseif ($matchingIds) {
+                    $lines[] = "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): 0 lead(s)";
                 }
 
-                foreach ($links as $link) {
-                    $bucket = $buckets[(int) $link['campaign_id']] ?? [];
-                    if ($bucket) {
-                        $stats = WaveAssigner::assign($db, $bucket, (int) $link['campaign_id'], $systemUserId, $titlePriority, (int) $icp['id']);
-                        $totalAssigned += $stats['leaders'] + $stats['held'];
-                        $lines[] = "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): {$stats['leaders']} leader(s), {$stats['held']} held, "
-                            . "{$stats['suppressed_skipped']} suppressed, {$stats['already_elsewhere_skipped']} already elsewhere, "
-                            . "{$stats['pending_elsewhere_skipped']} pending elsewhere";
-                    } elseif ($matchingIds) {
-                        $lines[] = "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): 0 lead(s)";
-                    }
-
-                    if ($icp['auto_push_enabled'] && $client !== null) {
-                        $campStmt = $db->prepare('SELECT * FROM campaigns WHERE id = ?');
-                        $campStmt->execute([(int) $link['campaign_id']]);
-                        $campaign = $campStmt->fetch();
-                        if ($campaign) {
-                            try {
-                                $pushResult = $client->pushCampaignLeads($db, $campaign, false);
-                                $totalPushed += $pushResult['pushed'];
-                                if ($pushResult['pushed'] > 0 || $pushResult['errors']) {
-                                    $lines[] = "    auto-push (\"{$link['campaign_name']}\"): {$pushResult['pushed']} pushed, {$pushResult['skipped_bad']} bad, {$pushResult['skipped_risky']} risky";
-                                    if ($pushResult['errors']) {
-                                        $lines[] = '    auto-push errors: ' . implode('; ', $pushResult['errors']);
-                                    }
+                if ($icp['auto_push_enabled'] && $client !== null) {
+                    $campStmt = $db->prepare('SELECT * FROM campaigns WHERE id = ?');
+                    $campStmt->execute([(int) $link['campaign_id']]);
+                    $campaign = $campStmt->fetch();
+                    if ($campaign) {
+                        try {
+                            $pushResult = $client->pushCampaignLeads($db, $campaign, false);
+                            $pushed += $pushResult['pushed'];
+                            if ($pushResult['pushed'] > 0 || $pushResult['errors']) {
+                                $lines[] = "    auto-push (\"{$link['campaign_name']}\"): {$pushResult['pushed']} pushed, {$pushResult['skipped_bad']} bad, {$pushResult['skipped_risky']} risky";
+                                if ($pushResult['errors']) {
+                                    $lines[] = '    auto-push errors: ' . implode('; ', $pushResult['errors']);
                                 }
-                            } catch (SaleshandyApiException $ex) {
-                                $lines[] = "    auto-push FAILED (\"{$link['campaign_name']}\"): {$ex->getMessage()}";
                             }
+                        } catch (SaleshandyApiException $ex) {
+                            $lines[] = "    auto-push FAILED (\"{$link['campaign_name']}\"): {$ex->getMessage()}";
                         }
                     }
                 }
-            } catch (Throwable $ex) {
-                $lines[] = "\"{$icp['name']}\": FAILED -- {$ex->getMessage()}";
             }
+        } catch (Throwable $ex) {
+            $lines[] = "\"{$icp['name']}\": FAILED -- {$ex->getMessage()}";
         }
 
-        $summary = "{$icpsWithMatches} of " . count($icps) . " active ICP(s) had new matches, {$totalAssigned} lead(s) assigned"
-            . ($client !== null ? ", {$totalPushed} lead(s) auto-pushed" : '');
-
-        return ['summary' => $summary, 'lines' => $lines];
+        return ['lines' => $lines, 'had_matches' => $hadMatches, 'assigned' => $assigned, 'pushed' => $pushed];
     }
 }

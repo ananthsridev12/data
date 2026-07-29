@@ -51,8 +51,9 @@ and import, in order:
 27. `sql/027_country_groups.sql`
 28. `sql/028_icp_assignment_tracking.sql`
 29. `sql/029_cron_runs.sql`
+30. `sql/030_round_robin_sync.sql`
 
-(If you're setting up a brand-new site, import all twenty-nine in order. If
+(If you're setting up a brand-new site, import all thirty in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -971,11 +972,13 @@ Saleshandy sync cron, reusing `$config['saleshandy']['cron_token']`:
 ```
 wget -q -O /dev/null "https://yoursite.com/icp_distribution_cron.php?token=YOUR_CRON_TOKEN"
 ```
-Add as a separate cPanel Cron Job entry alongside `cron_saleshandy_sync.php`
-(a few-hours interval is reasonable -- there's no benefit to running it
-more often than leads actually get imported).
+Add as a separate cPanel Cron Job entry alongside `cron_saleshandy_sync.php`,
+every 5-15 minutes (not every few hours -- see "Cron run visibility..."
+below for why). Each hit only processes ONE ICP (round-robin), so a
+frequent interval is what keeps every ICP actually cycling through in a
+reasonable time, not wasted effort.
 
-## Cron run visibility + manual "Run now" buttons
+## Cron run visibility, round-robin, and manual "Run now" buttons
 
 Neither scheduled job previously left any trace of having run beyond
 side effects (`campaigns.saleshandy_last_synced_at`, new
@@ -984,43 +987,71 @@ cPanel Cron Job actually firing" without digging through data, and no
 way to trigger either job on demand while testing. `sql/029_cron_runs.sql`
 adds a `cron_runs` table (`job_key`, `triggered_by` cron/manual, `ran_at`,
 `summary`), written to by both cron scripts and two new manual-trigger
-endpoints. The **ICP Segments** page now shows a "Cron status" card at
-the top with each job's last-run time (relative, e.g. "2 hr ago") and
+endpoints. The **ICP Segments** page shows a "Cron status" card at the
+top with each job's last-run time (relative, e.g. "2 hr ago") and
 summary, plus a "Run now" button for each -- including when a run
 failed (e.g. Saleshandy API key not configured), so "Run now" always
 updates what's shown instead of silently doing nothing if it errors.
 
-- **`public/saleshandy_sync_run.php`** -- the full 1:1 manual equivalent
-  of `cron_saleshandy_sync.php` (both directions: status/opens/bounces/
-  replies sync AND new-prospect pull-in, across every Saleshandy-linked
-  campaign). Distinct from the pre-existing "Fetch to update from
-  Saleshandy" button on the Reports page (`reports_sync.php`), which
-  deliberately only runs the sync half (mirroring a campaign's own
-  "Refresh statuses" button) -- that one is *not* a full substitute for
-  the cron, since it never pulls in new prospects.
-- **`public/icp_distribution_run.php`** -- the manual equivalent of
-  `icp_distribution_cron.php`.
-- Both cron scripts and their manual counterparts now call a shared
-  method (`SaleshandyClient::syncAllLinkedCampaigns()` /
-  `IcpRepository::runDistribution()`) instead of duplicating the loop,
-  so cron and manual behavior can't drift apart.
+**Both jobs process ONE unit per invocation (round-robin), not a full
+loop.** The original design looped every Saleshandy-linked campaign (or
+every active ICP) in a single request -- fine with a handful of
+campaigns, but with 15+ campaigns (each up to two Saleshandy API calls,
+each with a 30s timeout), a single request/cron hit could take minutes
+and risked hitting PHP's `max_execution_time` or the web server's own
+request timeout on shared hosting. `sql/030_round_robin_sync.sql` adds
+`campaigns.saleshandy_last_sync_attempt_at` and `icp_segments.
+last_distribution_attempt_at`; each hit now picks whichever campaign/ICP
+has gone longest without an attempt (`SaleshandyClient::syncNextCampaign()`
+/ `IcpRepository::runDistributionForNext()`) and processes just that
+one, keeping every single request fast and self-contained. Successive
+hits naturally cycle through everything over time -- with N campaigns
+and a 5-minute interval, a full cycle takes roughly N x 5 minutes.
 
-**Bug fix found and fixed while building this**: `IcpRepository::runDistribution()`'s
-auto-push step used to only run when *that same pass* also assigned a
-brand-new lead to a given campaign -- so a lead that was held under a
-wave-1 leader and only got released later (e.g. the Saleshandy sync cron
-resolving that leader as delivered) would sit "active, not yet pushed"
-indefinitely unless some unrelated new lead happened to land in that
-same campaign on a later pass. `pushCampaignLeads()` itself always
-re-checks "who in this campaign is wave-1-active and not yet pushed"
-from scratch, so it already would have caught the released lead --
-it just wasn't being called. Fixed by running the auto-push check
-unconditionally per linked campaign of an auto-push-enabled ICP on
-every pass, not only when that pass had new matches. Verified with a
-fixture: two same-domain leads (one leader, one held) -> leader pushed
-on pass 1 -> leader manually released (simulating sync-cron delivery
-detection) -> pass 2 has zero new matching leads -> the now-released
-held lead is still correctly auto-pushed on pass 2.
+**Deliberately a separate "last ATTEMPT" column, not reusing "last
+success"** (`saleshandy_last_synced_at`, which also drives the
+incremental fetch window and must only advance on real success): the
+attempt timestamp is updated unconditionally, success or failure. Without
+that, a persistently-failing campaign/ICP would never advance its
+timestamp and would get retried on literally every single hit forever,
+starving every other campaign/ICP from ever being picked -- verified
+with a fixture: 3 campaigns, the 2nd always throws, 4 successive calls
+visit campaign 1, 2 (fails), 3, then wrap back to 1 -- never getting
+stuck retrying campaign 2.
+
+- **`public/saleshandy_sync_run.php`** -- the manual "Run now" equivalent
+  of `cron_saleshandy_sync.php` (one campaign per click, same round-robin
+  as the cron). Distinct from the pre-existing "Fetch to update from
+  Saleshandy" button on the Reports page (`reports_sync.php`), which
+  still loops every linked campaign's sync half (mirroring a campaign's
+  own "Refresh statuses" button) in one request -- fine occasionally by
+  hand for a quick full refresh, but not the routine path anymore.
+- **`public/icp_distribution_run.php`** -- the manual equivalent of
+  `icp_distribution_cron.php`, same one-ICP-per-click round-robin.
+- Both cron scripts and their manual counterparts call a shared method
+  (`SaleshandyClient::syncNextCampaign()` / `IcpRepository::
+  runDistributionForNext()`) instead of duplicating the loop, so cron
+  and manual behavior can't drift apart.
+- **Already have per-campaign manual sync**: each campaign's own
+  "Refresh statuses" button (`campaign_leads.php`) already syncs just
+  that one campaign on demand -- no separate feature needed for that.
+
+**Bug fix found and fixed while building this**: the ICP auto-push step
+used to only run when *that same pass* also assigned a brand-new lead to
+a given campaign -- so a lead that was held under a wave-1 leader and
+only got released later (e.g. the Saleshandy sync cron resolving that
+leader as delivered) would sit "active, not yet pushed" indefinitely
+unless some unrelated new lead happened to land in that same campaign on
+a later pass. `pushCampaignLeads()` itself always re-checks "who in this
+campaign is wave-1-active and not yet pushed" from scratch, so it
+already would have caught the released lead -- it just wasn't being
+called. Fixed by running the auto-push check unconditionally per linked
+campaign of an auto-push-enabled ICP on every pass, not only when that
+pass had new matches. Verified with a fixture: two same-domain leads
+(one leader, one held) -> leader pushed on pass 1 -> leader manually
+released (simulating sync-cron delivery detection) -> pass 2 has zero
+new matching leads -> the now-released held lead is still correctly
+auto-pushed on pass 2.
 
 ## ICP Report (`public/icp_report.php`)
 
@@ -1204,14 +1235,22 @@ and check that file's docblock if a call fails outright rather than
 returning a normal API error.
 
 **Optional scheduled sync:** in cPanel's **Cron Jobs**, add a job that
-hits (e.g. every few hours):
+hits (every 5-10 minutes, not every few hours -- see "Cron run
+visibility..." below for why):
 ```
 wget -q -O /dev/null "https://yoursite.com/cron_saleshandy_sync.php?token=YOUR_CRON_TOKEN"
 ```
 This runs both directions -- status sync (like "Refresh statuses") and
-pulling in new prospects (like "Import from Saleshandy") -- for every
-campaign that has a Saleshandy sequence linked, as an automatic backstop
-alongside the two manual buttons.
+pulling in new prospects (like "Import from Saleshandy") -- as an
+automatic backstop alongside the two manual buttons. Note: each hit only
+processes ONE campaign (round-robin), not every linked campaign at once
+-- with a 5-10 minute interval, a site with a dozen or so linked
+campaigns still gets a full cycle within roughly an hour.
+
+**Already have per-campaign manual sync**, in case you're wondering
+whether to build it: each campaign's own **"Refresh statuses"** button
+(on `campaign_leads.php`) already runs a sync for just that one
+campaign, on demand -- no separate feature needed for that.
 
 **Note on "Import from Saleshandy" coverage:** Saleshandy's API has no
 endpoint that lists every prospect enrolled in a sequence -- only

@@ -168,6 +168,11 @@ render_header('ICP Segments');
 <div class="card icp-card mb-4">
   <div class="card-header fw-semibold">Cron status</div>
   <div class="card-body">
+    <p class="text-muted small mb-3">
+      Each run (scheduled or "Run now") processes just <strong>one</strong> campaign/ICP -- whichever has gone
+      longest without an attempt -- rather than looping everything at once, so a single run never risks timing
+      out with many campaigns/ICPs. Successive runs rotate through all of them automatically.
+    </p>
     <div class="row g-3">
       <div class="col-md-6 d-flex justify-content-between align-items-center gap-2">
         <div>
