@@ -240,7 +240,12 @@ class SaleshandyClient
     public function syncFieldsToSaleshandy(PDO $db, array $assignmentIds, int $campaignId): array
     {
         $stats = [
-            'updated' => 0, 'partial' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'no_fields' => 0,
+            // 'partial' = at least one field saved, some rejected; 'full_failure' =
+            // every attempted field (post-retry) was rejected -- these are shown
+            // with different wording since a 0-of-N result usually points at
+            // something wrong with that lead's Saleshandy prospect record
+            // itself, not a per-field value/dropdown mismatch.
+            'updated' => 0, 'partial' => 0, 'full_failure' => 0, 'not_found' => 0, 'skipped_not_pushed' => 0, 'no_fields' => 0,
             'errors' => [], 'details' => [], 'stale_mapping_labels' => [],
         ];
         if (!$assignmentIds) {
@@ -354,6 +359,15 @@ class SaleshandyClient
                 }
             }
             foreach ($enabledMappings as $m) {
+                // First/Last Name are already sent above; Email is this
+                // endpoint's contact-identity key on Saleshandy's side, not
+                // a writable custom attribute -- sending it here gets
+                // rejected by Saleshandy every time (defense-in-depth: the
+                // mapping UI no longer offers these three, but a
+                // pre-existing saved row could still have one).
+                if (in_array($m['lead_field_key'], ['email', 'first_name', 'last_name'], true)) {
+                    continue;
+                }
                 if (!isset($fieldsByLabel[$m['saleshandy_label']])) {
                     continue;
                 }
@@ -391,12 +405,22 @@ class SaleshandyClient
                     $stats['updated']++;
                     $stats['details'][] = "{$lead['email']} -> Saleshandy prospect {$prospectId}: sent " . implode(', ', $sentLabels);
                 } else {
-                    $stats['partial']++;
+                    $succeededCount = count($fieldIdToValue) - count($failedFieldIds);
+                    if ($succeededCount > 0) {
+                        $stats['partial']++;
+                    } else {
+                        // Every field was rejected, including ones (like
+                        // First/Last Name) that are essentially always
+                        // valid -- points at something wrong with this
+                        // lead's Saleshandy prospect record itself (stale/
+                        // foreign id, deleted contact, permission issue),
+                        // not a per-field value/dropdown mismatch.
+                        $stats['full_failure']++;
+                    }
                     $failedLabels = array_map(
                         static fn(string $fieldId) => $labelByFieldId[$fieldId] ?? $fieldId,
                         $failedFieldIds
                     );
-                    $succeededCount = count($fieldIdToValue) - count($failedFieldIds);
                     $stats['errors'][] = "{$lead['email']}: Saleshandy rejected " . count($failedFieldIds)
                         . ' of ' . count($fieldIdToValue) . " field(s) ({$succeededCount} saved) -- failed: "
                         . implode(', ', $failedLabels);
@@ -1359,6 +1383,11 @@ class SaleshandyClient
                 'Email' => (string) $lead['email'],
             ];
             foreach ($enabledMappings as $m) {
+                // Already set above -- a stale mapping row for one of these
+                // would otherwise just redundantly overwrite the same value.
+                if (in_array($m['lead_field_key'], ['email', 'first_name', 'last_name'], true)) {
+                    continue;
+                }
                 $value = $resolveValue($lead, $m['lead_field_key']);
                 if ($value !== '') {
                     $prospect[$m['saleshandy_label']] = $value;

@@ -28,7 +28,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         );
         $delete = db()->prepare('DELETE FROM saleshandy_field_mappings WHERE lead_field_key = ? AND company_id = ?');
 
-        $targetKeys = array_unique(array_merge(array_keys(LEAD_FIELDS), array_keys(LOOKUP_FIELDS)));
+        // First Name/Last Name/Email are always sent by SaleshandyClient
+        // directly and are never offered below -- clean up any pre-existing
+        // row for one of them (from before this exclusion existed) on every
+        // save, since Email in particular gets rejected by Saleshandy every
+        // time it's sent through the attribute-update endpoint (it's the
+        // contact's identity key there, not a writable custom field).
+        foreach (['first_name', 'last_name', 'email'] as $alwaysSentKey) {
+            $delete->execute([$alwaysSentKey, $scope->companyId]);
+        }
+
+        $targetKeys = array_diff(
+            array_unique(array_merge(array_keys(LEAD_FIELDS), array_keys(LOOKUP_FIELDS))),
+            ['first_name', 'last_name', 'email']
+        );
         foreach ($targetKeys as $key) {
             $label = trim((string) ($labels[$key] ?? ''));
             if ($label === '') {
@@ -141,7 +154,9 @@ render_header('Saleshandy field mapping');
           <?php
       };
       ?>
-      <?php foreach (LEAD_FIELDS as $key => $meta): $row = $mappingByKey[$key] ?? null; ?>
+      <?php foreach (LEAD_FIELDS as $key => $meta): ?>
+        <?php if (in_array($key, ['first_name', 'last_name', 'email'], true)) continue; ?>
+        <?php $row = $mappingByKey[$key] ?? null; ?>
         <tr class="<?= isset($staleMappings[$key]) ? 'table-danger' : '' ?>">
           <td><input type="checkbox" name="enabled[<?= e($key) ?>]" value="1" <?= ($row && $row['enabled']) ? 'checked' : '' ?>></td>
           <td><?= e($meta['label']) ?></td>

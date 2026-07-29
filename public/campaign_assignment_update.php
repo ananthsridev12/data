@@ -183,7 +183,10 @@ if ($action === 'mark_imported') {
 
     $message = "{$result['updated']} lead(s) had every field successfully saved to their existing Saleshandy contact.";
     if ($result['partial'] > 0) {
-        $message .= " {$result['partial']} had SOME fields rejected by Saleshandy (see errors below) -- not fully updated.";
+        $message .= " {$result['partial']} had SOME fields rejected by Saleshandy (see errors below) -- likely a value that doesn't match one of Saleshandy's dropdown options for that field.";
+    }
+    if ($result['full_failure'] > 0) {
+        $message .= " {$result['full_failure']} had EVERY field rejected, including basics like First/Last Name -- likely a problem with that lead's Saleshandy contact record itself (deleted, wrong id, or a permissions issue), not the field values. Check the Saleshandy prospect id(s) below directly.";
     }
     if ($result['skipped_not_pushed'] > 0) {
         $message .= " {$result['skipped_not_pushed']} skipped (not pushed to Saleshandy yet).";
