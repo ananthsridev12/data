@@ -11,7 +11,8 @@ require_once __DIR__ . '/../app/includes/IcpRepository.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 require_once __DIR__ . '/../app/includes/CronRunLog.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: icp_segments.php');
@@ -20,9 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 csrf_verify();
 
-$systemUserId = (int) db()->query("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")->fetchColumn();
-
-$result = IcpRepository::runDistributionForNext(db(), $systemUserId);
+$result = IcpRepository::runDistributionForNext(db(), $user['id'], $scope->companyId, $scope->isAdmin() ? null : $scope->userId);
 CronRunLog::record(db(), 'icp_distribution', 'manual', $result['summary']);
 flash_set('success', 'ICP distribution: ' . $result['summary']);
 

@@ -8,7 +8,8 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 require_once __DIR__ . '/../app/includes/CronRunLog.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: icp_segments.php');
@@ -17,7 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 csrf_verify();
 
-$result = SaleshandyClient::backfillNextCampaign(db(), $admin['id']);
+$result = SaleshandyClient::backfillNextCampaign(db(), $user['id'], $scope->companyId, $scope->isAdmin() ? null : $scope->userId);
 CronRunLog::record(db(), 'saleshandy_backfill', 'manual', $result['summary']);
 flash_set($result['ok'] ? 'success' : 'danger', 'Saleshandy backfill: ' . $result['summary']);
 

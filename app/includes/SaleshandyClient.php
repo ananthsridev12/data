@@ -481,14 +481,20 @@ class SaleshandyClient
      * first N forever.
      *
      * @param int[]|null $eligibleCompanyIds restrict campaign selection to
-     *   these companies' campaigns (the scheduled cron passes the
-     *   companies that have opted in via saleshandy_field_sync_cron_enabled);
-     *   null means no restriction (the manual "Run now" button -- an
-     *   explicit click is its own consent, independent of the toggle).
-     *   An empty array means "opted in nowhere," so nothing runs.
+     *   these companies' campaigns. The scheduled cron passes the
+     *   companies that have opted in via saleshandy_field_sync_cron_enabled
+     *   (null means every company, an empty array means "opted in
+     *   nowhere," so nothing runs). The manual "Run now" button instead
+     *   passes the clicking user's own single company -- an explicit
+     *   click is its own consent, independent of the toggle, but it must
+     *   still never touch another tenant's campaigns.
+     * @param int|null $ownerId restrict to campaigns owned by this member
+     *   (a Team Lead/Member's manual "Run now" click is restricted to
+     *   their own campaigns, same as every other mutate action in this
+     *   app -- Admin passes null, unrestricted within the company).
      * @return array{campaign:?string,summary:string,ok:bool}
      */
-    public static function syncFieldsForNextCampaign(PDO $db, int $userId, ?array $eligibleCompanyIds, int $limit = 50): array
+    public static function syncFieldsForNextCampaign(PDO $db, int $userId, ?array $eligibleCompanyIds, int $limit = 50, ?int $ownerId = null): array
     {
         if ($eligibleCompanyIds !== null && !$eligibleCompanyIds) {
             return ['campaign' => null, 'summary' => 'Field-sync cron is not enabled for any company -- nothing to do.', 'ok' => true];
@@ -501,9 +507,14 @@ class SaleshandyClient
             $companyFilterSql = " AND company_id IN ({$placeholders})";
             $params = $eligibleCompanyIds;
         }
+        $ownerFilterSql = '';
+        if ($ownerId !== null) {
+            $ownerFilterSql = ' AND saleshandy_account_owner_id = ?';
+            $params[] = $ownerId;
+        }
 
         $campaignStmt = $db->prepare(
-            "SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL{$companyFilterSql}
+            "SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL{$companyFilterSql}{$ownerFilterSql}
               ORDER BY (saleshandy_field_sync_last_attempt_at IS NOT NULL), saleshandy_field_sync_last_attempt_at ASC
               LIMIT 1"
         );
@@ -511,9 +522,11 @@ class SaleshandyClient
         $campaign = $campaignStmt->fetch();
 
         if (!$campaign) {
-            $summary = $eligibleCompanyIds !== null
-                ? 'No Saleshandy-linked campaign found among companies with field-sync enabled -- nothing to do.'
-                : 'No campaigns linked to Saleshandy -- nothing to sync.';
+            $summary = $ownerId !== null
+                ? 'No Saleshandy-linked campaign of yours found -- nothing to do.'
+                : ($eligibleCompanyIds !== null
+                    ? 'No Saleshandy-linked campaign found among companies with field-sync enabled -- nothing to do.'
+                    : 'No campaigns linked to Saleshandy -- nothing to sync.');
             return ['campaign' => null, 'summary' => $summary, 'ok' => true];
         }
 
@@ -1157,16 +1170,41 @@ class SaleshandyClient
      * picking one via round-robin. The client is resolved from that
      * campaign's own saleshandy_account_owner_id instead.
      */
-    public static function syncNextCampaign(PDO $db, int $userId): array
+    /**
+     * @param int|null $companyId restrict to this company's campaigns
+     *   (the scheduled cron passes null -- it deliberately sweeps every
+     *   company in rotation; the manual "Run now" button always passes
+     *   the clicking user's own company, so a click can never touch
+     *   another tenant's data).
+     * @param int|null $ownerId restrict to campaigns owned by this
+     *   member (a Team Lead/Member's manual "Run now" click is
+     *   restricted to their own campaigns, same as every other mutate
+     *   action in this app -- Admin passes null, unrestricted within
+     *   their company).
+     */
+    public static function syncNextCampaign(PDO $db, int $userId, ?int $companyId = null, ?int $ownerId = null): array
     {
-        $campaign = $db->query(
-            "SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL
+        $clauses = ['saleshandy_sequence_id IS NOT NULL'];
+        $params = [];
+        if ($companyId !== null) {
+            $clauses[] = 'company_id = ?';
+            $params[] = $companyId;
+        }
+        if ($ownerId !== null) {
+            $clauses[] = 'saleshandy_account_owner_id = ?';
+            $params[] = $ownerId;
+        }
+        $stmt = $db->prepare(
+            'SELECT * FROM campaigns WHERE ' . implode(' AND ', $clauses) . '
               ORDER BY (saleshandy_last_sync_attempt_at IS NOT NULL), saleshandy_last_sync_attempt_at ASC
-              LIMIT 1"
-        )->fetch();
+              LIMIT 1'
+        );
+        $stmt->execute($params);
+        $campaign = $stmt->fetch();
 
         if (!$campaign) {
-            return ['campaign' => null, 'summary' => 'No campaigns linked to Saleshandy -- nothing to sync.', 'ok' => true];
+            $summary = $ownerId !== null ? 'No Saleshandy-linked campaign of yours found -- nothing to sync.' : 'No campaigns linked to Saleshandy -- nothing to sync.';
+            return ['campaign' => null, 'summary' => $summary, 'ok' => true];
         }
 
         $markAttempted = $db->prepare('UPDATE campaigns SET saleshandy_last_sync_attempt_at = NOW() WHERE id = ?');
@@ -1358,18 +1396,36 @@ class SaleshandyClient
      *
      * @return array{campaign:?string,summary:string,ok:bool}
      */
-    /** Static -- see syncNextCampaign()'s docblock for why. */
-    public static function backfillNextCampaign(PDO $db, int $userId): array
+    /**
+     * Static -- see syncNextCampaign()'s docblock for why.
+     * @param int|null $companyId see syncNextCampaign()
+     * @param int|null $ownerId see syncNextCampaign()
+     */
+    public static function backfillNextCampaign(PDO $db, int $userId, ?int $companyId = null, ?int $ownerId = null): array
     {
-        $campaign = $db->query(
-            "SELECT * FROM campaigns
-              WHERE saleshandy_sequence_id IS NOT NULL AND saleshandy_backfilled_at IS NULL
+        $clauses = ['saleshandy_sequence_id IS NOT NULL', 'saleshandy_backfilled_at IS NULL'];
+        $params = [];
+        if ($companyId !== null) {
+            $clauses[] = 'company_id = ?';
+            $params[] = $companyId;
+        }
+        if ($ownerId !== null) {
+            $clauses[] = 'saleshandy_account_owner_id = ?';
+            $params[] = $ownerId;
+        }
+        $stmt = $db->prepare(
+            'SELECT * FROM campaigns WHERE ' . implode(' AND ', $clauses) . '
               ORDER BY (saleshandy_backfill_last_attempt_at IS NOT NULL), saleshandy_backfill_last_attempt_at ASC
-              LIMIT 1"
-        )->fetch();
+              LIMIT 1'
+        );
+        $stmt->execute($params);
+        $campaign = $stmt->fetch();
 
         if (!$campaign) {
-            return ['campaign' => null, 'summary' => 'Every Saleshandy-linked campaign has already been backfilled -- nothing to do.', 'ok' => true];
+            $summary = $ownerId !== null
+                ? 'Every Saleshandy-linked campaign of yours has already been backfilled -- nothing to do.'
+                : 'Every Saleshandy-linked campaign has already been backfilled -- nothing to do.';
+            return ['campaign' => null, 'summary' => $summary, 'ok' => true];
         }
 
         $markAttempted = $db->prepare('UPDATE campaigns SET saleshandy_backfill_last_attempt_at = NOW() WHERE id = ?');

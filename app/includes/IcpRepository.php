@@ -510,13 +510,26 @@ class IcpRepository
      * the whole ICP; a campaign whose owner hasn't connected a key is
      * skipped, not failed.
      *
+     * @param int|null $companyId restrict to this company's ICPs (the
+     *   scheduled cron passes null -- it deliberately sweeps every
+     *   company in rotation; the manual "Run now" button always passes
+     *   the clicking user's own company, so a click can never touch
+     *   another tenant's data).
+     * @param int|null $restrictToUserId restrict to ICPs this user could
+     *   also mutate (see isFullyOwnedBySelf()) -- a Team Lead/Member's
+     *   manual "Run now" click only ever distributes into their own
+     *   campaigns, same rule as every other ICP action they take. Admin
+     *   passes null, unrestricted within their company.
      * @return array{summary:string,lines:array<int,string>}
      */
-    public static function runDistributionForNext(PDO $db, int $systemUserId): array
+    public static function runDistributionForNext(PDO $db, int $systemUserId, ?int $companyId = null, ?int $restrictToUserId = null): array
     {
-        $icp = self::nextForDistribution($db);
+        $icp = self::nextForDistribution($db, $companyId, $restrictToUserId);
         if (!$icp) {
-            return ['summary' => 'No active ICP segments with campaign links summing to 100% -- nothing to do.', 'lines' => []];
+            $summary = $restrictToUserId !== null
+                ? 'No active ICP of yours has campaign links summing to 100% -- nothing to do.'
+                : 'No active ICP segments with campaign links summing to 100% -- nothing to do.';
+            return ['summary' => $summary, 'lines' => []];
         }
 
         $result = self::processIcp($db, $icp, $systemUserId);
@@ -534,19 +547,34 @@ class IcpRepository
      * without a distribution attempt -- skips (without touching its
      * attempt timestamp) any active ICP whose links don't currently sum
      * to 100%, since that's a config problem to fix, not something worth
-     * spending an attempt slot retrying every call.
+     * spending an attempt slot retrying every call. Also skips (without
+     * touching the timestamp) any ICP outside $companyId/$restrictToUserId
+     * when given, for the same reason -- it's not eligible for this
+     * caller, not a config problem for anyone to fix.
      */
-    private static function nextForDistribution(PDO $db): ?array
+    private static function nextForDistribution(PDO $db, ?int $companyId = null, ?int $restrictToUserId = null): ?array
     {
-        $icps = $db->query(
-            'SELECT * FROM icp_segments WHERE is_active = 1
+        $clauses = ['is_active = 1'];
+        $params = [];
+        if ($companyId !== null) {
+            $clauses[] = 'company_id = ?';
+            $params[] = $companyId;
+        }
+        $stmt = $db->prepare(
+            'SELECT * FROM icp_segments WHERE ' . implode(' AND ', $clauses) . '
               ORDER BY (last_distribution_attempt_at IS NOT NULL), last_distribution_attempt_at ASC'
-        )->fetchAll();
+        );
+        $stmt->execute($params);
+        $icps = $stmt->fetchAll();
 
         foreach ($icps as $icp) {
-            if (self::linksSumTo100($db, (int) $icp['id'])) {
-                return $icp;
+            if (!self::linksSumTo100($db, (int) $icp['id'])) {
+                continue;
             }
+            if ($restrictToUserId !== null && !self::isFullyOwnedBySelf($db, (int) $icp['id'], $restrictToUserId)) {
+                continue;
+            }
+            return $icp;
         }
         return null;
     }

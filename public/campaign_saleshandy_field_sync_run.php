@@ -10,7 +10,8 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 require_once __DIR__ . '/../app/includes/CronRunLog.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: icp_segments.php');
@@ -19,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 csrf_verify();
 
-$result = SaleshandyClient::syncFieldsForNextCampaign(db(), $admin['id'], null);
+$result = SaleshandyClient::syncFieldsForNextCampaign(db(), $user['id'], [$scope->companyId], 50, $scope->isAdmin() ? null : $scope->userId);
 CronRunLog::record(db(), 'saleshandy_field_sync', 'manual', $result['summary']);
 flash_set($result['ok'] ? 'success' : 'danger', 'Saleshandy field sync: ' . $result['summary']);
 

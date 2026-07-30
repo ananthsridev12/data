@@ -13,7 +13,8 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 require_once __DIR__ . '/../app/includes/CronRunLog.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: icp_segments.php');
@@ -22,7 +23,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 csrf_verify();
 
-$result = SaleshandyClient::syncNextCampaign(db(), $admin['id']);
+// Always scoped to the clicking user's own company -- a Team Lead/Member
+// is further restricted to their own campaigns, same as every other
+// mutate action they can take; Admin sees any campaign in the company.
+$result = SaleshandyClient::syncNextCampaign(db(), $user['id'], $scope->companyId, $scope->isAdmin() ? null : $scope->userId);
 CronRunLog::record(db(), 'saleshandy_sync', 'manual', $result['summary']);
 flash_set($result['ok'] ? 'success' : 'danger', 'Saleshandy sync: ' . $result['summary']);
 

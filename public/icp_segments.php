@@ -188,7 +188,6 @@ render_header('ICP Segments');
   </div>
 </div>
 
-<?php if ($scope->isAdmin()): ?>
 <div class="card icp-card mb-4">
   <div class="card-header fw-semibold">Cron status</div>
   <div class="card-body">
@@ -196,6 +195,9 @@ render_header('ICP Segments');
       Each run (scheduled or "Run now") processes just <strong>one</strong> campaign/ICP -- whichever has gone
       longest without an attempt -- rather than looping everything at once, so a single run never risks timing
       out with many campaigns/ICPs. Successive runs rotate through all of them automatically.
+      <?php if (!$scope->isAdmin()): ?>
+        "Run now" only ever picks among your own campaigns/ICPs -- it can't touch a teammate's.
+      <?php endif; ?>
     </p>
     <div class="row g-3">
       <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
@@ -253,7 +255,10 @@ render_header('ICP Segments');
         <div>
           <div class="fw-semibold">Saleshandy field sync</div>
           <?php if (!$fieldSyncEnabledForCompany): ?>
-            <div class="small text-muted">Scheduled cron is off for your company -- enable it on <a href="company_profile.php">Company Profile</a>, or use "Run now" any time regardless.</div>
+            <div class="small text-muted">
+              Scheduled cron is off for your company --
+              <?= $scope->isAdmin() ? 'enable it on <a href="company_profile.php">Company Profile</a>, or ' : '' ?>use "Run now" any time regardless.
+            </div>
           <?php endif; ?>
           <?php if ($lastFieldSyncRun): ?>
             <div class="small text-muted">
@@ -272,7 +277,6 @@ render_header('ICP Segments');
     </div>
   </div>
 </div>
-<?php endif; ?>
 
 <?php if ($unmappedPersonas): ?>
 <div class="card icp-card mb-4">
