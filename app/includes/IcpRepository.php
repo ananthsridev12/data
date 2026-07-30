@@ -4,6 +4,7 @@ require_once __DIR__ . '/RoleGroupClassifier.php';
 require_once __DIR__ . '/WaveAssigner.php';
 require_once __DIR__ . '/LeadRepository.php';
 require_once __DIR__ . '/Scope.php';
+require_once __DIR__ . '/SaleshandyClient.php';
 
 /**
  * CRUD + matching/splitting logic for ICP (Ideal Customer Profile) segments
@@ -11,10 +12,10 @@ require_once __DIR__ . '/Scope.php';
  */
 class IcpRepository
 {
-    /** @return array<int,array<string,mixed>> every ICP, with joined labels + linked-campaign summary. */
-    public static function list(PDO $db): array
+    /** @return array<int,array<string,mixed>> every ICP in this company, with joined labels + linked-campaign summary. */
+    public static function list(PDO $db, int $companyId): array
     {
-        $rows = $db->query(
+        $stmt = $db->prepare(
             "SELECT icp.*, rg.label AS role_group_label, v.label AS vertical_label, s.label AS service_label,
                     cg.label AS country_group_label,
                     (SELECT COUNT(*) FROM icp_campaign_links l WHERE l.icp_id = icp.id) AS link_count,
@@ -24,8 +25,11 @@ class IcpRepository
                LEFT JOIN verticals v ON v.id = icp.vertical_id
                LEFT JOIN services s ON s.id = icp.service_id
                LEFT JOIN country_groups cg ON cg.id = icp.country_group_id
+              WHERE icp.company_id = ?
               ORDER BY icp.name"
-        )->fetchAll();
+        );
+        $stmt->execute([$companyId]);
+        $rows = $stmt->fetchAll();
 
         foreach ($rows as &$r) {
             $r['link_count'] = (int) $r['link_count'];
@@ -79,15 +83,15 @@ class IcpRepository
     }
 
     /** @param array<string,mixed> $data */
-    public static function create(PDO $db, array $data, int $userId): int
+    public static function create(PDO $db, array $data, int $userId, int $companyId): int
     {
         $stmt = $db->prepare(
             'INSERT INTO icp_segments
-                (name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (company_id, name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
-            $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
+            $companyId, $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
             !empty($data['auto_push_enabled']) ? 1 : 0, $userId,
         ]);
@@ -95,51 +99,67 @@ class IcpRepository
     }
 
     /** @param array<string,mixed> $data */
-    public static function update(PDO $db, int $id, array $data): void
+    public static function update(PDO $db, int $id, array $data, int $companyId): void
     {
         $stmt = $db->prepare(
             'UPDATE icp_segments
                 SET name = ?, role_group_id = ?, vertical_id = ?, service_id = ?, country_group_id = ?,
                     company_country = ?, industry = ?, seniority = ?, employee_count = ?, auto_push_enabled = ?
-              WHERE id = ?'
+              WHERE id = ? AND company_id = ?'
         );
         $stmt->execute([
             $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
-            !empty($data['auto_push_enabled']) ? 1 : 0, $id,
+            !empty($data['auto_push_enabled']) ? 1 : 0, $id, $companyId,
         ]);
     }
 
-    public static function toggleActive(PDO $db, int $id): void
+    public static function toggleActive(PDO $db, int $id, int $companyId): void
     {
-        $db->prepare('UPDATE icp_segments SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
+        $db->prepare('UPDATE icp_segments SET is_active = NOT is_active WHERE id = ? AND company_id = ?')->execute([$id, $companyId]);
     }
 
     /**
      * Links a campaign at a placeholder 0% and immediately rebalances
      * every link on this ICP to an even split -- so an admin never has
      * to hand-pick a percentage that happens to make the total land on
-     * 100 (1 link -> 100%, 2 -> 50/50, 3 -> 34/33/33, etc).
+     * 100 (1 link -> 100%, 2 -> 50/50, 3 -> 34/33/33, etc). Both the ICP
+     * and the campaign must belong to the acting admin's own company --
+     * rejects otherwise, since an ICP and a campaign from different
+     * companies can never legitimately be linked (see sql/032's note on
+     * icp_segments.company_id needing to match every linked campaign's).
      */
-    public static function addLink(PDO $db, int $icpId, int $campaignId): void
+    public static function addLink(PDO $db, int $icpId, int $campaignId, int $companyId): void
     {
+        $matchStmt = $db->prepare(
+            'SELECT icp.company_id = ? AND c.company_id = ? FROM icp_segments icp, campaigns c WHERE icp.id = ? AND c.id = ?'
+        );
+        $matchStmt->execute([$companyId, $companyId, $icpId, $campaignId]);
+        $sameCompany = $matchStmt->fetchColumn();
+        if ($sameCompany === false || !(bool) $sameCompany) {
+            throw new InvalidArgumentException('That campaign belongs to a different company than this ICP segment.');
+        }
+
         $stmt = $db->prepare('INSERT INTO icp_campaign_links (icp_id, campaign_id, percentage) VALUES (?, ?, 0)');
         $stmt->execute([$icpId, $campaignId]);
-        self::rebalanceEvenly($db, $icpId);
+        self::rebalanceEvenly($db, $icpId, $companyId);
     }
 
     /** Removes a link, then rebalances whatever campaigns remain back to an even split. */
-    public static function removeLink(PDO $db, int $linkId): void
+    public static function removeLink(PDO $db, int $linkId, int $companyId): void
     {
-        $stmt = $db->prepare('SELECT icp_id FROM icp_campaign_links WHERE id = ?');
-        $stmt->execute([$linkId]);
+        $stmt = $db->prepare(
+            'SELECT l.icp_id FROM icp_campaign_links l JOIN icp_segments icp ON icp.id = l.icp_id WHERE l.id = ? AND icp.company_id = ?'
+        );
+        $stmt->execute([$linkId, $companyId]);
         $icpId = $stmt->fetchColumn();
 
-        $db->prepare('DELETE FROM icp_campaign_links WHERE id = ?')->execute([$linkId]);
-
-        if ($icpId !== false) {
-            self::rebalanceEvenly($db, (int) $icpId);
+        if ($icpId === false) {
+            return;
         }
+
+        $db->prepare('DELETE FROM icp_campaign_links WHERE id = ?')->execute([$linkId]);
+        self::rebalanceEvenly($db, (int) $icpId, $companyId);
     }
 
     /**
@@ -151,8 +171,14 @@ class IcpRepository
      * button) to discard a manual custom split, or to fix an ICP whose
      * links don't currently sum to 100 for any other reason.
      */
-    public static function rebalanceEvenly(PDO $db, int $icpId): void
+    public static function rebalanceEvenly(PDO $db, int $icpId, int $companyId): void
     {
+        $ownStmt = $db->prepare('SELECT 1 FROM icp_segments WHERE id = ? AND company_id = ?');
+        $ownStmt->execute([$icpId, $companyId]);
+        if (!$ownStmt->fetchColumn()) {
+            return;
+        }
+
         $stmt = $db->prepare('SELECT id FROM icp_campaign_links WHERE icp_id = ? ORDER BY id');
         $stmt->execute([$icpId]);
         $linkIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
@@ -179,8 +205,14 @@ class IcpRepository
      *
      * @param array<int,int> $percentagesByLinkId link_id => percentage
      */
-    public static function updateLinkPercentages(PDO $db, int $icpId, array $percentagesByLinkId): bool
+    public static function updateLinkPercentages(PDO $db, int $icpId, array $percentagesByLinkId, int $companyId): bool
     {
+        $ownStmt = $db->prepare('SELECT 1 FROM icp_segments WHERE id = ? AND company_id = ?');
+        $ownStmt->execute([$icpId, $companyId]);
+        if (!$ownStmt->fetchColumn()) {
+            return false;
+        }
+
         $stmt = $db->prepare('SELECT id FROM icp_campaign_links WHERE icp_id = ?');
         $stmt->execute([$icpId]);
         $existingIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
@@ -230,9 +262,9 @@ class IcpRepository
      *
      * @return array<int,array<string,mixed>>
      */
-    public static function performanceStats(PDO $db): array
+    public static function performanceStats(PDO $db, int $companyId): array
     {
-        $rows = $db->query(
+        $stmt = $db->prepare(
             "SELECT icp.id, icp.name, icp.is_active, icp.auto_push_enabled,
                     (SELECT GROUP_CONCAT(c.name ORDER BY c.name SEPARATOR ', ')
                        FROM icp_campaign_links lk JOIN campaigns c ON c.id = lk.campaign_id
@@ -250,10 +282,12 @@ class IcpRepository
                FROM icp_segments icp
                LEFT JOIN lead_campaign_assignments a ON a.icp_id = icp.id
                LEFT JOIN leads l ON l.id = a.lead_id
-              WHERE l.deleted_at IS NULL OR a.id IS NULL
+              WHERE (l.deleted_at IS NULL OR a.id IS NULL) AND icp.company_id = ?
               GROUP BY icp.id
               ORDER BY icp.name"
-        )->fetchAll();
+        );
+        $stmt->execute([$companyId]);
+        $rows = $stmt->fetchAll();
 
         foreach ($rows as &$r) {
             foreach (['leads_assigned', 'pending_push', 'pushed', 'emails_sent', 'delivered', 'bounced', 'opened', 'replied'] as $col) {
@@ -353,29 +387,33 @@ class IcpRepository
      * persistently failing ICP can't get retried on every single call
      * forever and starve every other ICP from ever being processed.
      *
-     * Pass a non-null $client to also auto-push for any ICP with
-     * auto_push_enabled=1 -- attempted for EVERY linked campaign of that
-     * ICP, regardless of whether this call assigned anything new to it,
-     * since pushCampaignLeads() re-checks "who in this campaign is
-     * wave-1-active and not yet pushed" from scratch every time, so it
-     * naturally sweeps up a lead that was HELD earlier and only just got
-     * released (e.g. by the Saleshandy sync cron resolving its wave-1
-     * leader as delivered).
+     * Auto-pushes for any ICP with auto_push_enabled=1 -- attempted for
+     * EVERY linked campaign of that ICP, regardless of whether this call
+     * assigned anything new to it, since pushCampaignLeads() re-checks
+     * "who in this campaign is wave-1-active and not yet pushed" from
+     * scratch every time, so it naturally sweeps up a lead that was HELD
+     * earlier and only just got released (e.g. by the Saleshandy sync
+     * cron resolving its wave-1 leader as delivered). Each linked
+     * campaign's push uses that campaign's own owner's Saleshandy
+     * account (SaleshandyClient::forUser()) -- an ICP can link campaigns
+     * owned by different members, so there's no single shared client for
+     * the whole ICP; a campaign whose owner hasn't connected a key is
+     * skipped, not failed.
      *
      * @return array{summary:string,lines:array<int,string>}
      */
-    public static function runDistributionForNext(PDO $db, ?SaleshandyClient $client, int $systemUserId): array
+    public static function runDistributionForNext(PDO $db, int $systemUserId): array
     {
         $icp = self::nextForDistribution($db);
         if (!$icp) {
             return ['summary' => 'No active ICP segments with campaign links summing to 100% -- nothing to do.', 'lines' => []];
         }
 
-        $result = self::processIcp($db, $icp, $client, $systemUserId);
+        $result = self::processIcp($db, $icp, $systemUserId);
         $db->prepare('UPDATE icp_segments SET last_distribution_attempt_at = NOW() WHERE id = ?')->execute([(int) $icp['id']]);
 
         $summary = "\"{$icp['name']}\": " . ($result['had_matches']
-            ? "{$result['assigned']} lead(s) assigned" . ($client !== null ? ", {$result['pushed']} lead(s) auto-pushed" : '')
+            ? "{$result['assigned']} lead(s) assigned" . ($icp['auto_push_enabled'] ? ", {$result['pushed']} lead(s) auto-pushed" : '')
             : 'no new matching leads');
 
         return ['summary' => $summary, 'lines' => $result['lines']];
@@ -404,7 +442,7 @@ class IcpRepository
     }
 
     /** @return array{lines:array<int,string>,had_matches:bool,assigned:int,pushed:int} */
-    private static function processIcp(PDO $db, array $icp, ?SaleshandyClient $client, int $systemUserId): array
+    private static function processIcp(PDO $db, array $icp, int $systemUserId): array
     {
         $lines = [];
         $assigned = 0;
@@ -454,12 +492,13 @@ class IcpRepository
                     $lines[] = "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): 0 lead(s)";
                 }
 
-                if ($icp['auto_push_enabled'] && $client !== null) {
+                if ($icp['auto_push_enabled']) {
                     $campStmt = $db->prepare('SELECT * FROM campaigns WHERE id = ?');
                     $campStmt->execute([(int) $link['campaign_id']]);
                     $campaign = $campStmt->fetch();
                     if ($campaign) {
                         try {
+                            $client = SaleshandyClient::forUser($db, (int) $campaign['saleshandy_account_owner_id']);
                             $pushResult = $client->pushCampaignLeads($db, $campaign, false);
                             $pushed += $pushResult['pushed'];
                             if ($pushResult['pushed'] > 0 || $pushResult['errors']) {
@@ -469,7 +508,7 @@ class IcpRepository
                                 }
                             }
                         } catch (SaleshandyApiException $ex) {
-                            $lines[] = "    auto-push FAILED (\"{$link['campaign_name']}\"): {$ex->getMessage()}";
+                            $lines[] = "    auto-push skipped (\"{$link['campaign_name']}\"): {$ex->getMessage()}";
                         }
                     }
                 }

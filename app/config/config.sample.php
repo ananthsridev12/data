@@ -29,11 +29,14 @@ return [
     'session_name' => 'shdash_sess',
 
     'saleshandy' => [
-        // Generate under Saleshandy -> Settings -> API. Required for
-        // "Push to Saleshandy" / "Refresh statuses" on Campaign Leads,
-        // and for the Saleshandy Field Mapping and Tags admin pages.
-        // Leave blank to leave those features disabled (everything else
-        // in the app works fine without it).
+        // LEGACY -- no longer read by the app itself. Each member now
+        // connects their own personal Saleshandy account on the "Connect
+        // Saleshandy" page (users.saleshandy_api_key, encrypted) instead
+        // of everyone sharing one key here. This setting only still
+        // matters if you're migrating an existing single-key install:
+        // set it temporarily, run `php tools/backfill_saleshandy_key.php`
+        // once (see that file's header comment) to copy it onto the
+        // right member's account, then blank it out again.
         'api_key' => '',
 
         // A random string you make up (e.g. `openssl rand -hex 32`).
@@ -43,4 +46,14 @@ return [
         // logged-in session to authenticate with.
         'cron_token' => '',
     ],
+
+    // Required: a 64-character hex string (32 random bytes) used to
+    // encrypt each member's personal Saleshandy API key at rest
+    // (users.saleshandy_api_key -- see app/includes/SaleshandyKeyCipher.php
+    // and public/saleshandy_connect.php). Generate one with:
+    //   php -r "echo bin2hex(random_bytes(32));"
+    // Losing/changing this after members have connected their accounts
+    // makes every already-saved key permanently undecryptable -- back it
+    // up somewhere safe alongside your other secrets, and never commit it.
+    'encryption_key' => '',
 ];

@@ -22,20 +22,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 csrf_verify();
 
-$config = require __DIR__ . '/../app/config/config.php';
-
-try {
-    $client = SaleshandyClient::fromConfig($config);
-    $result = $client->syncNextCampaign(db(), $admin['id']);
-    CronRunLog::record(db(), 'saleshandy_sync', 'manual', $result['summary']);
-    flash_set($result['ok'] ? 'success' : 'danger', 'Saleshandy sync: ' . $result['summary']);
-} catch (SaleshandyApiException $ex) {
-    // Logged too (not just flashed) -- otherwise clicking "Run now" with
-    // a missing/bad API key silently leaves "Last run" stuck on "Never
-    // run yet" even though an attempt genuinely just happened.
-    CronRunLog::record(db(), 'saleshandy_sync', 'manual', 'Failed: ' . $ex->getMessage());
-    flash_set('danger', 'Could not connect to Saleshandy: ' . $ex->getMessage());
-}
+$result = SaleshandyClient::syncNextCampaign(db(), $admin['id']);
+CronRunLog::record(db(), 'saleshandy_sync', 'manual', $result['summary']);
+flash_set($result['ok'] ? 'success' : 'danger', 'Saleshandy sync: ' . $result['summary']);
 
 header('Location: icp_segments.php');
 exit;

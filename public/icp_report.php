@@ -4,7 +4,7 @@ require_once __DIR__ . '/../app/includes/IcpRepository.php';
 
 $admin = require_admin();
 
-$icps = IcpRepository::performanceStats(db());
+$icps = IcpRepository::performanceStats(db(), (int) $admin['company_id']);
 
 $pct = static function (int $numerator, int $denominator): string {
     if ($denominator === 0) {

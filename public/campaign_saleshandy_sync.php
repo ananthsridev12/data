@@ -35,9 +35,8 @@ if (!$campaign['saleshandy_sequence_id']) {
     exit;
 }
 
-$config = require __DIR__ . '/../app/config/config.php';
 try {
-    $client = SaleshandyClient::fromConfig($config);
+    $client = SaleshandyClient::forUser(db(), (int) $campaign['saleshandy_account_owner_id']);
     $stats = $client->syncCampaign(db(), $campaign, $user['id']);
     $message = "Synced from Saleshandy: {$stats['matched']} lead(s) updated ({$stats['bounced']} bounced, {$stats['replied']} replied).";
     if ($stats['released'] > 0) {

@@ -11,7 +11,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 csrf_verify();
 
-$campaigns = db()->query("SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL")->fetchAll();
+$campaignsStmt = db()->prepare('SELECT * FROM campaigns WHERE company_id = ? AND saleshandy_sequence_id IS NOT NULL');
+$campaignsStmt->execute([(int) $admin['company_id']]);
+$campaigns = $campaignsStmt->fetchAll();
 
 if (!$campaigns) {
     flash_set('danger', 'No campaigns are linked to Saleshandy yet.');
@@ -19,26 +21,21 @@ if (!$campaigns) {
     exit;
 }
 
-$config = require __DIR__ . '/../app/config/config.php';
 $matched = 0;
 $errors = [];
 
-try {
-    $client = SaleshandyClient::fromConfig($config);
-    foreach ($campaigns as $campaign) {
-        try {
-            $stats = $client->syncCampaign(db(), $campaign, $admin['id']);
-            $matched += $stats['matched'];
-        } catch (SaleshandyApiException $ex) {
-            $errors[] = "\"{$campaign['name']}\": {$ex->getMessage()}";
-        }
+foreach ($campaigns as $campaign) {
+    try {
+        $client = SaleshandyClient::forUser(db(), (int) $campaign['saleshandy_account_owner_id']);
+        $stats = $client->syncCampaign(db(), $campaign, $admin['id']);
+        $matched += $stats['matched'];
+    } catch (SaleshandyApiException $ex) {
+        $errors[] = "\"{$campaign['name']}\": {$ex->getMessage()}";
     }
-    flash_set('success', "Fetched from Saleshandy: {$matched} lead(s) updated across " . count($campaigns) . ' campaign(s).');
-    if ($errors) {
-        flash_set('danger', 'Some campaigns failed to sync: ' . implode('; ', $errors));
-    }
-} catch (SaleshandyApiException $ex) {
-    flash_set('danger', 'Could not connect to Saleshandy: ' . $ex->getMessage());
+}
+flash_set('success', "Fetched from Saleshandy: {$matched} lead(s) updated across " . count($campaigns) . ' campaign(s).');
+if ($errors) {
+    flash_set('danger', 'Some campaigns failed to sync: ' . implode('; ', $errors));
 }
 
 header('Location: reports.php');

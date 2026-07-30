@@ -17,17 +17,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 csrf_verify();
 
-$config = require __DIR__ . '/../app/config/config.php';
-
-try {
-    $client = SaleshandyClient::fromConfig($config);
-    $result = $client->backfillNextCampaign(db(), $admin['id']);
-    CronRunLog::record(db(), 'saleshandy_backfill', 'manual', $result['summary']);
-    flash_set($result['ok'] ? 'success' : 'danger', 'Saleshandy backfill: ' . $result['summary']);
-} catch (SaleshandyApiException $ex) {
-    CronRunLog::record(db(), 'saleshandy_backfill', 'manual', 'Failed: ' . $ex->getMessage());
-    flash_set('danger', 'Could not connect to Saleshandy: ' . $ex->getMessage());
-}
+$result = SaleshandyClient::backfillNextCampaign(db(), $admin['id']);
+CronRunLog::record(db(), 'saleshandy_backfill', 'manual', $result['summary']);
+flash_set($result['ok'] ? 'success' : 'danger', 'Saleshandy backfill: ' . $result['summary']);
 
 header('Location: icp_segments.php');
 exit;

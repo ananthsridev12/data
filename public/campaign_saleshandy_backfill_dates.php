@@ -35,9 +35,8 @@ if (!$campaign['saleshandy_sequence_id']) {
     exit;
 }
 
-$config = require __DIR__ . '/../app/config/config.php';
 try {
-    $client = SaleshandyClient::fromConfig($config);
+    $client = SaleshandyClient::forUser(db(), (int) $campaign['saleshandy_account_owner_id']);
     $stats = $client->backfillHistoricalDates(db(), $campaign, $user['id']);
     // Marked done here too (not just by the automated backfill cron), so
     // that cron doesn't waste a full 2-year re-fetch on a campaign an

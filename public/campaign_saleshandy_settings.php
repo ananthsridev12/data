@@ -34,8 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // campaign genuinely needs to start later in the sequence.
             $stepId = null;
             try {
-                $config = require __DIR__ . '/../app/config/config.php';
-                $client = SaleshandyClient::fromConfig($config);
+                $client = SaleshandyClient::forUser(db(), (int) $campaign['saleshandy_account_owner_id']);
                 $steps = $client->listSequenceSteps($sequenceId);
                 usort($steps, static fn(array $a, array $b) => ($a['number'] ?? 0) <=> ($b['number'] ?? 0));
                 $stepId = $steps[0]['id'] ?? null;
@@ -73,10 +72,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $sequences = [];
 $steps = [];
 $apiError = null;
-$config = require __DIR__ . '/../app/config/config.php';
 
 try {
-    $client = SaleshandyClient::fromConfig($config);
+    $client = SaleshandyClient::forUser(db(), (int) $campaign['saleshandy_account_owner_id']);
     if (!$campaign['saleshandy_sequence_id']) {
         $sequences = $client->listSequences();
     } else {
@@ -93,7 +91,7 @@ render_header('Saleshandy settings');
 <p class="text-muted"><a href="campaigns.php">&laquo; Back to campaigns</a></p>
 
 <?php if ($apiError): ?>
-  <div class="alert alert-danger">Could not reach Saleshandy: <?= e($apiError) ?> -- check <code>saleshandy.api_key</code> in <code>app/config/config.php</code> (see README-DEPLOY.md).</div>
+  <div class="alert alert-danger">Could not reach Saleshandy: <?= e($apiError) ?></div>
 <?php endif; ?>
 
 <div class="card mb-3">

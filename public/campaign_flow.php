@@ -52,9 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $steps = [];
 $apiError = null;
 if ($campaign['saleshandy_sequence_id']) {
-    $config = require __DIR__ . '/../app/config/config.php';
     try {
-        $client = SaleshandyClient::fromConfig($config);
+        $client = SaleshandyClient::forUser(db(), (int) $campaign['saleshandy_account_owner_id']);
         $steps = $client->listSequenceSteps($campaign['saleshandy_sequence_id']);
         usort($steps, static fn(array $a, array $b) => ($a['number'] ?? 0) <=> ($b['number'] ?? 0));
     } catch (SaleshandyApiException $ex) {

@@ -38,10 +38,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             try {
                 if ($action === 'create') {
-                    IcpRepository::create(db(), $data, $admin['id']);
+                    IcpRepository::create(db(), $data, $admin['id'], (int) $admin['company_id']);
                     flash_set('success', "\"{$name}\" created -- now link 2 or more campaigns to it below with a percentage split.");
                 } else {
-                    IcpRepository::update(db(), (int) ($_POST['id'] ?? 0), $data);
+                    IcpRepository::update(db(), (int) ($_POST['id'] ?? 0), $data, (int) $admin['company_id']);
                     flash_set('success', "\"{$name}\" updated.");
                 }
             } catch (PDOException $ex) {
@@ -49,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'toggle_active') {
-        IcpRepository::toggleActive(db(), (int) ($_POST['id'] ?? 0));
+        IcpRepository::toggleActive(db(), (int) ($_POST['id'] ?? 0), (int) $admin['company_id']);
         flash_set('success', 'Status updated.');
     } elseif ($action === 'add_link') {
         $icpId = (int) ($_POST['icp_id'] ?? 0);
@@ -58,22 +58,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('danger', 'Pick a campaign to link.');
         } else {
             try {
-                IcpRepository::addLink(db(), $icpId, $campaignId);
+                IcpRepository::addLink(db(), $icpId, $campaignId, (int) $admin['company_id']);
                 flash_set('success', 'Campaign linked -- percentages auto-split evenly across all linked campaigns.');
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'That campaign is already linked to this ICP.' : 'Could not link campaign.');
+            } catch (InvalidArgumentException $ex) {
+                flash_set('danger', $ex->getMessage());
             }
         }
     } elseif ($action === 'remove_link') {
-        IcpRepository::removeLink(db(), (int) ($_POST['link_id'] ?? 0));
+        IcpRepository::removeLink(db(), (int) ($_POST['link_id'] ?? 0), (int) $admin['company_id']);
         flash_set('success', 'Link removed -- remaining campaigns auto-split evenly.');
     } elseif ($action === 'rebalance') {
-        IcpRepository::rebalanceEvenly(db(), (int) ($_POST['icp_id'] ?? 0));
+        IcpRepository::rebalanceEvenly(db(), (int) ($_POST['icp_id'] ?? 0), (int) $admin['company_id']);
         flash_set('success', 'Split reset to an even percentage across all linked campaigns.');
     } elseif ($action === 'update_split') {
         $icpId = (int) ($_POST['icp_id'] ?? 0);
         $percentages = array_map('intval', (array) ($_POST['percentage'] ?? []));
-        if (IcpRepository::updateLinkPercentages(db(), $icpId, $percentages)) {
+        if (IcpRepository::updateLinkPercentages(db(), $icpId, $percentages, (int) $admin['company_id'])) {
             flash_set('success', 'Custom split saved.');
         } else {
             flash_set('danger', 'Could not save split -- percentages must be 1-100 each and sum to exactly 100.');
@@ -84,12 +86,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$icps = IcpRepository::list(db());
+$icps = IcpRepository::list(db(), (int) $admin['company_id']);
 $roleGroups = LeadRepository::activeLookupOptions(db(), $scope, 'role_groups');
 $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 $countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
-$campaigns = db()->query("SELECT id, name FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL ORDER BY name")->fetchAll();
+$campaignsStmt = db()->prepare('SELECT id, name FROM campaigns WHERE company_id = ? AND saleshandy_sequence_id IS NOT NULL ORDER BY name');
+$campaignsStmt->execute([(int) $admin['company_id']]);
+$campaigns = $campaignsStmt->fetchAll();
 
 $companyCountries = LeadRepository::distinctValues(db(), $scope, 'company_country');
 $industries = LeadRepository::distinctValues(db(), $scope, 'industry');

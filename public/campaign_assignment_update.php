@@ -180,9 +180,8 @@ if ($action === 'mark_imported') {
         exit;
     }
 
-    $config = require __DIR__ . '/../app/config/config.php';
     try {
-        $client = SaleshandyClient::fromConfig($config);
+        $client = SaleshandyClient::forUser(db(), (int) $campaign['saleshandy_account_owner_id']);
         $result = $client->syncFieldsToSaleshandy(db(), $ids, $campaignId);
     } catch (SaleshandyApiException $ex) {
         flash_set('danger', 'Could not reach Saleshandy: ' . $ex->getMessage());

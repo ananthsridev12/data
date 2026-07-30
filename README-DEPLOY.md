@@ -99,6 +99,9 @@ directory) on the server, and fill in:
   folder -> "Copy" shows the full path, or check the path shown when
   editing files in that folder).
 - `app_url`: your site's URL.
+- `encryption_key`: required before any member can connect their
+  Saleshandy account -- see "Per-member Saleshandy accounts" below.
+  Generate with `php -r "echo bin2hex(random_bytes(32));"`.
 
 `config.php` is gitignored and must never be committed -- it holds your
 real database credentials.
@@ -1118,6 +1121,18 @@ stuck retrying campaign 2.
 - **Already have per-campaign manual sync**: each campaign's own
   "Refresh statuses" button (`campaign_leads.php`) already syncs just
   that one campaign on demand -- no separate feature needed for that.
+- **Each campaign's push/sync runs through its own owner's Saleshandy
+  account** (`SaleshandyClient::forUser()`, see "Per-member Saleshandy
+  accounts" above), not one shared key for every campaign. If a round-
+  robin pick's owner hasn't connected a key, that pick is **skipped, not
+  failed** -- its "last attempt" is still stamped (same starvation-
+  avoidance reasoning as the paragraph above) and the summary reads
+  `"<campaign>": skipped -- <owner> hasn't connected a Saleshandy
+  account yet` instead of `FAILED`, so an unconnected member's campaign
+  doesn't get retried on every single tick and doesn't show up as a
+  cron failure. ICP auto-push follows the same rule per linked campaign
+  -- since one ICP can link campaigns owned by different members, a
+  single distribution run may use more than one Saleshandy account.
 
 **Bug fix found and fixed while building this**: the ICP auto-push step
 used to only run when *that same pass* also assigned a brand-new lead to
@@ -1195,9 +1210,53 @@ Saleshandy sequence step and pull delivery/reply/bounce activity back,
 via `app/includes/SaleshandyClient.php`. This is entirely optional --
 everything else in the app works without it.
 
+### Per-member Saleshandy accounts
+
+Each member connects their **own personal** Saleshandy API key -- there
+is no single shared company-wide key. This is what lets several people
+in the same company push/sync campaigns through their own separate
+Saleshandy accounts without stepping on each other.
+
+- **Connect Saleshandy** (nav link, any logged-in role): paste an API
+  key from Saleshandy under **Settings -> API**. It's validated live
+  (a real API call) before being saved -- a bad key is never stored.
+  Once connected, the key is encrypted at rest
+  (`users.saleshandy_api_key`, via `app/includes/SaleshandyKeyCipher.php`
+  and libsodium's `sodium_crypto_secretbox`) and can be disconnected /
+  reconnected at any time from the same page.
+- **`encryption_key`** in `app/config/config.php` is required for this --
+  a 64-character hex string (32 random bytes), generated with
+  `php -r "echo bin2hex(random_bytes(32));"`. Losing or changing it after
+  members have connected their accounts makes every already-saved key
+  permanently undecryptable (they'd all need to reconnect) -- back it up
+  alongside your other secrets, and never commit it.
+- **Campaign ownership decides whose account is used.** Every campaign
+  has an owner (`campaigns.saleshandy_account_owner_id`, defaulted to
+  its creator) -- every push/sync/pull/backfill for that campaign always
+  runs through that owner's connected Saleshandy account, regardless of
+  who clicks the button. This is what makes "an Admin or Team Lead pushes
+  a team member's campaign" work transparently: the campaign owner's key
+  is what's actually used, not the acting user's. A campaign whose owner
+  hasn't connected a key yet shows a clear "hasn't connected a Saleshandy
+  account" message wherever it's pushed/synced, and the scheduled crons
+  (below) skip it gracefully -- without ever retrying it on every single
+  run -- until they do.
+- **Migrating from the old single shared key**: earlier versions of this
+  app used one global key (`saleshandy.api_key` in config.php) for every
+  campaign. If you're upgrading from that, run
+  `php tools/backfill_saleshandy_key.php` once (see that file's header
+  comment) to copy the existing key onto the one member every campaign
+  was already consolidated onto, then blank out `saleshandy.api_key` in
+  config.php -- the app itself no longer reads it.
+- A few reference-only actions that aren't tied to a specific campaign
+  (fetching the known field list on **Saleshandy Field Mapping**,
+  "Sync from Saleshandy" on **Tags**) use the acting/logged-in user's own
+  connected key instead of a campaign owner's.
+
 **Setup:**
-1. Generate an API key in Saleshandy under **Settings -> API**, and paste
-   it into `app/config/config.php` as `saleshandy.api_key`.
+1. Each member who'll push/sync campaigns visits **Connect Saleshandy**
+   and connects their own account (see above). Set `encryption_key` in
+   `app/config/config.php` first -- connecting fails without it.
 2. (Optional, for the scheduled sync) make up a random string (e.g.
    `openssl rand -hex 32`) and set it as `saleshandy.cron_token`.
 3. Visit **Saleshandy Field Mapping** (admin nav) and choose which of

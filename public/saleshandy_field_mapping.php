@@ -10,9 +10,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'fetch_fields') {
-        $config = require __DIR__ . '/../app/config/config.php';
         try {
-            $client = SaleshandyClient::fromConfig($config);
+            $client = SaleshandyClient::forUser(db(), $admin['id']);
             $_SESSION['saleshandy_known_fields'] = $client->listFields();
             flash_set('success', 'Fetched field list from Saleshandy -- exact labels are shown below for reference.');
         } catch (SaleshandyApiException $ex) {

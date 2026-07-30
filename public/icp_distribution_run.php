@@ -20,17 +20,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 csrf_verify();
 
-$config = require __DIR__ . '/../app/config/config.php';
 $systemUserId = (int) db()->query("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")->fetchColumn();
 
-$client = null;
-try {
-    $client = SaleshandyClient::fromConfig($config);
-} catch (SaleshandyApiException $ex) {
-    flash_set('info', 'Saleshandy not configured -- auto-push ICPs will be skipped this run (' . $ex->getMessage() . ').');
-}
-
-$result = IcpRepository::runDistributionForNext(db(), $client, $systemUserId);
+$result = IcpRepository::runDistributionForNext(db(), $systemUserId);
 CronRunLog::record(db(), 'icp_distribution', 'manual', $result['summary']);
 flash_set('success', 'ICP distribution: ' . $result['summary']);
 

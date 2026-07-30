@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../config/constants.php';
 require_once __DIR__ . '/WaveAssigner.php';
 require_once __DIR__ . '/TagRepository.php';
+require_once __DIR__ . '/SaleshandyKeyCipher.php';
 
 /**
  * Thin cURL wrapper around Saleshandy's REST API. No SDK/Composer, matching
@@ -29,12 +30,34 @@ class SaleshandyClient
         $this->apiKey = $apiKey;
     }
 
-    public static function fromConfig(array $config): self
+    /**
+     * Every push/sync/pull runs through the account of whichever member
+     * OWNS the campaign in question (campaigns.saleshandy_account_owner_id),
+     * not the acting/logged-in user -- this is what makes "a Team Lead
+     * pushes a team member's campaign" work transparently, since the
+     * campaign owner's key is what's used regardless of who clicked the
+     * button. See public/saleshandy_connect.php for how a member sets
+     * their own key.
+     *
+     * @throws SaleshandyApiException if this user has no key connected,
+     *   or the stored key can't be decrypted (wrong/rotated encryption_key)
+     */
+    public static function forUser(PDO $db, int $userId): self
     {
-        $apiKey = $config['saleshandy']['api_key'] ?? '';
-        if ($apiKey === '') {
-            throw new SaleshandyApiException('Saleshandy API key is not configured (app/config/config.php -> saleshandy.api_key).');
+        $stmt = $db->prepare('SELECT name, saleshandy_api_key FROM users WHERE id = ? LIMIT 1');
+        $stmt->execute([$userId]);
+        $row = $stmt->fetch();
+
+        if (!$row || $row['saleshandy_api_key'] === null) {
+            $name = $row['name'] ?? 'This user';
+            throw new SaleshandyApiException("{$name} hasn't connected a Saleshandy account yet -- connect one on the Connect Saleshandy page.");
         }
+
+        $apiKey = SaleshandyKeyCipher::decrypt($row['saleshandy_api_key']);
+        if ($apiKey === null) {
+            throw new SaleshandyApiException("{$row['name']}'s saved Saleshandy key could not be read (it may need to be reconnected) -- try disconnecting and reconnecting on the Connect Saleshandy page.");
+        }
+
         return new self($apiKey);
     }
 
@@ -465,7 +488,7 @@ class SaleshandyClient
      *   An empty array means "opted in nowhere," so nothing runs.
      * @return array{campaign:?string,summary:string,ok:bool}
      */
-    public function syncFieldsForNextCampaign(PDO $db, int $userId, ?array $eligibleCompanyIds, int $limit = 50): array
+    public static function syncFieldsForNextCampaign(PDO $db, int $userId, ?array $eligibleCompanyIds, int $limit = 50): array
     {
         if ($eligibleCompanyIds !== null && !$eligibleCompanyIds) {
             return ['campaign' => null, 'summary' => 'Field-sync cron is not enabled for any company -- nothing to do.', 'ok' => true];
@@ -514,7 +537,14 @@ class SaleshandyClient
         }
 
         try {
-            $stats = $this->syncFieldsToSaleshandy($db, $assignmentIds, (int) $campaign['id']);
+            $client = self::forUser($db, (int) $campaign['saleshandy_account_owner_id']);
+        } catch (SaleshandyApiException $ex) {
+            $markAttempted->execute([$campaign['id']]);
+            return ['campaign' => $campaign['name'], 'summary' => "\"{$campaign['name']}\": skipped -- {$ex->getMessage()}", 'ok' => true];
+        }
+
+        try {
+            $stats = $client->syncFieldsToSaleshandy($db, $assignmentIds, (int) $campaign['id']);
             $markAttempted->execute([$campaign['id']]);
 
             $summary = "\"{$campaign['name']}\": {$stats['updated']} fully updated, {$stats['partial']} partially rejected, "
@@ -1119,7 +1149,15 @@ class SaleshandyClient
      *
      * @return array{campaign:?string,summary:string,ok:bool}
      */
-    public function syncNextCampaign(PDO $db, int $userId): array
+    /**
+     * Static, not an instance method -- unlike every other client method
+     * here, this one can't be called on an already-constructed client,
+     * because it doesn't know which campaign (and therefore which
+     * member's Saleshandy account) it'll be processing until AFTER
+     * picking one via round-robin. The client is resolved from that
+     * campaign's own saleshandy_account_owner_id instead.
+     */
+    public static function syncNextCampaign(PDO $db, int $userId): array
     {
         $campaign = $db->query(
             "SELECT * FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL
@@ -1134,8 +1172,19 @@ class SaleshandyClient
         $markAttempted = $db->prepare('UPDATE campaigns SET saleshandy_last_sync_attempt_at = NOW() WHERE id = ?');
 
         try {
-            $syncStats = $this->syncCampaign($db, $campaign, $userId);
-            $pullStats = $this->pullNewProspects($db, $campaign, $userId);
+            $client = self::forUser($db, (int) $campaign['saleshandy_account_owner_id']);
+        } catch (SaleshandyApiException $ex) {
+            // Attempt still stamped -- an owner who never connects would
+            // otherwise get retried on every single tick forever, starving
+            // every other campaign from ever being picked (same principle
+            // as the API-failure branch below).
+            $markAttempted->execute([$campaign['id']]);
+            return ['campaign' => $campaign['name'], 'summary' => "\"{$campaign['name']}\": skipped -- {$ex->getMessage()}", 'ok' => true];
+        }
+
+        try {
+            $syncStats = $client->syncCampaign($db, $campaign, $userId);
+            $pullStats = $client->pullNewProspects($db, $campaign, $userId);
             $markAttempted->execute([$campaign['id']]);
 
             $summary = "\"{$campaign['name']}\": {$syncStats['matched']} updated ({$syncStats['bounced']} bounced, {$syncStats['replied']} replied, "
@@ -1309,7 +1358,8 @@ class SaleshandyClient
      *
      * @return array{campaign:?string,summary:string,ok:bool}
      */
-    public function backfillNextCampaign(PDO $db, int $userId): array
+    /** Static -- see syncNextCampaign()'s docblock for why. */
+    public static function backfillNextCampaign(PDO $db, int $userId): array
     {
         $campaign = $db->query(
             "SELECT * FROM campaigns
@@ -1325,7 +1375,14 @@ class SaleshandyClient
         $markAttempted = $db->prepare('UPDATE campaigns SET saleshandy_backfill_last_attempt_at = NOW() WHERE id = ?');
 
         try {
-            $stats = $this->backfillHistoricalDates($db, $campaign, $userId);
+            $client = self::forUser($db, (int) $campaign['saleshandy_account_owner_id']);
+        } catch (SaleshandyApiException $ex) {
+            $markAttempted->execute([$campaign['id']]);
+            return ['campaign' => $campaign['name'], 'summary' => "\"{$campaign['name']}\": skipped -- {$ex->getMessage()}", 'ok' => true];
+        }
+
+        try {
+            $stats = $client->backfillHistoricalDates($db, $campaign, $userId);
             $markAttempted->execute([$campaign['id']]);
             $db->prepare('UPDATE campaigns SET saleshandy_backfilled_at = NOW() WHERE id = ?')->execute([$campaign['id']]);
 

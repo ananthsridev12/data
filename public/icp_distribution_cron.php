@@ -41,14 +41,7 @@ if (!$systemUserId) {
     exit;
 }
 
-$client = null;
-try {
-    $client = SaleshandyClient::fromConfig($config);
-} catch (SaleshandyApiException $ex) {
-    echo "Saleshandy not configured (auto-push ICPs will be skipped): {$ex->getMessage()}\n";
-}
-
-$result = IcpRepository::runDistributionForNext(db(), $client, $systemUserId);
+$result = IcpRepository::runDistributionForNext(db(), $systemUserId);
 foreach ($result['lines'] as $line) {
     echo $line . "\n";
 }

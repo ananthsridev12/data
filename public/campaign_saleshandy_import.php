@@ -35,9 +35,8 @@ if (!$campaign['saleshandy_sequence_id']) {
     exit;
 }
 
-$config = require __DIR__ . '/../app/config/config.php';
 try {
-    $client = SaleshandyClient::fromConfig($config);
+    $client = SaleshandyClient::forUser(db(), (int) $campaign['saleshandy_account_owner_id']);
     $stats = $client->pullNewProspects(db(), $campaign, $user['id']);
     $message = "Imported from Saleshandy: {$stats['leads_created']} new lead(s), {$stats['assignments_created']} new assignment(s) "
         . "({$stats['already_present']} were already here). Saleshandy returned activity for {$stats['distinct_prospects_found']} "

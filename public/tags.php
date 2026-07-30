@@ -26,9 +26,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         db()->prepare('DELETE FROM tags WHERE id = ?')->execute([$id]);
         flash_set('success', 'Tag deleted.');
     } elseif ($action === 'sync') {
-        $config = require __DIR__ . '/../app/config/config.php';
         try {
-            $client = SaleshandyClient::fromConfig($config);
+            $client = SaleshandyClient::forUser(db(), $admin['id']);
             $count = TagRepository::syncFromSaleshandy(db(), $client->listTags());
             flash_set('success', "Synced {$count} tag(s) from Saleshandy.");
         } catch (SaleshandyApiException $ex) {

@@ -30,9 +30,8 @@ if (!$campaign['saleshandy_sequence_id'] || !$campaign['saleshandy_step_id']) {
     exit;
 }
 
-$config = require __DIR__ . '/../app/config/config.php';
 try {
-    $client = SaleshandyClient::fromConfig($config);
+    $client = SaleshandyClient::forUser(db(), (int) $campaign['saleshandy_account_owner_id']);
 } catch (SaleshandyApiException $ex) {
     flash_set('danger', 'Could not reach Saleshandy: ' . $ex->getMessage());
     header('Location: ' . $redirect);

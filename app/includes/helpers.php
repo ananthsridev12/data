@@ -64,6 +64,7 @@ function nav_links(array $user): array
         ['href' => 'accounts.php', 'label' => 'Accounts'],
         ['href' => 'analytics.php', 'label' => 'Analytics'],
         ['href' => 'reports.php', 'label' => 'Reports'],
+        ['href' => 'saleshandy_connect.php', 'label' => 'Connect Saleshandy'],
     ];
     if ($user['role'] === ROLE_ADMIN) {
         $links = array_merge($links, [

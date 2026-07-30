@@ -43,15 +43,7 @@ if (!$systemUserId) {
     exit;
 }
 
-try {
-    $client = SaleshandyClient::fromConfig($config);
-} catch (SaleshandyApiException $ex) {
-    echo "Saleshandy not configured: {$ex->getMessage()}\n";
-    CronRunLog::record(db(), 'saleshandy_sync', 'cron', 'Failed: ' . $ex->getMessage());
-    exit;
-}
-
-$result = $client->syncNextCampaign(db(), $systemUserId);
+$result = SaleshandyClient::syncNextCampaign(db(), $systemUserId);
 echo "{$result['summary']}\n";
 
 CronRunLog::record(db(), 'saleshandy_sync', 'cron', $result['summary']);
