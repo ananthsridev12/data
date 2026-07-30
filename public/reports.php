@@ -20,6 +20,7 @@ $campaignsStmt->execute($campaignParams);
 $campaigns = $campaignsStmt->fetchAll();
 
 $summary = ReportsRepository::summary(db(), $scope, $filters);
+$accountsSummary = ReportsRepository::accountsSummary(db(), $scope, $filters);
 $coverage = ReportsRepository::coverageByVertical(db(), $scope, $filters);
 $sequences = ReportsRepository::sequences(db(), $scope, $filters);
 $repliesByOutcome = ReportsRepository::repliesByOutcome(db(), $scope, $filters);
@@ -111,6 +112,37 @@ render_header('Reports');
         </tbody>
       </table>
     </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">
+    Accounts (company) summary
+    <?= info_icon('The same funnel as Summary above, but rolled up by ACCOUNT (company/email domain -- see the Accounts page) instead of individual persona. An account counts as reached a stage as soon as any one of its contacts does. "Available" is accounts nobody has contacted yet; "Suppressed" is accounts blocked entirely due to a bounce.') ?>
+  </div>
+  <div class="card-body">
+    <div class="row text-center mb-3">
+      <div class="col"><div class="h4 mb-0"><?= number_format($accountsSummary['headline']['accounts_in_database']) ?></div><div class="text-muted small">Accounts in database</div></div>
+      <div class="col"><div class="h4 mb-0"><?= number_format($accountsSummary['headline']['accounts_contacted']) ?></div><div class="text-muted small">Accounts contacted</div></div>
+      <div class="col"><div class="h4 mb-0"><?= number_format($accountsSummary['headline']['accounts_available']) ?></div><div class="text-muted small">Accounts available</div></div>
+      <div class="col"><div class="h4 mb-0"><?= number_format($accountsSummary['headline']['accounts_suppressed']) ?></div><div class="text-muted small">Accounts suppressed</div></div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead><tr><th>Stage</th><th class="text-end">Accounts</th><th class="text-end">% of database</th><th class="text-end">% of previous</th></tr></thead>
+        <tbody>
+          <?php foreach ($accountsSummary['funnel'] as $i => $stage): ?>
+            <tr>
+              <td><?= $i + 1 ?>. <?= e($stage['stage']) ?></td>
+              <td class="text-end"><?= number_format($stage['count']) ?></td>
+              <td class="text-end"><?= $pct($stage['pct_of_database']) ?></td>
+              <td class="text-end"><?= $pct($stage['pct_of_previous']) ?></td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-muted small mb-0 mt-2"><a href="accounts.php">View the full account list &raquo;</a></p>
   </div>
 </div>
 

@@ -145,6 +145,97 @@ class ReportsRepository
     }
 
     /**
+     * The same 5-stage funnel as summary(), but rolled up to ACCOUNTS
+     * (company/domain) rather than individual persona -- same grouping
+     * AccountRepository/public/accounts.php already use (email domain,
+     * not a stored entity). An account counts as reached a stage the
+     * moment any one of its personas does -- e.g. "Accounts contacted"
+     * is domains with at least one contacted lead, not domains where
+     * every lead was contacted. "Accounts in database" is unscoped by
+     * period, like summary()'s "Contacts in database"; every other
+     * figure is period-scoped. "Accounts available" (headline only) is
+     * in_database minus contacted -- domains nobody's reached out to yet.
+     *
+     * @param array{date_from?:?string,date_to?:?string,campaign_id?:?int} $filters
+     * @return array{
+     *   headline: array{accounts_in_database:int,accounts_contacted:int,accounts_available:int,accounts_suppressed:int},
+     *   funnel: array<int,array{stage:string,count:int,pct_of_database:float,pct_of_previous:float}>
+     * }
+     */
+    public static function accountsSummary(PDO $db, Scope $scope, array $filters): array
+    {
+        $params = [];
+        // periodExpr() must be called once per usage within this single
+        // query, each with its own suffix -- PDO's real (non-emulated)
+        // prepared statements reject the same named placeholder appearing
+        // twice in one statement, same pitfall documented on periodExpr()
+        // itself and already worked around in coverageByVertical().
+        $periodContacted = self::periodExpr($filters, $params, '_acct_c');
+        $periodDelivered = self::periodExpr($filters, $params, '_acct_d');
+        $periodOpened = self::periodExpr($filters, $params, '_acct_o');
+        $periodReplied = self::periodExpr($filters, $params, '_acct_r');
+        $scopeClauses = ['l.deleted_at IS NULL'];
+        ScopeFilter::apply($scopeClauses, $params, $scope);
+        ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db);
+        $scopeWhere = implode(' AND ', $scopeClauses);
+
+        $sql = "SELECT
+                   COUNT(*) AS total_accounts,
+                   SUM(CASE WHEN contacted_leads > 0 THEN 1 ELSE 0 END) AS contacted_accounts,
+                   SUM(CASE WHEN delivered_leads > 0 THEN 1 ELSE 0 END) AS delivered_accounts,
+                   SUM(CASE WHEN opened_leads > 0 THEN 1 ELSE 0 END) AS opened_accounts,
+                   SUM(CASE WHEN replied_leads > 0 THEN 1 ELSE 0 END) AS replied_accounts,
+                   SUM(CASE WHEN suppressed_reason IS NOT NULL THEN 1 ELSE 0 END) AS suppressed_accounts
+                 FROM (
+                   SELECT SUBSTRING_INDEX(l.email, '@', -1) AS domain,
+                          SUM(CASE WHEN {$periodContacted} THEN 1 ELSE 0 END) AS contacted_leads,
+                          SUM(CASE WHEN {$periodDelivered} AND (a.delivery_status IS NULL OR a.delivery_status NOT IN ('" . implode("','", DELIVERY_STATUS_BOUNCE_VALUES) . "')) THEN 1 ELSE 0 END) AS delivered_leads,
+                          SUM(CASE WHEN {$periodOpened} AND a.open_count > 0 THEN 1 ELSE 0 END) AS opened_leads,
+                          SUM(CASE WHEN {$periodReplied} AND a.delivery_status = 'Replied' THEN 1 ELSE 0 END) AS replied_leads,
+                          MAX(sd.reason) AS suppressed_reason
+                     FROM leads l
+                     " . self::ASSIGNMENT_JOIN . "
+                     LEFT JOIN suppressed_domains sd ON sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id
+                    WHERE {$scopeWhere}
+                    GROUP BY SUBSTRING_INDEX(l.email, '@', -1)
+                 ) t";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch() ?: [
+            'total_accounts' => 0, 'contacted_accounts' => 0, 'delivered_accounts' => 0,
+            'opened_accounts' => 0, 'replied_accounts' => 0, 'suppressed_accounts' => 0,
+        ];
+
+        $inDatabase = (int) $row['total_accounts'];
+        $contacted = (int) $row['contacted_accounts'];
+        $delivered = (int) $row['delivered_accounts'];
+        $opened = (int) $row['opened_accounts'];
+        $replied = (int) $row['replied_accounts'];
+        $suppressed = (int) $row['suppressed_accounts'];
+
+        $pct = static fn (int $count, int $base): float => $base > 0 ? $count / $base : 0.0;
+
+        $funnel = [
+            ['stage' => 'Accounts in database', 'count' => $inDatabase, 'pct_of_database' => $pct($inDatabase, $inDatabase), 'pct_of_previous' => $pct($inDatabase, $inDatabase)],
+            ['stage' => 'Accounts contacted', 'count' => $contacted, 'pct_of_database' => $pct($contacted, $inDatabase), 'pct_of_previous' => $pct($contacted, $inDatabase)],
+            ['stage' => 'Accounts delivered (not bounced)', 'count' => $delivered, 'pct_of_database' => $pct($delivered, $inDatabase), 'pct_of_previous' => $pct($delivered, $contacted)],
+            ['stage' => 'Accounts opened', 'count' => $opened, 'pct_of_database' => $pct($opened, $inDatabase), 'pct_of_previous' => $pct($opened, $delivered)],
+            ['stage' => 'Accounts replied', 'count' => $replied, 'pct_of_database' => $pct($replied, $inDatabase), 'pct_of_previous' => $pct($replied, $opened)],
+        ];
+
+        return [
+            'headline' => [
+                'accounts_in_database' => $inDatabase,
+                'accounts_contacted' => $contacted,
+                'accounts_available' => max(0, $inDatabase - $contacted),
+                'accounts_suppressed' => $suppressed,
+            ],
+            'funnel' => $funnel,
+        ];
+    }
+
+    /**
      * In database / Contacted / Not contacted / Opened / Coverage % per
      * vertical, plus a TOTAL row. Only verticals with at least one lead
      * appear (same "only show what's actually populated" convention as
