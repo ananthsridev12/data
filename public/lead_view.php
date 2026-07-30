@@ -17,7 +17,7 @@ $stmt = db()->prepare(
     "SELECT l.*, v.label AS vertical_label, s.label AS service_label,
             ib.filename AS imported_filename, ib.started_at AS imported_at, iu.name AS imported_by_name,
             du.name AS deleted_by_name,
-            (SELECT sd.reason FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)) AS suppressed_reason
+            (SELECT sd.reason FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id) AS suppressed_reason
        FROM leads l
        LEFT JOIN verticals v ON v.id = l.vertical_id
        LEFT JOIN services s ON s.id = l.service_id

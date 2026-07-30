@@ -374,7 +374,7 @@ class IcpRepository
                       WHERE lk.icp_id = icp.id{$campaignNamesOwnerClause}) AS campaign_names,
                     COUNT(a.id) AS leads_assigned,
                     SUM(CASE WHEN a.wave_status = 'active' AND a.status != 'pushed'
-                              AND NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1))
+                              AND NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id)
                              THEN 1 ELSE 0 END) AS pending_push,
                     SUM(CASE WHEN a.status = 'pushed' THEN 1 ELSE 0 END) AS pushed,
                     SUM(CASE WHEN a.email_sent = 1 THEN 1 ELSE 0 END) AS emails_sent,

@@ -52,7 +52,7 @@ class LeadRepository
                      JOIN campaigns c ON c.id = a.campaign_id
                     WHERE a.lead_id = l.id) AS used_in_campaigns,
                   (SELECT sd.reason FROM suppressed_domains sd
-                    WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)) AS suppressed_reason,
+                    WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id) AS suppressed_reason,
                   -- When this lead becomes eligible again for a different
                   -- campaign / a different owner, per the company's
                   -- lead_cooldown_days -- NULL if never assigned, or if
@@ -314,7 +314,7 @@ class LeadRepository
         }
 
         if (empty($filters['show_suppressed'])) {
-            $clauses[] = "NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1))";
+            $clauses[] = "NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id)";
         }
 
         // 'pending_elsewhere': '1' shows only leads whose account has a

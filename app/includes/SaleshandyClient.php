@@ -1519,7 +1519,7 @@ class SaleshandyClient
                LEFT JOIN services s ON s.id = l.service_id
               WHERE a.campaign_id = ? AND a.wave_status = 'active' AND a.status != 'pushed'
                 AND l.deleted_at IS NULL
-                AND NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1))"
+                AND NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id)"
         );
         $rowsStmt->execute([$campaignId]);
         $rows = $rowsStmt->fetchAll();

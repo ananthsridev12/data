@@ -65,7 +65,7 @@ class AccountRepository
                   COUNT(*) AS contact_count,
                   MAX(sd.reason) AS suppressed_reason
                 FROM leads l
-                LEFT JOIN suppressed_domains sd ON sd.domain = SUBSTRING_INDEX(l.email, '@', -1)
+                LEFT JOIN suppressed_domains sd ON sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id
                 {$where}
                 GROUP BY SUBSTRING_INDEX(l.email, '@', -1)
                 ORDER BY company_name ASC
@@ -101,7 +101,7 @@ class AccountRepository
                COUNT(*) AS contact_count,
                MAX(sd.reason) AS suppressed_reason
              FROM leads l
-             LEFT JOIN suppressed_domains sd ON sd.domain = SUBSTRING_INDEX(l.email, '@', -1)
+             LEFT JOIN suppressed_domains sd ON sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id
              WHERE {$where}
              GROUP BY SUBSTRING_INDEX(l.email, '@', -1)"
         );

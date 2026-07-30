@@ -92,7 +92,7 @@ class WaveAssigner
               WHERE l.id IN ({$placeholders})
                 AND EXISTS (
                     SELECT 1 FROM suppressed_domains sd
-                     WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1)
+                     WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id
                 )"
         );
         $suppressedStmt->execute($leadIds);

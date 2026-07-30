@@ -233,7 +233,7 @@ class LeadImporter
             ? $db->prepare('SELECT 1 FROM lead_campaign_assignments WHERE lead_id = ? AND campaign_id != ? LIMIT 1')
             : null;
         $campaignSuppressedCheckStmt = $assignCampaignId !== null
-            ? $db->prepare("SELECT 1 FROM suppressed_domains WHERE domain = SUBSTRING_INDEX(?, '@', -1) LIMIT 1")
+            ? $db->prepare("SELECT 1 FROM suppressed_domains WHERE domain = SUBSTRING_INDEX(?, '@', -1) AND company_id = ? LIMIT 1")
             : null;
 
         $rowNum = $offset;
@@ -369,7 +369,7 @@ class LeadImporter
 
             if ($campaignAssignStmt !== null) {
                 $campaignElsewhereCheckStmt->execute([$leadId, $assignCampaignId]);
-                $campaignSuppressedCheckStmt->execute([$email]);
+                $campaignSuppressedCheckStmt->execute([$email, $companyId]);
                 if (!$campaignElsewhereCheckStmt->fetchColumn() && !$campaignSuppressedCheckStmt->fetchColumn()) {
                     $campaignAssignStmt->execute([$leadId, $assignCampaignId, $assignedByUserId]);
                 }
