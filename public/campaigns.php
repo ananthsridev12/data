@@ -112,7 +112,10 @@ foreach ($notesStmt->fetchAll() as $note) {
 
 render_header('Campaigns');
 ?>
-<h1 class="h4 mb-3">Campaigns</h1>
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <h1 class="h4 mb-0">Campaigns</h1>
+  <a href="campaign_saleshandy_fetch.php" class="btn btn-outline-secondary btn-sm">Fetch from Saleshandy</a>
+</div>
 
 <div class="card mb-4">
   <div class="card-header">New campaign</div>
