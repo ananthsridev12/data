@@ -78,6 +78,7 @@ function nav_links(array $user): array
         ['href' => 'bounce_settings.php', 'label' => 'Bounce Settings'],
         ['href' => 'deleted_leads.php', 'label' => 'Deleted Leads'],
         ['href' => 'saleshandy_connect.php', 'label' => 'Connect Saleshandy'],
+        ['href' => 'capacity_planner.php', 'label' => 'Capacity Planner'],
     ];
     if ($user['role'] === ROLE_ADMIN) {
         $links = array_merge($links, [

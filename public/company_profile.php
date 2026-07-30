@@ -12,13 +12,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name = trim((string) ($_POST['name'] ?? ''));
         $cooldownDays = (int) ($_POST['lead_cooldown_days'] ?? 0);
         $fieldSyncEnabled = !empty($_POST['saleshandy_field_sync_cron_enabled']) ? 1 : 0;
+        $dailySendLimit = (int) ($_POST['assumed_daily_send_limit'] ?? 0);
         if ($name === '') {
             flash_set('danger', 'Company name is required.');
         } elseif ($cooldownDays < 1) {
             flash_set('danger', 'Cooldown days must be at least 1.');
+        } elseif ($dailySendLimit < 1) {
+            flash_set('danger', 'Assumed daily send limit must be at least 1.');
         } else {
-            db()->prepare('UPDATE companies SET name = ?, lead_cooldown_days = ?, saleshandy_field_sync_cron_enabled = ? WHERE id = ?')
-                ->execute([$name, $cooldownDays, $fieldSyncEnabled, $scope->companyId]);
+            db()->prepare('UPDATE companies SET name = ?, lead_cooldown_days = ?, saleshandy_field_sync_cron_enabled = ?, assumed_daily_send_limit = ? WHERE id = ?')
+                ->execute([$name, $cooldownDays, $fieldSyncEnabled, $dailySendLimit, $scope->companyId]);
             flash_set('success', 'Company profile updated.');
         }
     } elseif ($action === 'create_team') {
@@ -60,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$companyStmt = db()->prepare('SELECT id, name, lead_cooldown_days, saleshandy_field_sync_cron_enabled FROM companies WHERE id = ?');
+$companyStmt = db()->prepare('SELECT id, name, lead_cooldown_days, saleshandy_field_sync_cron_enabled, assumed_daily_send_limit FROM companies WHERE id = ?');
 $companyStmt->execute([$scope->companyId]);
 $company = $companyStmt->fetch();
 
@@ -104,6 +107,11 @@ render_header('Company Profile');
         <label class="form-label">Lead cool-off (days)</label>
         <input type="number" name="lead_cooldown_days" class="form-control" min="1" value="<?= (int) $company['lead_cooldown_days'] ?>" required>
         <div class="form-text">How long a lead must sit idle before it's eligible for a different campaign or a different owner again.</div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Assumed daily send limit (per email account)</label>
+        <input type="number" name="assumed_daily_send_limit" class="form-control" min="1" value="<?= (int) $company['assumed_daily_send_limit'] ?>" required>
+        <div class="form-text">Saleshandy doesn't expose a per-account limit via its API, so this is your own safe-sending assumption -- used by <a href="capacity_planner.php">Capacity Planner</a> to estimate total daily send capacity.</div>
       </div>
       <div class="col-12">
         <div class="form-check">

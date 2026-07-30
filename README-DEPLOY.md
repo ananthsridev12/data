@@ -53,14 +53,27 @@ and import, in order:
 29. `sql/029_cron_runs.sql`
 30. `sql/030_round_robin_sync.sql`
 31. `sql/031_backfill_tracking.sql`
+32. `sql/032_multi_tenant_companies.sql`
+33. `sql/033_multi_tenant_backfill.sql` (read its header first -- the
+    `@owner_id`/API-key backfill steps need a real email substituted in
+    if your admin login isn't `admin@example.com`)
+34. `sql/034_multi_tenant_tighten.sql`
+35. `sql/035_saleshandy_field_sync_cron.sql`
+36. `sql/036_capacity_planner.sql`
 
-(If you're setting up a brand-new site, import all thirty-one in order. If
+(If you're setting up a brand-new site, import all thirty-six in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
 existing tables/rows. **A 500 error right after deploying new code is
 usually this** -- the code expects tables/columns from a migration that
 hasn't been run against your live database yet.)
+
+**Also check `app/config/config.php` after importing 032+**: it adds
+`users.saleshandy_api_key`, which requires `encryption_key` to be set in
+that file (see the "Configuration" section below) -- unlike the SQL
+files, `config.php` is gitignored and never updates itself, so this is
+easy to miss when adding these migrations to an already-running site.
 
 ## 3. Upload the files
 

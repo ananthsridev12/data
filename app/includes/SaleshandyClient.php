@@ -90,6 +90,33 @@ class SaleshandyClient
         return $this->unwrap($data);
     }
 
+    /**
+     * Every email account connected to this Saleshandy account, paginated
+     * through in full -- used by CapacityPlanner to count how many are
+     * currently usable (status 1 = Active). Unlike most list endpoints
+     * here this one is a POST (per the official CLI's
+     * email-accounts/list.js), and its payload nests the array under an
+     * "emails" key rather than being the array itself, so it can't go
+     * through unwrap() unmodified.
+     *
+     * @return array<int,array{id:string,fromEmail:string,status:int}>
+     */
+    public function listEmailAccounts(): array
+    {
+        $accounts = [];
+        $page = 1;
+        $pageSize = 100; // API max per the CLI's own flag description
+        do {
+            $data = $this->request('POST', '/email-accounts', ['pageSize' => $pageSize, 'page' => $page, 'sort' => 'ASC', 'sortByKey' => 'created-date']);
+            $payload = $data['payload'] ?? [];
+            $pageRows = is_array($payload) ? ($payload['emails'] ?? []) : [];
+            $accounts = array_merge($accounts, $pageRows);
+            $page++;
+        } while (count($pageRows) === $pageSize);
+
+        return $accounts;
+    }
+
     /** @return array<int,array{id:string,label:string,fieldType:string,mappingDefaultField:?string}> */
     public function listFields(): array
     {
