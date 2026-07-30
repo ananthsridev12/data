@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: campaigns.php');
@@ -14,9 +16,12 @@ csrf_verify();
 $campaignId = (int) ($_POST['campaign_id'] ?? 0);
 $redirect = 'campaign_leads.php?campaign_id=' . $campaignId;
 
-$stmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
-$stmt->execute([$campaignId]);
-$campaign = $stmt->fetch();
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
+    flash_set('danger', 'Campaign not found.');
+    header('Location: campaigns.php');
+    exit;
+}
 
 if (!$campaign) {
     flash_set('danger', 'Campaign not found.');
@@ -33,7 +38,7 @@ if (!$campaign['saleshandy_sequence_id']) {
 $config = require __DIR__ . '/../app/config/config.php';
 try {
     $client = SaleshandyClient::fromConfig($config);
-    $stats = $client->syncCampaign(db(), $campaign, $admin['id']);
+    $stats = $client->syncCampaign(db(), $campaign, $user['id']);
     $message = "Synced from Saleshandy: {$stats['matched']} lead(s) updated ({$stats['bounced']} bounced, {$stats['replied']} replied).";
     if ($stats['released'] > 0) {
         $message .= " {$stats['released']} held lead(s) released -- their wave-1 leader's delivery was confirmed by this sync.";

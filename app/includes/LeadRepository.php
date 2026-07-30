@@ -31,7 +31,7 @@ class LeadRepository
         $page = max(1, $page);
         $perPage = self::PER_PAGE;
 
-        [$where, $params] = self::buildWhere($scope, $filters);
+        [$where, $params] = self::buildWhere($db, $scope, $filters);
 
         $countSql = "SELECT COUNT(*) FROM leads l {$where}";
         $countStmt = $db->prepare($countSql);
@@ -115,11 +115,12 @@ class LeadRepository
     /**
      * @return array{0:string,1:array<string,mixed>} [WHERE clause string, bound params]
      */
-    private static function buildWhere(Scope $scope, array $filters): array
+    private static function buildWhere(PDO $db, Scope $scope, array $filters): array
     {
         $clauses = [];
         $params = [];
         ScopeFilter::apply($clauses, $params, $scope);
+        ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db, 'l', 'owner_id');
 
         $like = static function (string $col, string $value) use (&$clauses, &$params): void {
             $clauses[] = "l.{$col} LIKE :" . $col;
@@ -372,7 +373,7 @@ class LeadRepository
      */
     public static function distinctTitlesForFilter(PDO $db, Scope $scope, array $filters, int $limit = 40): array
     {
-        [$where, $params] = self::buildWhere($scope, $filters);
+        [$where, $params] = self::buildWhere($db, $scope, $filters);
         $titleClause = "l.title IS NOT NULL AND l.title <> ''";
         $where = $where === '' ? "WHERE {$titleClause}" : "{$where} AND {$titleClause}";
 
@@ -389,7 +390,7 @@ class LeadRepository
      */
     public static function domainCountForFilter(PDO $db, Scope $scope, array $filters): int
     {
-        [$where, $params] = self::buildWhere($scope, $filters);
+        [$where, $params] = self::buildWhere($db, $scope, $filters);
         $stmt = $db->prepare("SELECT COUNT(DISTINCT SUBSTRING_INDEX(l.email, '@', -1)) FROM leads l {$where}");
         $stmt->execute($params);
         return (int) $stmt->fetchColumn();
@@ -407,8 +408,12 @@ class LeadRepository
             throw new InvalidArgumentException("Column not filterable: {$column}");
         }
         $limitSql = $limit > 0 ? " LIMIT {$limit}" : '';
-        $stmt = $db->prepare("SELECT DISTINCT {$column} FROM leads WHERE company_id = :scope_company_id AND {$column} IS NOT NULL AND {$column} <> '' ORDER BY {$column}{$limitSql}");
-        $stmt->execute(['scope_company_id' => $scope->companyId]);
+        $clauses = ['l.company_id = :scope_company_id', "l.{$column} IS NOT NULL", "l.{$column} <> ''"];
+        $params = ['scope_company_id' => $scope->companyId];
+        ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db);
+        $where = implode(' AND ', $clauses);
+        $stmt = $db->prepare("SELECT DISTINCT l.{$column} FROM leads l WHERE {$where} ORDER BY l.{$column}{$limitSql}");
+        $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }
 
@@ -418,7 +423,7 @@ class LeadRepository
      */
     public static function matchingIds(PDO $db, Scope $scope, array $filters): array
     {
-        [$where, $params] = self::buildWhere($scope, $filters);
+        [$where, $params] = self::buildWhere($db, $scope, $filters);
         $stmt = $db->prepare("SELECT l.id FROM leads l {$where}");
         $stmt->execute($params);
         return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
@@ -432,7 +437,7 @@ class LeadRepository
      */
     public static function matchingCount(PDO $db, Scope $scope, array $filters): int
     {
-        [$where, $params] = self::buildWhere($scope, $filters);
+        [$where, $params] = self::buildWhere($db, $scope, $filters);
         $stmt = $db->prepare("SELECT COUNT(*) FROM leads l {$where}");
         $stmt->execute($params);
         return (int) $stmt->fetchColumn();
@@ -460,8 +465,18 @@ class LeadRepository
             return [];
         }
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
-        $stmt = $db->prepare("SELECT * FROM leads WHERE company_id = ? AND id IN ({$placeholders})");
-        $stmt->execute([$scope->companyId, ...$ids]);
+        $ownerIds = $scope->visibleOwnerIds($db);
+        $ownerSql = '';
+        $ownerParams = [];
+        if ($ownerIds === []) {
+            return []; // Team Lead on no team -- nothing is visible.
+        }
+        if ($ownerIds !== null) {
+            $ownerSql = ' AND owner_id IN (' . implode(',', array_fill(0, count($ownerIds), '?')) . ')';
+            $ownerParams = $ownerIds;
+        }
+        $stmt = $db->prepare("SELECT * FROM leads WHERE company_id = ? AND id IN ({$placeholders}){$ownerSql}");
+        $stmt->execute([$scope->companyId, ...$ids, ...$ownerParams]);
         return $stmt->fetchAll();
     }
 }

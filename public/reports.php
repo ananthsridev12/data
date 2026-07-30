@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/includes/ReportsRepository.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $filters = [
     'date_from' => trim((string) ($_GET['date_from'] ?? '')),
@@ -11,16 +12,21 @@ $filters = [
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
 ];
 
-$campaigns = db()->query("SELECT id, name FROM campaigns WHERE saleshandy_sequence_id IS NOT NULL ORDER BY name")->fetchAll();
+$campaignClauses = ['c.company_id = :scope_company_id', 'c.saleshandy_sequence_id IS NOT NULL'];
+$campaignParams = ['scope_company_id' => $scope->companyId];
+ScopeFilter::applyOwnerScope($campaignClauses, $campaignParams, $scope, db(), 'c', 'saleshandy_account_owner_id');
+$campaignsStmt = db()->prepare('SELECT c.id, c.name FROM campaigns c WHERE ' . implode(' AND ', $campaignClauses) . ' ORDER BY c.name');
+$campaignsStmt->execute($campaignParams);
+$campaigns = $campaignsStmt->fetchAll();
 
-$summary = ReportsRepository::summary(db(), $filters);
-$coverage = ReportsRepository::coverageByVertical(db(), $filters);
-$sequences = ReportsRepository::sequences(db(), $filters);
-$repliesByOutcome = ReportsRepository::repliesByOutcome(db(), $filters);
-$daily = ReportsRepository::dailyActivity(db(), $filters);
-$weekly = ReportsRepository::weeklyActivity(db(), $filters);
-$steps = ReportsRepository::stepsRaw(db(), $filters);
-$eventBounds = ReportsRepository::dateBounds(db());
+$summary = ReportsRepository::summary(db(), $scope, $filters);
+$coverage = ReportsRepository::coverageByVertical(db(), $scope, $filters);
+$sequences = ReportsRepository::sequences(db(), $scope, $filters);
+$repliesByOutcome = ReportsRepository::repliesByOutcome(db(), $scope, $filters);
+$daily = ReportsRepository::dailyActivity(db(), $scope, $filters);
+$weekly = ReportsRepository::weeklyActivity(db(), $scope, $filters);
+$steps = ReportsRepository::stepsRaw(db(), $scope, $filters);
+$eventBounds = ReportsRepository::dateBounds(db(), $scope);
 
 $pct = static function (float $v): string {
     return number_format($v * 100, 1) . '%';

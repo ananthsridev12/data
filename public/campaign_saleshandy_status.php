@@ -2,7 +2,11 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 
-$admin = require_admin();
+// Non-admins can view campaigns.php too now (their own / their team's
+// campaigns) -- this endpoint returns only sequence active/inactive
+// flags, nothing scoped/sensitive, so it stays available to any logged-
+// in user rather than leaving their "Checking..." badges stuck forever.
+require_login();
 
 header('Content-Type: application/json');
 

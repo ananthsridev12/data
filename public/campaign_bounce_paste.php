@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: campaigns.php');
@@ -14,9 +16,13 @@ csrf_verify();
 $campaignId = (int) ($_POST['campaign_id'] ?? 0);
 $redirect = 'campaign_leads.php?campaign_id=' . $campaignId;
 
-$campStmt = db()->prepare('SELECT name FROM campaigns WHERE id = ?');
-$campStmt->execute([$campaignId]);
-$campaignName = $campStmt->fetchColumn();
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
+    flash_set('danger', 'Campaign not found.');
+    header('Location: campaigns.php');
+    exit;
+}
+$campaignName = $campaign['name'];
 
 if (!$campaignName) {
     flash_set('danger', 'Campaign not found.');

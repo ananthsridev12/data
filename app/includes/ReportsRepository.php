@@ -1,6 +1,16 @@
 <?php
 
+require_once __DIR__ . '/ScopeFilter.php';
+
 /**
+ * Every method takes a required Scope: company scope always applies, and
+ * role-based owner scope means "your Reports" -- lead-centric methods
+ * (summary/coverageByVertical/repliesByOutcome) scope by leads.owner_id,
+ * campaign-centric methods (sequences, and everything reading
+ * saleshandy_send_events, which has no reliable per-row lead_id -- see
+ * sql/024_send_events.sql) scope by campaigns.saleshandy_account_owner_id,
+ * same split as AnalyticsRepository::campaignFunnel().
+ *
  * Queries backing the Reports module (public/reports.php) -- replicates a
  * spreadsheet the user previously rebuilt by hand from Saleshandy exports,
  * now sourced live from this app's own data.
@@ -74,12 +84,24 @@ class ReportsRepository
      *   funnel: array<int,array{stage:string,count:int,pct_of_database:float,pct_of_previous:float}>
      * }
      */
-    public static function summary(PDO $db, array $filters): array
+    public static function summary(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
         $period = self::periodExpr($filters, $params);
 
-        $inDatabase = (int) $db->query('SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL')->fetchColumn();
+        $inDbClauses = ['l.deleted_at IS NULL'];
+        $inDbParams = [];
+        ScopeFilter::apply($inDbClauses, $inDbParams, $scope, 'l', 'scope_company_id_db');
+        ScopeFilter::applyOwnerScope($inDbClauses, $inDbParams, $scope, $db, 'l', 'owner_id', 'scope_owner_db');
+        $inDbWhere = implode(' AND ', $inDbClauses);
+        $inDbStmt = $db->prepare("SELECT COUNT(*) FROM leads l WHERE {$inDbWhere}");
+        $inDbStmt->execute($inDbParams);
+        $inDatabase = (int) $inDbStmt->fetchColumn();
+
+        $scopeClauses = [];
+        ScopeFilter::apply($scopeClauses, $params, $scope);
+        ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db);
+        $scopeWhere = implode(' AND ', $scopeClauses);
 
         $sql = "SELECT
                    COUNT(*) AS contacted,
@@ -89,7 +111,7 @@ class ReportsRepository
                    COUNT(DISTINCT a.email_sent_at) AS active_days
                  FROM leads l
                  " . self::ASSIGNMENT_JOIN . "
-                 WHERE l.deleted_at IS NULL AND {$period}";
+                 WHERE l.deleted_at IS NULL AND {$period} AND {$scopeWhere}";
 
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
@@ -130,11 +152,15 @@ class ReportsRepository
      *
      * @return array{rows:array<int,array{grp:string,in_database:int,contacted:int,not_contacted:int,opened:int,coverage_pct:float}>,total:array{in_database:int,contacted:int,not_contacted:int,opened:int,coverage_pct:float}}
      */
-    public static function coverageByVertical(PDO $db, array $filters): array
+    public static function coverageByVertical(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
         $periodContacted = self::periodExpr($filters, $params, '_c');
         $periodOpened = self::periodExpr($filters, $params, '_o');
+        $scopeClauses = ['l.deleted_at IS NULL'];
+        ScopeFilter::apply($scopeClauses, $params, $scope);
+        ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db);
+        $scopeWhere = implode(' AND ', $scopeClauses);
 
         $sql = "SELECT COALESCE(v.label, '(none)') AS grp,
                    COUNT(*) AS in_database,
@@ -143,7 +169,7 @@ class ReportsRepository
                  FROM leads l
                  " . self::ASSIGNMENT_JOIN . "
                  LEFT JOIN verticals v ON v.id = l.vertical_id
-                 WHERE l.deleted_at IS NULL
+                 WHERE {$scopeWhere}
                  GROUP BY grp
                  ORDER BY grp";
 
@@ -176,10 +202,14 @@ class ReportsRepository
      *
      * @return array<int,array{name:string,vertical_label:?string,emails_sent:int,contacts:int,opens:int,open_rate:float,bounces:int,bounce_rate:float,replies:int}>
      */
-    public static function sequences(PDO $db, array $filters): array
+    public static function sequences(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
         $period = self::periodExpr($filters, $params);
+        $scopeClauses = [];
+        ScopeFilter::apply($scopeClauses, $params, $scope, 'c');
+        ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db, 'c', 'saleshandy_account_owner_id', 'scope_campaign_owner');
+        $scopeWhere = $scopeClauses ? (' AND ' . implode(' AND ', $scopeClauses)) : '';
 
         $sql = "SELECT c.name, v.label AS vertical_label,
                    COUNT(*) AS emails_sent,
@@ -190,7 +220,7 @@ class ReportsRepository
                  JOIN campaigns c ON c.id = a.campaign_id
                  JOIN leads l ON l.id = a.lead_id
                  LEFT JOIN verticals v ON v.id = c.vertical_id
-                 WHERE l.deleted_at IS NULL AND c.saleshandy_sequence_id IS NOT NULL AND {$period}
+                 WHERE l.deleted_at IS NULL AND c.saleshandy_sequence_id IS NOT NULL AND {$period}{$scopeWhere}
                  GROUP BY c.id, c.name, v.label
                  ORDER BY emails_sent DESC";
 
@@ -224,15 +254,19 @@ class ReportsRepository
      *
      * @return array<int,array{outcome:string,count:int}>
      */
-    public static function repliesByOutcome(PDO $db, array $filters): array
+    public static function repliesByOutcome(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
         $period = self::periodExpr($filters, $params);
+        $scopeClauses = [];
+        ScopeFilter::apply($scopeClauses, $params, $scope);
+        ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db);
+        $scopeWhere = $scopeClauses ? (' AND ' . implode(' AND ', $scopeClauses)) : '';
 
         $sql = "SELECT COALESCE(NULLIF(a.reply_sentiment, ''), 'Not yet categorized') AS outcome, COUNT(*) AS cnt
                  FROM leads l
                  " . self::ASSIGNMENT_JOIN . "
-                 WHERE l.deleted_at IS NULL AND {$period} AND a.delivery_status = 'Replied'
+                 WHERE l.deleted_at IS NULL AND {$period} AND a.delivery_status = 'Replied'{$scopeWhere}
                  GROUP BY outcome
                  ORDER BY cnt DESC";
 
@@ -265,16 +299,46 @@ class ReportsRepository
     }
 
     /**
+     * saleshandy_send_events has no reliable per-row owner of its own
+     * (lead_id is nullable -- an event for an email not yet locally
+     * matched still gets recorded, see sql/024_send_events.sql) but every
+     * row does always have a campaign_id, so every method reading this
+     * table scopes via a join to campaigns instead -- same
+     * campaigns.saleshandy_account_owner_id ownership as
+     * AnalyticsRepository::campaignFunnel() / sequences() above, so "your
+     * campaigns' activity" means the same thing everywhere in this app.
+     *
+     * @return array{0:string,1:string} [JOIN clause, scope WHERE fragment (no leading AND)]
+     */
+    private static function eventsScopeJoin(PDO $db, Scope $scope, array &$params): array
+    {
+        $clauses = [];
+        ScopeFilter::apply($clauses, $params, $scope, 'c');
+        ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db, 'c', 'saleshandy_account_owner_id', 'scope_campaign_owner');
+        $join = 'JOIN campaigns c ON c.id = e.campaign_id';
+        $where = $clauses ? implode(' AND ', $clauses) : '1=1';
+        return [$join, $where];
+    }
+
+    /**
      * Earliest/latest sent_date with any recorded send event -- used to
      * default the Daily/Weekly/Steps filter range to "the whole available
      * period". Returns nulls if saleshandy_send_events is still empty
-     * (e.g. before the first post-deploy sync/backfill has run).
+     * (e.g. before the first post-deploy sync/backfill has run), or if
+     * nothing in scope has any recorded event yet.
      *
      * @return array{min:?string,max:?string}
      */
-    public static function dateBounds(PDO $db): array
+    public static function dateBounds(PDO $db, Scope $scope): array
     {
-        $row = $db->query('SELECT MIN(sent_date) AS min_date, MAX(sent_date) AS max_date FROM saleshandy_send_events')->fetch();
+        $params = [];
+        [$join, $scopeWhere] = self::eventsScopeJoin($db, $scope, $params);
+        $stmt = $db->prepare(
+            "SELECT MIN(e.sent_date) AS min_date, MAX(e.sent_date) AS max_date
+               FROM saleshandy_send_events e {$join} WHERE {$scopeWhere}"
+        );
+        $stmt->execute($params);
+        $row = $stmt->fetch();
         return ['min' => $row['min_date'] ?? null, 'max' => $row['max_date'] ?? null];
     }
 
@@ -295,18 +359,19 @@ class ReportsRepository
      *
      * @return array<int,array{date:string,emails_sent:int,contacts:int,opened:int,bounced:int,open_rate:float,bounce_rate:float}>
      */
-    public static function dailyActivity(PDO $db, array $filters): array
+    public static function dailyActivity(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
         $period = self::eventsPeriodExpr($filters, $params);
+        [$join, $scopeWhere] = self::eventsScopeJoin($db, $scope, $params);
 
         $sql = "SELECT e.sent_date AS date,
                    COUNT(*) AS emails_sent,
                    COUNT(DISTINCT e.recipient_email) AS contacts,
                    SUM(CASE WHEN e.open_count > 0 THEN 1 ELSE 0 END) AS opened,
                    SUM(e.bounced) AS bounced
-                 FROM saleshandy_send_events e
-                 WHERE {$period}
+                 FROM saleshandy_send_events e {$join}
+                 WHERE {$period} AND {$scopeWhere}
                  GROUP BY e.sent_date
                  ORDER BY e.sent_date";
 
@@ -345,10 +410,11 @@ class ReportsRepository
      *
      * @return array<int,array{week_start:string,emails_sent:int,opened:int,replied:int,active_days:int,open_rate:float,emails_per_active_day:float}>
      */
-    public static function weeklyActivity(PDO $db, array $filters): array
+    public static function weeklyActivity(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
         $period = self::eventsPeriodExpr($filters, $params);
+        [$join, $scopeWhere] = self::eventsScopeJoin($db, $scope, $params);
 
         // WEEKDAY() returns 0=Monday..6=Sunday, so subtracting it from the
         // date always lands on that date's Monday -- a timezone-independent
@@ -358,8 +424,8 @@ class ReportsRepository
                    SUM(CASE WHEN e.open_count > 0 THEN 1 ELSE 0 END) AS opened,
                    SUM(e.replied) AS replied,
                    COUNT(DISTINCT e.sent_date) AS active_days
-                 FROM saleshandy_send_events e
-                 WHERE {$period}
+                 FROM saleshandy_send_events e {$join}
+                 WHERE {$period} AND {$scopeWhere}
                  GROUP BY week_start
                  ORDER BY week_start";
 
@@ -402,17 +468,18 @@ class ReportsRepository
      *
      * @return array<int,array{step_number:int,emails_sent:int,opens:int,replies:int,open_rate:float}>
      */
-    public static function stepsRaw(PDO $db, array $filters): array
+    public static function stepsRaw(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
         $period = self::eventsPeriodExpr($filters, $params);
+        [$join, $scopeWhere] = self::eventsScopeJoin($db, $scope, $params);
 
         $sql = "SELECT e.step_number,
                    COUNT(*) AS emails_sent,
                    SUM(CASE WHEN e.open_count > 0 THEN 1 ELSE 0 END) AS opens,
                    SUM(e.replied) AS replies
-                 FROM saleshandy_send_events e
-                 WHERE {$period}
+                 FROM saleshandy_send_events e {$join}
+                 WHERE {$period} AND {$scopeWhere}
                  GROUP BY e.step_number
                  ORDER BY e.step_number";
 

@@ -8,6 +8,11 @@ $scope = Scope::fromUser(db(), $user);
 
 $leadId = (int) ($_GET['id'] ?? 0);
 
+$whereClauses = ['l.id = :lead_id', 'l.company_id = :scope_company_id'];
+$whereParams = ['lead_id' => $leadId, 'scope_company_id' => $scope->companyId];
+ScopeFilter::applyOwnerScope($whereClauses, $whereParams, $scope, db());
+$where = implode(' AND ', $whereClauses);
+
 $stmt = db()->prepare(
     "SELECT l.*, v.label AS vertical_label, s.label AS service_label,
             ib.filename AS imported_filename, ib.started_at AS imported_at, iu.name AS imported_by_name,
@@ -19,9 +24,9 @@ $stmt = db()->prepare(
        LEFT JOIN import_batches ib ON ib.id = l.last_import_batch_id
        LEFT JOIN users iu ON iu.id = ib.uploaded_by
        LEFT JOIN users du ON du.id = l.deleted_by
-      WHERE l.id = ? AND l.company_id = ?"
+      WHERE {$where}"
 );
-$stmt->execute([$leadId, $scope->companyId]);
+$stmt->execute($whereParams);
 $lead = $stmt->fetch();
 
 if (!$lead) {

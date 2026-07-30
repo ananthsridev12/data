@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: campaigns.php');
@@ -19,6 +21,13 @@ $redirect = 'campaign_leads.php?campaign_id=' . $campaignId;
 if (!$campaignId || !$leaderAssignmentId) {
     flash_set('danger', 'Invalid request.');
     header('Location: ' . $redirect);
+    exit;
+}
+
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
+    flash_set('danger', 'Campaign not found.');
+    header('Location: campaigns.php');
     exit;
 }
 

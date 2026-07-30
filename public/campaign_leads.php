@@ -2,21 +2,28 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 require_once __DIR__ . '/../app/includes/ColumnPreferences.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $columns = ColumnPreferences::getForUser(db(), $user['id'], 'campaign_leads');
 
 $campaignId = (int) ($_GET['campaign_id'] ?? 0);
-$campStmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
-$campStmt->execute([$campaignId]);
-$campaign = $campStmt->fetch();
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
 
 if (!$campaign) {
     flash_set('danger', 'Campaign not found.');
     header('Location: campaigns.php');
     exit;
 }
+
+// Team Lead viewing a teammate's campaign, or eventually anyone viewing
+// a campaign they don't own -- every bulk action button below (mark
+// imported, sync fields, push, remove, delete) is gated on this, not
+// just visibility, since assigning/pushing/editing someone else's
+// campaign isn't allowed even though looking at it is.
+$canMutate = CampaignAccess::canMutate($scope, $campaign);
 
 $perPage = 50;
 $page = max(1, (int) ($_GET['page'] ?? 1));

@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/ScopeFilter.php';
+
 /**
  * Country/campaign/vertical/service pivot reporting for the Analytics
  * page -- one row per group value, with self-consistent counts
@@ -52,10 +54,12 @@ class AnalyticsRepository
      *   total: array{prospects:int,imported:int,not_imported:int,email_sent:int,email_not_sent:int}
      * }
      */
-    public static function pivotByDimension(PDO $db, string $groupBy, array $filters): array
+    public static function pivotByDimension(PDO $db, Scope $scope, string $groupBy, array $filters): array
     {
         $groupExpr = self::groupExpr($groupBy);
         [$clauses, $params] = self::buildBaseClauses($filters);
+        ScopeFilter::apply($clauses, $params, $scope);
+        ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db);
         $where = 'WHERE ' . implode(' AND ', $clauses);
 
         // 'imported' = status IN ('exported', 'pushed') -- must match
@@ -112,9 +116,20 @@ class AnalyticsRepository
      *   steps:array<int,int>
      * }>
      */
-    public static function campaignFunnel(PDO $db): array
+    public static function campaignFunnel(PDO $db, Scope $scope): array
     {
-        $campaigns = $db->query(
+        $clauses = [];
+        $params = [];
+        ScopeFilter::apply($clauses, $params, $scope, 'c');
+        // Campaign-level ownership (not lead ownership) -- "their
+        // campaigns" per this method's caller (Analytics), consistent
+        // with how Campaigns page access is scoped: Admin sees every
+        // company campaign, Team Lead sees their team's owned campaigns
+        // pooled, Member sees only their own.
+        ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db, 'c', 'saleshandy_account_owner_id', 'scope_campaign_owner');
+        $where = $clauses ? ('WHERE ' . implode(' AND ', $clauses)) : '';
+
+        $stmt = $db->prepare(
             "SELECT c.id, c.name, v.label AS vertical_label, s.label AS service_label,
                (SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
                  WHERE a.campaign_id = c.id AND l.deleted_at IS NULL) AS prospects,
@@ -127,9 +142,16 @@ class AnalyticsRepository
              FROM campaigns c
              LEFT JOIN verticals v ON v.id = c.vertical_id
              LEFT JOIN services s ON s.id = c.service_id
+             {$where}
              ORDER BY c.created_at DESC"
-        )->fetchAll();
+        );
+        $stmt->execute($params);
+        $campaigns = $stmt->fetchAll();
 
+        // Pooled across every campaign company-wide (not just the scoped
+        // set above) -- harmless: only entries whose campaign_id matches
+        // one of $campaigns (already scoped) ever get looked up below, so
+        // an out-of-scope campaign's step data is fetched but never read.
         $stepCounts = $db->query(
             "SELECT a.campaign_id, a.saleshandy_current_step AS step, COUNT(*) AS cnt
                FROM lead_campaign_assignments a

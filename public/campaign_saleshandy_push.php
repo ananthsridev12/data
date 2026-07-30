@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: campaigns.php');
@@ -14,11 +16,9 @@ csrf_verify();
 $campaignId = (int) ($_POST['campaign_id'] ?? 0);
 $redirect = 'campaign_leads.php?campaign_id=' . $campaignId;
 
-$stmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
-$stmt->execute([$campaignId]);
-$campaign = $stmt->fetch();
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
 
-if (!$campaign) {
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
     flash_set('danger', 'Campaign not found.');
     header('Location: campaigns.php');
     exit;

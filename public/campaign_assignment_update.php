@@ -2,8 +2,10 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: campaigns.php');
@@ -16,6 +18,16 @@ $campaignId = (int) ($_POST['campaign_id'] ?? 0);
 $page = (int) ($_POST['page'] ?? 1);
 $action = $_POST['action'] ?? '';
 $ids = array_map('intval', $_POST['assignment_ids'] ?? []);
+
+// Every action below mutates this campaign's leads (mark imported,
+// remove, delete, sync fields, etc.) -- one shared guard, same rule as
+// every other campaign-mutating endpoint (CampaignAccess::canMutate()).
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
+    flash_set('danger', 'Campaign not found.');
+    header('Location: campaigns.php');
+    exit;
+}
 
 // Carries campaign_leads.php's active filters (if any) back into the
 // redirect so a bulk action doesn't drop the admin back to the unfiltered
@@ -162,10 +174,7 @@ if ($action === 'mark_imported') {
     }
     flash_set('success', $message);
 } elseif ($action === 'sync_fields_to_saleshandy') {
-    $campStmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
-    $campStmt->execute([$campaignId]);
-    $campaign = $campStmt->fetch();
-    if (!$campaign || !$campaign['saleshandy_sequence_id']) {
+    if (!$campaign['saleshandy_sequence_id']) {
         flash_set('danger', 'This campaign is not linked to a Saleshandy sequence.');
         header('Location: ' . $redirect);
         exit;

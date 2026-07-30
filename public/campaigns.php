@@ -1,9 +1,10 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
-$admin = require_admin();
-$scope = Scope::fromUser(db(), $admin);
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -19,8 +20,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('danger', 'Campaign name is required.');
         } else {
             try {
-                db()->prepare('INSERT INTO campaigns (name, description, vertical_id, service_id, created_by) VALUES (?, ?, ?, ?, ?)')
-                    ->execute([$name, $description ?: null, $verticalId, $serviceId, $admin['id']]);
+                // The creator becomes the campaign's owner by default
+                // (saleshandy_account_owner_id) -- every member can create
+                // and own their own campaigns; an Admin can reassign
+                // ownership later from this page's edit modal.
+                db()->prepare('INSERT INTO campaigns (company_id, name, description, vertical_id, service_id, created_by, saleshandy_account_owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+                    ->execute([$scope->companyId, $name, $description ?: null, $verticalId, $serviceId, $user['id'], $user['id']]);
                 flash_set('success', "Campaign \"{$name}\" created.");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'A campaign with that name already exists.' : 'Could not create campaign.');
@@ -28,16 +33,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'toggle_active') {
         $id = (int) ($_POST['id'] ?? 0);
-        db()->prepare('UPDATE campaigns SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
-        flash_set('success', 'Campaign status updated.');
+        $campaign = CampaignAccess::loadVisible(db(), $scope, $id);
+        if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
+            flash_set('danger', 'Campaign not found.');
+        } else {
+            db()->prepare('UPDATE campaigns SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
+            flash_set('success', 'Campaign status updated.');
+        }
     } elseif ($action === 'rename') {
         $id = (int) ($_POST['id'] ?? 0);
+        $campaign = CampaignAccess::loadVisible(db(), $scope, $id);
         $name = trim((string) ($_POST['name'] ?? ''));
         $description = trim((string) ($_POST['description'] ?? ''));
         $verticalId = (int) ($_POST['vertical_id'] ?? 0) ?: null;
         $serviceId = (int) ($_POST['service_id'] ?? 0) ?: null;
 
-        if ($name === '') {
+        if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
+            flash_set('danger', 'Campaign not found.');
+        } elseif ($name === '') {
             flash_set('danger', 'Campaign name is required.');
         } else {
             try {
@@ -54,16 +67,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$campaigns = db()->query(
+$campaignClauses = ['c.company_id = :scope_company_id'];
+$campaignParams = ['scope_company_id' => $scope->companyId];
+ScopeFilter::applyOwnerScope($campaignClauses, $campaignParams, $scope, db(), 'c', 'saleshandy_account_owner_id');
+$campaignsStmt = db()->prepare(
     "SELECT c.*, u.name AS created_by_name, v.label AS vertical_label, s.label AS service_label,
+       owner.name AS owner_name,
        (SELECT COUNT(*) FROM lead_campaign_assignments a WHERE a.campaign_id = c.id) AS lead_count,
        (SELECT COUNT(*) FROM lead_campaign_assignments a WHERE a.campaign_id = c.id AND a.status = 'exported') AS exported_count
      FROM campaigns c
      JOIN users u ON u.id = c.created_by
+     LEFT JOIN users owner ON owner.id = c.saleshandy_account_owner_id
      LEFT JOIN verticals v ON v.id = c.vertical_id
      LEFT JOIN services s ON s.id = c.service_id
-     ORDER BY c.created_at DESC"
-)->fetchAll();
+     WHERE " . implode(' AND ', $campaignClauses) . '
+     ORDER BY c.created_at DESC'
+);
+$campaignsStmt->execute($campaignParams);
+$campaigns = $campaignsStmt->fetchAll();
 $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 
@@ -130,15 +151,17 @@ render_header('Campaigns');
 
 <table class="table table-striped bg-white">
   <thead>
-    <tr><th>Name</th><th>Service</th><th>Leads</th><th>Exported</th><th>Status</th><th>Saleshandy</th><th style="width: 220px;"></th></tr>
+    <tr><th>Name</th><th>Owner</th><th>Service</th><th>Leads</th><th>Exported</th><th>Status</th><th>Saleshandy</th><th style="width: 220px;"></th></tr>
   </thead>
   <tbody>
-  <?php foreach ($campaigns as $c): ?>
+  <?php foreach ($campaigns as $c): $canMutate = CampaignAccess::canMutate($scope, $c); ?>
     <tr>
       <td>
         <span title="Created by <?= e($c['created_by_name']) ?>"><?= e($c['name']) ?></span>
         <?php if ($c['description']): ?><div class="small text-muted"><?= e($c['description']) ?></div><?php endif; ?>
+        <?php if (!$canMutate): ?><span class="badge bg-light text-muted border">View only</span><?php endif; ?>
       </td>
+      <td><?= e($c['owner_name'] ?? '(unowned)') ?></td>
       <td><?= e($c['vertical_label'] ?? '') ?><?= $c['vertical_label'] && $c['service_label'] ? ' / ' : '' ?><?= e($c['service_label'] ?? '') ?></td>
       <td><a href="dashboard.php?campaign_id=<?= (int) $c['id'] ?>"><?= (int) $c['lead_count'] ?></a></td>
       <td><?= (int) $c['exported_count'] ?></td>
@@ -154,16 +177,21 @@ render_header('Campaigns');
         <?php if ($c['saleshandy_sequence_id']): ?>
           <span class="badge bg-light text-muted border sequence-status-badge" data-sequence-id="<?= e($c['saleshandy_sequence_id']) ?>">Checking&hellip;</span>
         <?php endif; ?>
-        <a href="campaign_saleshandy_settings.php?campaign_id=<?= (int) $c['id'] ?>" class="small d-block">Configure</a>
+        <?php if ($canMutate): ?>
+          <a href="campaign_saleshandy_settings.php?campaign_id=<?= (int) $c['id'] ?>" class="small d-block">Configure</a>
+        <?php endif; ?>
       </td>
       <td>
         <div class="d-flex gap-1">
-          <a class="btn btn-sm btn-outline-primary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>">Manage leads</a>
-          <?php if (!empty($stepNotesByCampaign[$c['id']])): ?>
+          <a class="btn btn-sm btn-outline-primary" href="campaign_leads.php?campaign_id=<?= (int) $c['id'] ?>"><?= $canMutate ? 'Manage leads' : 'View leads' ?></a>
+          <?php if (!$canMutate): ?>
+            <?php // View-only: no flow config, no export, no edit/toggle for a campaign this user doesn't own. ?>
+          <?php elseif (!empty($stepNotesByCampaign[$c['id']])): ?>
             <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#flowRow<?= (int) $c['id'] ?>">Touches</button>
           <?php else: ?>
             <a class="btn btn-sm btn-outline-secondary" href="campaign_flow.php?campaign_id=<?= (int) $c['id'] ?>">Configure flow</a>
           <?php endif; ?>
+          <?php if ($canMutate): ?>
           <div class="dropdown">
             <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="dropdown" aria-expanded="false">&vellip;</button>
             <ul class="dropdown-menu dropdown-menu-end">
@@ -179,7 +207,9 @@ render_header('Campaigns');
               </li>
             </ul>
           </div>
+          <?php endif; ?>
         </div>
+        <?php if ($canMutate): ?>
         <div class="modal fade" id="renameCampaign<?= (int) $c['id'] ?>" tabindex="-1" aria-hidden="true">
           <div class="modal-dialog">
             <div class="modal-content">
@@ -230,11 +260,12 @@ render_header('Campaigns');
             </div>
           </div>
         </div>
+        <?php endif; ?>
       </td>
     </tr>
     <?php if (!empty($stepNotesByCampaign[$c['id']])): ?>
     <tr class="collapse" id="flowRow<?= (int) $c['id'] ?>">
-      <td colspan="7" class="bg-light">
+      <td colspan="8" class="bg-light">
         <div class="d-flex flex-wrap align-items-center gap-2 py-1">
           <?php foreach ($stepNotesByCampaign[$c['id']] as $i => $note): ?>
             <?php if ($i > 0): ?><span class="text-muted">&rarr;</span><?php endif; ?>
@@ -248,7 +279,7 @@ render_header('Campaigns');
     <?php endif; ?>
   <?php endforeach; ?>
   <?php if (!$campaigns): ?>
-    <tr><td colspan="7" class="text-center text-muted py-4">No campaigns yet.</td></tr>
+    <tr><td colspan="8" class="text-center text-muted py-4">No campaigns yet.</td></tr>
   <?php endif; ?>
   </tbody>
 </table>

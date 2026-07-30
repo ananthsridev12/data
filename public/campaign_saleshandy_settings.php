@@ -1,15 +1,17 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $campaignId = (int) ($_GET['campaign_id'] ?? $_POST['campaign_id'] ?? 0);
-$stmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
-$stmt->execute([$campaignId]);
-$campaign = $stmt->fetch();
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
 
-if (!$campaign) {
+// Configuring the Saleshandy sequence/step link is a mutate action, not
+// a view -- same rule as campaign_select_leads.php.
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
     flash_set('danger', 'Campaign not found.');
     header('Location: campaigns.php');
     exit;

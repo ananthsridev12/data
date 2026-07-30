@@ -3,9 +3,10 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/AccountRepository.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $domain = trim((string) ($_GET['domain'] ?? ''));
-$account = $domain !== '' ? AccountRepository::summary(db(), $domain) : null;
+$account = $domain !== '' ? AccountRepository::summary(db(), $scope, $domain) : null;
 
 if (!$account) {
     flash_set('danger', 'Account not found.');
@@ -13,7 +14,7 @@ if (!$account) {
     exit;
 }
 
-$contacts = AccountRepository::contactsForDomain(db(), $domain);
+$contacts = AccountRepository::contactsForDomain(db(), $scope, $domain);
 
 render_header('Account');
 ?>

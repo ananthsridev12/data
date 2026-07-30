@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: campaigns.php');
@@ -14,9 +16,12 @@ csrf_verify();
 $campaignId = (int) ($_POST['campaign_id'] ?? 0);
 $redirect = 'campaign_leads.php?campaign_id=' . $campaignId;
 
-$stmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
-$stmt->execute([$campaignId]);
-$campaign = $stmt->fetch();
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
+    flash_set('danger', 'Campaign not found.');
+    header('Location: campaigns.php');
+    exit;
+}
 
 if (!$campaign) {
     flash_set('danger', 'Campaign not found.');
@@ -33,7 +38,7 @@ if (!$campaign['saleshandy_sequence_id']) {
 $config = require __DIR__ . '/../app/config/config.php';
 try {
     $client = SaleshandyClient::fromConfig($config);
-    $stats = $client->pullNewProspects(db(), $campaign, $admin['id']);
+    $stats = $client->pullNewProspects(db(), $campaign, $user['id']);
     $message = "Imported from Saleshandy: {$stats['leads_created']} new lead(s), {$stats['assignments_created']} new assignment(s) "
         . "({$stats['already_present']} were already here). Saleshandy returned activity for {$stats['distinct_prospects_found']} "
         . 'distinct prospect(s) in this sequence.';

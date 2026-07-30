@@ -4,16 +4,19 @@ require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 require_once __DIR__ . '/../app/includes/TagRepository.php';
 require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
 $user = require_login();
 $scope = Scope::fromUser(db(), $user);
 
 $campaignId = (int) ($_GET['campaign_id'] ?? $_POST['campaign_id'] ?? 0);
-$campStmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
-$campStmt->execute([$campaignId]);
-$campaign = $campStmt->fetch();
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
 
-if (!$campaign) {
+// This whole page's purpose is assigning leads to a campaign -- unlike
+// campaign_leads.php (view-only for a campaign you don't own is fine),
+// there's no read-only mode here, so visibility isn't enough: only the
+// campaign's owner (or an Admin) can be on this page at all.
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
     flash_set('danger', 'Campaign not found.');
     header('Location: campaigns.php');
     exit;

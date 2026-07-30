@@ -17,12 +17,17 @@ $filters = [
     'email_sent_to' => trim((string) ($_GET['email_sent_to'] ?? '')),
 ];
 
-$campaigns = db()->query('SELECT id, name FROM campaigns ORDER BY name')->fetchAll();
+$campaignClauses = ['c.company_id = :scope_company_id'];
+$campaignParams = ['scope_company_id' => $scope->companyId];
+ScopeFilter::applyOwnerScope($campaignClauses, $campaignParams, $scope, db(), 'c', 'saleshandy_account_owner_id');
+$campaignsStmt = db()->prepare('SELECT c.id, c.name FROM campaigns c WHERE ' . implode(' AND ', $campaignClauses) . ' ORDER BY c.name');
+$campaignsStmt->execute($campaignParams);
+$campaigns = $campaignsStmt->fetchAll();
 $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 $industries = LeadRepository::distinctValues(db(), $scope, 'industry');
 
-$campaignFunnel = AnalyticsRepository::campaignFunnel(db());
+$campaignFunnel = AnalyticsRepository::campaignFunnel(db(), $scope);
 $funnelMaxStep = 0;
 foreach ($campaignFunnel as $cf) {
     if ($cf['steps']) {
@@ -35,7 +40,7 @@ foreach ($campaignFunnel as $cf) {
 // campaign are all visible on one screen at once.
 $sections = [];
 foreach (AnalyticsRepository::GROUP_DIMENSIONS as $key => $label) {
-    $sections[$key] = ['label' => $label, 'pivot' => AnalyticsRepository::pivotByDimension(db(), $key, $filters)];
+    $sections[$key] = ['label' => $label, 'pivot' => AnalyticsRepository::pivotByDimension(db(), $scope, $key, $filters)];
 }
 
 $filterQuery = $_GET;

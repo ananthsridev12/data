@@ -60,6 +60,7 @@ function nav_links(array $user): array
 {
     $links = [
         ['href' => 'dashboard.php', 'label' => 'Dashboard'],
+        ['href' => 'campaigns.php', 'label' => 'Campaigns'],
         ['href' => 'accounts.php', 'label' => 'Accounts'],
         ['href' => 'analytics.php', 'label' => 'Analytics'],
         ['href' => 'reports.php', 'label' => 'Reports'],
@@ -68,7 +69,6 @@ function nav_links(array $user): array
         $links = array_merge($links, [
             ['href' => 'import.php', 'label' => 'Import'],
             ['href' => 'import_history.php', 'label' => 'Import History'],
-            ['href' => 'campaigns.php', 'label' => 'Campaigns'],
             ['href' => 'lists.php', 'label' => 'Lists'],
             ['href' => 'role_groups.php', 'label' => 'Role Groups'],
             ['href' => 'country_groups.php', 'label' => 'Country Groups'],

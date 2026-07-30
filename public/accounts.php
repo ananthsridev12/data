@@ -3,11 +3,12 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/AccountRepository.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $filters = ['q' => trim((string) ($_GET['q'] ?? ''))];
 $page = max(1, (int) ($_GET['page'] ?? 1));
 
-$result = AccountRepository::search(db(), $filters, $page);
+$result = AccountRepository::search(db(), $scope, $filters, $page);
 
 $filterQuery = $_GET;
 unset($filterQuery['page']);

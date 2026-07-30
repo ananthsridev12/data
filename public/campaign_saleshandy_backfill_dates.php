@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: campaigns.php');
@@ -14,9 +16,12 @@ csrf_verify();
 $campaignId = (int) ($_POST['campaign_id'] ?? 0);
 $redirect = 'campaign_leads.php?campaign_id=' . $campaignId;
 
-$stmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
-$stmt->execute([$campaignId]);
-$campaign = $stmt->fetch();
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
+    flash_set('danger', 'Campaign not found.');
+    header('Location: campaigns.php');
+    exit;
+}
 
 if (!$campaign) {
     flash_set('danger', 'Campaign not found.');
@@ -33,7 +38,7 @@ if (!$campaign['saleshandy_sequence_id']) {
 $config = require __DIR__ . '/../app/config/config.php';
 try {
     $client = SaleshandyClient::fromConfig($config);
-    $stats = $client->backfillHistoricalDates(db(), $campaign, $admin['id']);
+    $stats = $client->backfillHistoricalDates(db(), $campaign, $user['id']);
     // Marked done here too (not just by the automated backfill cron), so
     // that cron doesn't waste a full 2-year re-fetch on a campaign an
     // admin already backfilled by hand.

@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/ScopeFilter.php';
+
 /**
  * "Accounts" are not a stored entity -- they're leads grouped by email
  * domain (SUBSTRING_INDEX(email, '@', -1)), the same grouping already used
@@ -7,6 +9,13 @@
  * unique (see leads.uq_leads_email) and imports upsert on that email, a
  * domain's contact list here can never contain a duplicate persona --
  * re-importing/re-adding the same person just updates their one row.
+ *
+ * Every method takes a required Scope, same as LeadRepository -- company
+ * scope always applies, and role-based owner scope (Scope::visibleOwnerIds())
+ * means a domain's contact list/count reflects only the leads the acting
+ * user can see there, not every company-mate's contacts at that domain
+ * too. Two Members can each have their own contacts at the same company
+ * domain and see two different, non-overlapping "accounts" for it.
  */
 class AccountRepository
 {
@@ -16,19 +25,23 @@ class AccountRepository
      * @param array{q?:string} $filters q matches domain or company name
      * @return array{rows: array<int,array>, total: int, page: int, perPage: int, totalPages: int}
      */
-    public static function search(PDO $db, array $filters, int $page = 1): array
+    public static function search(PDO $db, Scope $scope, array $filters, int $page = 1): array
     {
         $page = max(1, $page);
         $perPage = self::PER_PAGE;
 
-        $where = 'WHERE l.deleted_at IS NULL';
+        $clauses = ['l.deleted_at IS NULL'];
         $params = [];
+        ScopeFilter::apply($clauses, $params, $scope);
+        ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db);
+
         $q = trim((string) ($filters['q'] ?? ''));
         if ($q !== '') {
-            $where .= " AND (SUBSTRING_INDEX(l.email, '@', -1) LIKE :q1 OR l.na_company_name LIKE :q2)";
+            $clauses[] = "(SUBSTRING_INDEX(l.email, '@', -1) LIKE :q1 OR l.na_company_name LIKE :q2)";
             $params['q1'] = '%' . $q . '%';
             $params['q2'] = '%' . $q . '%';
         }
+        $where = 'WHERE ' . implode(' AND ', $clauses);
 
         $countSql = "SELECT COUNT(*) FROM (
             SELECT SUBSTRING_INDEX(l.email, '@', -1) AS domain FROM leads l {$where} GROUP BY domain
@@ -73,8 +86,14 @@ class AccountRepository
     /**
      * @return ?array{domain:string, company_name:?string, contact_count:int, suppressed_reason:?string}
      */
-    public static function summary(PDO $db, string $domain): ?array
+    public static function summary(PDO $db, Scope $scope, string $domain): ?array
     {
+        $clauses = ['l.deleted_at IS NULL', "SUBSTRING_INDEX(l.email, '@', -1) = :domain"];
+        $params = ['domain' => $domain];
+        ScopeFilter::apply($clauses, $params, $scope);
+        ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db);
+        $where = implode(' AND ', $clauses);
+
         $stmt = $db->prepare(
             "SELECT
                SUBSTRING_INDEX(l.email, '@', -1) AS domain,
@@ -83,28 +102,35 @@ class AccountRepository
                MAX(sd.reason) AS suppressed_reason
              FROM leads l
              LEFT JOIN suppressed_domains sd ON sd.domain = SUBSTRING_INDEX(l.email, '@', -1)
-             WHERE l.deleted_at IS NULL AND SUBSTRING_INDEX(l.email, '@', -1) = ?
+             WHERE {$where}
              GROUP BY SUBSTRING_INDEX(l.email, '@', -1)"
         );
-        $stmt->execute([$domain]);
+        $stmt->execute($params);
         $row = $stmt->fetch();
         return $row ?: null;
     }
 
     /**
-     * Every persona (lead) at this domain, for the account detail page.
+     * Every persona (lead) at this domain the acting user can see, for the
+     * account detail page.
      */
-    public static function contactsForDomain(PDO $db, string $domain): array
+    public static function contactsForDomain(PDO $db, Scope $scope, string $domain): array
     {
+        $clauses = ['l.deleted_at IS NULL', "SUBSTRING_INDEX(l.email, '@', -1) = :domain"];
+        $params = ['domain' => $domain];
+        ScopeFilter::apply($clauses, $params, $scope);
+        ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db);
+        $where = implode(' AND ', $clauses);
+
         $stmt = $db->prepare(
             "SELECT l.*, v.label AS vertical_label, s.label AS service_label
                FROM leads l
                LEFT JOIN verticals v ON v.id = l.vertical_id
                LEFT JOIN services s ON s.id = l.service_id
-              WHERE l.deleted_at IS NULL AND SUBSTRING_INDEX(l.email, '@', -1) = ?
+              WHERE {$where}
               ORDER BY l.first_name, l.last_name"
         );
-        $stmt->execute([$domain]);
+        $stmt->execute($params);
         return $stmt->fetchAll();
     }
 }

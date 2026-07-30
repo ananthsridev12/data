@@ -1,13 +1,13 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $campaignId = (int) ($_GET['campaign_id'] ?? $_POST['campaign_id'] ?? 0);
-$stmt = db()->prepare('SELECT * FROM campaigns WHERE id = ?');
-$stmt->execute([$campaignId]);
-$campaign = $stmt->fetch();
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
 
 if (!$campaign) {
     flash_set('danger', 'Campaign not found.');
@@ -18,12 +18,20 @@ if (!$campaign) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
 
+    // Viewing the flow is fine for anyone in scope (Team Lead browsing
+    // their team's campaign); saving notes is a mutate action.
+    if (!CampaignAccess::canMutate($scope, $campaign)) {
+        flash_set('danger', 'Campaign not found.');
+        header('Location: campaigns.php');
+        exit;
+    }
+
     // One combined save -- purpose[step_number] => text, for whichever
     // steps were on screen. Blank clears that step's note rather than
     // leaving a stale one behind.
     $purposes = (array) ($_POST['purpose'] ?? []);
     $upsert = db()->prepare(
-        'INSERT INTO campaign_step_notes (campaign_id, step_number, purpose) VALUES (?, ?, ?)
+        'INSERT INTO campaign_step_notes (company_id, campaign_id, step_number, purpose) VALUES (?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE purpose = VALUES(purpose)'
     );
     $saved = 0;
@@ -33,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stepNumber < 1) {
             continue;
         }
-        $upsert->execute([$campaignId, $stepNumber, $purpose !== '' ? $purpose : null]);
+        $upsert->execute([$scope->companyId, $campaignId, $stepNumber, $purpose !== '' ? $purpose : null]);
         $saved++;
     }
     flash_set('success', "Saved notes for {$saved} step(s).");
