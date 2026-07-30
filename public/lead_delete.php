@@ -2,8 +2,8 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
-$admin = require_admin();
-$scope = Scope::fromUser(db(), $admin);
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: dashboard.php');
@@ -16,7 +16,12 @@ $action = $_POST['action'] ?? '';
 
 if ($action === 'delete') {
     $leadId = (int) ($_POST['lead_id'] ?? 0);
-    db()->prepare('UPDATE leads SET deleted_at = NOW(), deleted_by = ? WHERE id = ?')->execute([$admin['id'], $leadId]);
+    if (!LeadRepository::findByIds(db(), $scope, [$leadId])) {
+        flash_set('danger', 'Lead not found.');
+        header('Location: dashboard.php');
+        exit;
+    }
+    db()->prepare('UPDATE leads SET deleted_at = NOW(), deleted_by = ? WHERE id = ?')->execute([$user['id'], $leadId]);
     flash_set('success', 'Lead deleted (hidden -- its campaign history is kept, and this can be undone from Deleted Leads).');
     header('Location: dashboard.php');
     exit;
@@ -24,6 +29,11 @@ if ($action === 'delete') {
 
 if ($action === 'restore') {
     $leadId = (int) ($_POST['lead_id'] ?? 0);
+    if (!LeadRepository::findByIds(db(), $scope, [$leadId])) {
+        flash_set('danger', 'Lead not found.');
+        header('Location: ' . ($_POST['return_to'] ?? 'dashboard.php'));
+        exit;
+    }
     db()->prepare('UPDATE leads SET deleted_at = NULL, deleted_by = NULL WHERE id = ?')->execute([$leadId]);
     flash_set('success', 'Lead restored.');
     header('Location: ' . ($_POST['return_to'] ?? 'dashboard.php'));
@@ -59,7 +69,7 @@ if ($action === 'bulk_delete') {
 
     $placeholders = implode(',', array_fill(0, count($leadIds), '?'));
     $stmt = db()->prepare("UPDATE leads SET deleted_at = NOW(), deleted_by = ? WHERE id IN ({$placeholders})");
-    $stmt->execute(array_merge([$admin['id']], $leadIds));
+    $stmt->execute(array_merge([$user['id']], $leadIds));
 
     flash_set('success', count($leadIds) . ' lead(s) deleted (hidden -- can be undone from Deleted Leads).');
     header('Location: dashboard.php');

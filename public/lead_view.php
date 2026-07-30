@@ -50,13 +50,13 @@ $customStmt = db()->prepare(
     "SELECT cf.id, cf.field_key, cf.label, lcv.value
        FROM custom_fields cf
        LEFT JOIN lead_custom_values lcv ON lcv.custom_field_id = cf.id AND lcv.lead_id = ?
-      WHERE cf.is_active = 1
+      WHERE cf.is_active = 1 AND cf.company_id = ?
       ORDER BY cf.label"
 );
-$customStmt->execute([$leadId]);
+$customStmt->execute([$leadId, $scope->companyId]);
 $customFieldValues = $customStmt->fetchAll();
 
-$allTags = TagRepository::all(db());
+$allTags = TagRepository::all(db(), $scope->companyId);
 $leadTagIds = TagRepository::tagIdsForLead(db(), $leadId);
 $leadTagNames = TagRepository::namesForLead(db(), $leadId);
 

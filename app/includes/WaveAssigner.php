@@ -275,14 +275,14 @@ class WaveAssigner
      * unspecified or unrecognized bounce type defaults to "suppresses",
      * matching this app's original (pre-setting) behavior.
      */
-    public static function bounceTypeSuppresses(PDO $db, ?string $bounceType): bool
+    public static function bounceTypeSuppresses(PDO $db, ?string $bounceType, int $companyId): bool
     {
         $bounceType = trim((string) $bounceType);
         if ($bounceType === '') {
             return true;
         }
-        $stmt = $db->prepare('SELECT suppresses FROM bounce_type_suppression_settings WHERE bounce_type = ?');
-        $stmt->execute([$bounceType]);
+        $stmt = $db->prepare('SELECT suppresses FROM bounce_type_suppression_settings WHERE bounce_type = ? AND company_id = ?');
+        $stmt->execute([$bounceType, $companyId]);
         $value = $stmt->fetchColumn();
         return $value === false ? true : (bool) $value;
     }
@@ -296,7 +296,7 @@ class WaveAssigner
      *
      * @return array{held_suppressed:int, domain_suppressed:bool}
      */
-    public static function suppress(PDO $db, int $leaderAssignmentId, int $userId, string $reason = 'Wave-1 bounce', ?string $bounceType = null): array
+    public static function suppress(PDO $db, int $leaderAssignmentId, int $userId, int $companyId, string $reason = 'Wave-1 bounce', ?string $bounceType = null): array
     {
         $leadStmt = $db->prepare(
             'SELECT l.email FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id WHERE a.id = ?'
@@ -305,8 +305,8 @@ class WaveAssigner
         $email = $leadStmt->fetchColumn();
 
         $domainSuppressed = false;
-        if ($email && self::bounceTypeSuppresses($db, $bounceType)) {
-            self::suppressDomainOf($db, $email, $userId, $reason, $bounceType);
+        if ($email && self::bounceTypeSuppresses($db, $bounceType, $companyId)) {
+            self::suppressDomainOf($db, $email, $userId, $companyId, $reason, $bounceType);
             $domainSuppressed = true;
         }
 
@@ -326,11 +326,11 @@ class WaveAssigner
      *
      * @return array{domain:string, cascaded:int, suppressed:bool}
      */
-    public static function suppressByEmail(PDO $db, string $email, int $userId, string $reason, ?string $bounceType = null): array
+    public static function suppressByEmail(PDO $db, string $email, int $userId, int $companyId, string $reason, ?string $bounceType = null): array
     {
-        $suppressed = self::bounceTypeSuppresses($db, $bounceType);
+        $suppressed = self::bounceTypeSuppresses($db, $bounceType, $companyId);
         $domain = $suppressed
-            ? self::suppressDomainOf($db, $email, $userId, $reason, $bounceType)
+            ? self::suppressDomainOf($db, $email, $userId, $companyId, $reason, $bounceType)
             : strtolower(substr(strrchr($email, '@'), 1));
 
         $leaderStmt = $db->prepare(
@@ -383,13 +383,13 @@ class WaveAssigner
         return ['released_leaders' => count($leaderIds), 'released_held' => $releasedHeld];
     }
 
-    private static function suppressDomainOf(PDO $db, string $email, int $userId, string $reason, ?string $bounceType = null): string
+    private static function suppressDomainOf(PDO $db, string $email, int $userId, int $companyId, string $reason, ?string $bounceType = null): string
     {
         $domain = strtolower(substr(strrchr($email, '@'), 1));
         $db->prepare(
-            'INSERT INTO suppressed_domains (domain, reason, bounce_type, suppressed_by) VALUES (?, ?, ?, ?)
+            'INSERT INTO suppressed_domains (company_id, domain, reason, bounce_type, suppressed_by) VALUES (?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE reason = VALUES(reason), bounce_type = VALUES(bounce_type)'
-        )->execute([$domain, $reason, $bounceType, $userId]);
+        )->execute([$companyId, $domain, $reason, $bounceType, $userId]);
         return $domain;
     }
 

@@ -1,21 +1,35 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/../app/includes/ScopeFilter.php';
 
-require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
-$batches = db()->query(
-    "SELECT b.*, u.name AS uploaded_by_name
+$batchClauses = ['b.company_id = :scope_company_id'];
+$batchParams = ['scope_company_id' => $scope->companyId];
+ScopeFilter::applyOwnerScope($batchClauses, $batchParams, $scope, db(), 'b', 'uploaded_by');
+$batchesStmt = db()->prepare(
+    'SELECT b.*, u.name AS uploaded_by_name
      FROM import_batches b
      JOIN users u ON u.id = b.uploaded_by
-     ORDER BY b.started_at DESC"
-)->fetchAll();
+     WHERE ' . implode(' AND ', $batchClauses) . '
+     ORDER BY b.started_at DESC'
+);
+$batchesStmt->execute($batchParams);
+$batches = $batchesStmt->fetchAll();
 
 $errorsFor = isset($_GET['errors_for']) ? (int) $_GET['errors_for'] : null;
 $rowErrors = [];
 if ($errorsFor) {
-    $stmt = db()->prepare('SELECT * FROM import_row_errors WHERE import_batch_id = ? ORDER BY row_num LIMIT 500');
-    $stmt->execute([$errorsFor]);
-    $rowErrors = $stmt->fetchAll();
+    // Only show errors for a batch actually visible to this scope --
+    // otherwise a guessed batch id could reveal another company's (or
+    // teammate's) import error details.
+    $visibleBatchIds = array_column($batches, 'id');
+    if (in_array($errorsFor, $visibleBatchIds, true)) {
+        $stmt = db()->prepare('SELECT * FROM import_row_errors WHERE import_batch_id = ? ORDER BY row_num LIMIT 500');
+        $stmt->execute([$errorsFor]);
+        $rowErrors = $stmt->fetchAll();
+    }
 }
 
 $statusColors = [

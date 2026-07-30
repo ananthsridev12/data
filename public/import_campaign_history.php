@@ -2,7 +2,8 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/CampaignHistoryImporter.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $stats = null;
 
@@ -22,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $stats = CampaignHistoryImporter::import($handle, db(), $admin['id']);
+    $stats = CampaignHistoryImporter::import($handle, db(), $user['id'], $scope->companyId);
     fclose($handle);
 
     flash_set(

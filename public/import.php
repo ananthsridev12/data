@@ -2,8 +2,10 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/LeadImporter.php';
 require_once __DIR__ . '/../app/includes/ImportMapper.php';
+require_once __DIR__ . '/../app/includes/ScopeFilter.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 $config = require __DIR__ . '/../app/config/config.php';
 $uploadsDir = rtrim($config['uploads_dir'], '/');
 
@@ -66,9 +68,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         chmod($destination, 0640);
 
         $stmt = db()->prepare(
-            'INSERT INTO import_batches (filename, stored_path, file_type, uploaded_by, status) VALUES (?, ?, ?, ?, ?)'
+            'INSERT INTO import_batches (company_id, filename, stored_path, file_type, uploaded_by, status) VALUES (?, ?, ?, ?, ?, ?)'
         );
-        $stmt->execute([$originalName, $storedName, $fileType, $admin['id'], 'mapping_pending']);
+        $stmt->execute([$scope->companyId, $originalName, $storedName, $fileType, $user['id'], 'mapping_pending']);
         $created[] = (int) db()->lastInsertId();
     }
     finfo_close($finfo);
@@ -86,9 +88,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$pending = db()->query(
-    "SELECT id, filename, file_type, status, started_at FROM import_batches WHERE status IN ('mapping_pending', 'processing') ORDER BY started_at DESC"
-)->fetchAll();
+$pendingClauses = ['ib.company_id = :scope_company_id', "ib.status IN ('mapping_pending', 'processing')"];
+$pendingParams = ['scope_company_id' => $scope->companyId];
+ScopeFilter::applyOwnerScope($pendingClauses, $pendingParams, $scope, db(), 'ib', 'uploaded_by');
+$pendingStmt = db()->prepare(
+    'SELECT ib.id, ib.filename, ib.file_type, ib.status, ib.started_at FROM import_batches ib WHERE ' . implode(' AND ', $pendingClauses) . ' ORDER BY ib.started_at DESC'
+);
+$pendingStmt->execute($pendingParams);
+$pending = $pendingStmt->fetchAll();
 
 render_header('Import');
 ?>

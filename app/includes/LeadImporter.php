@@ -138,6 +138,8 @@ class LeadImporter
     public static function processChunk(
         PDO $db,
         int $batchId,
+        int $companyId,
+        int $ownerId,
         string $sourcePath,
         string $fileType,
         string $cachePath,
@@ -170,16 +172,20 @@ class LeadImporter
 
         $lookupMaps = [];
         foreach (LOOKUP_FIELDS as $field => $meta) {
-            $lookupMaps[$field] = self::loadLookupMap($db, $meta['table']);
+            $lookupMaps[$field] = self::loadLookupMap($db, $meta['table'], $companyId);
         }
-        $customFields = self::loadCustomFieldIds($db);
+        $customFields = self::loadCustomFieldIds($db, $companyId);
         // Ordered id ASC, same as lead_reclassify_roles.php -- first active
         // group with a keyword hit wins. Loaded once per chunk, not per
         // row, since role group rules don't change mid-import.
-        $roleGroups = $db->query('SELECT id, keywords FROM role_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
-        $countryGroups = $db->query('SELECT id, countries FROM country_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
+        $roleGroupsStmt = $db->prepare('SELECT id, keywords FROM role_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
+        $roleGroupsStmt->execute([$companyId]);
+        $roleGroups = $roleGroupsStmt->fetchAll();
+        $countryGroupsStmt = $db->prepare('SELECT id, countries FROM country_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
+        $countryGroupsStmt->execute([$companyId]);
+        $countryGroups = $countryGroupsStmt->fetchAll();
 
-        $columns = array_keys(LEAD_FIELDS);
+        $columns = array_merge(['company_id', 'owner_id'], array_keys(LEAD_FIELDS));
         $extraColumns = array_map(static fn(array $f) => $f['fk_column'], LOOKUP_FIELDS);
         // role_group_id is deliberately NOT a LOOKUP_FIELDS entry -- an
         // unmatched title must never error the row the way an unrecognized
@@ -189,9 +195,13 @@ class LeadImporter
         // company_country -- derived, coarser buckets that never block the row.
         $allColumns = array_merge($columns, $extraColumns, ['role_group_id', 'employee_count_range', 'country_group_id']);
         $placeholders = implode(', ', array_fill(0, count($allColumns), '?'));
+        // company_id and owner_id are excluded from the UPDATE side of the
+        // upsert, same as email -- a lead's tenant never changes, and a
+        // re-import of an already-owned lead enriches its other fields
+        // without stealing ownership from whoever originally imported it.
         $updateClause = implode(', ', array_map(
             static fn($c) => "{$c} = VALUES({$c})",
-            array_filter(array_merge($allColumns, ['last_import_batch_id']), static fn($c) => $c !== 'email')
+            array_filter(array_merge($allColumns, ['last_import_batch_id']), static fn($c) => !in_array($c, ['email', 'company_id', 'owner_id'], true))
         ));
         // `id = LAST_INSERT_ID(id)` is a no-op value-wise, but makes
         // PDO::lastInsertId() return the existing row's id on an UPDATE
@@ -324,6 +334,8 @@ class LeadImporter
             }
 
             $data['email'] = $email;
+            $data['company_id'] = $companyId;
+            $data['owner_id'] = $ownerId;
             $values = [];
             foreach ($columns as $col) {
                 $values[] = $data[$col] ?? null;
@@ -364,7 +376,7 @@ class LeadImporter
             }
 
             if ($tagNames) {
-                TagRepository::addTagsToLead($db, $leadId, $tagNames);
+                TagRepository::addTagsToLead($db, $leadId, $tagNames, $companyId);
             }
         }
 
@@ -376,10 +388,12 @@ class LeadImporter
     /**
      * @return array<string,int> field_key => id, for active custom fields only
      */
-    private static function loadCustomFieldIds(PDO $db): array
+    private static function loadCustomFieldIds(PDO $db, int $companyId): array
     {
         $map = [];
-        foreach ($db->query('SELECT id, field_key FROM custom_fields WHERE is_active = 1') as $row) {
+        $stmt = $db->prepare('SELECT id, field_key FROM custom_fields WHERE is_active = 1 AND company_id = ?');
+        $stmt->execute([$companyId]);
+        foreach ($stmt as $row) {
             $map[$row['field_key']] = (int) $row['id'];
         }
         return $map;
@@ -388,10 +402,11 @@ class LeadImporter
     /**
      * @return array<string,int> normalized(code or label) => id, for active rows only
      */
-    private static function loadLookupMap(PDO $db, string $table): array
+    private static function loadLookupMap(PDO $db, string $table, int $companyId): array
     {
         $map = [];
-        $stmt = $db->query("SELECT id, code, label FROM {$table} WHERE is_active = 1");
+        $stmt = $db->prepare("SELECT id, code, label FROM {$table} WHERE is_active = 1 AND company_id = ?");
+        $stmt->execute([$companyId]);
         foreach ($stmt as $row) {
             $map[mb_strtolower($row['code'])] = (int) $row['id'];
             $map[mb_strtolower($row['label'])] = (int) $row['id'];

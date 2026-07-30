@@ -54,7 +54,7 @@ if (!$leadIds) {
     exit;
 }
 
-$tagged = TagRepository::addTagToLeadIds(db(), $leadIds, $tagName);
+$tagged = TagRepository::addTagToLeadIds(db(), $leadIds, $tagName, $scope->companyId);
 $alreadyTagged = count($leadIds) - $tagged;
 
 $message = "\"{$tagName}\" added to {$tagged} lead(s) matching this filter.";

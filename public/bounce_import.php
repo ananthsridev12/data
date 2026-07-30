@@ -2,7 +2,8 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $results = null;
 
@@ -11,7 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (($_POST['action'] ?? '') === 'unsuppress') {
         $id = (int) ($_POST['id'] ?? 0);
-        db()->prepare('DELETE FROM suppressed_domains WHERE id = ?')->execute([$id]);
+        db()->prepare('DELETE FROM suppressed_domains WHERE id = ? AND company_id = ?')->execute([$id, $scope->companyId]);
         flash_set('success', 'Domain removed from the suppression list.');
         header('Location: bounce_import.php');
         exit;
@@ -82,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $rowBounceType = $fromRow;
                 }
             }
-            $result = WaveAssigner::suppressByEmail(db(), $email, $admin['id'], 'Bounce report import', $rowBounceType);
+            $result = WaveAssigner::suppressByEmail(db(), $email, $user['id'], $scope->companyId, 'Bounce report import', $rowBounceType);
             if ($result['suppressed']) {
                 $suppressedDomains[$result['domain']] = true;
             } else {
@@ -114,9 +115,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$suppressedDomains = db()->query(
-    'SELECT sd.*, u.name AS suppressed_by_name FROM suppressed_domains sd JOIN users u ON u.id = sd.suppressed_by ORDER BY sd.suppressed_at DESC LIMIT 200'
-)->fetchAll();
+$suppressedDomainsStmt = db()->prepare(
+    'SELECT sd.*, u.name AS suppressed_by_name FROM suppressed_domains sd JOIN users u ON u.id = sd.suppressed_by
+      WHERE sd.company_id = ? ORDER BY sd.suppressed_at DESC LIMIT 200'
+);
+$suppressedDomainsStmt->execute([$scope->companyId]);
+$suppressedDomains = $suppressedDomainsStmt->fetchAll();
 
 render_header('Bounce import');
 ?>

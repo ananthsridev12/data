@@ -6,8 +6,8 @@ require_once __DIR__ . '/../app/includes/RoleGroupClassifier.php';
 require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
 require_once __DIR__ . '/../app/includes/CronRunLog.php';
 
-$admin = require_admin();
-$scope = Scope::fromUser(db(), $admin);
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -38,10 +38,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             try {
                 if ($action === 'create') {
-                    IcpRepository::create(db(), $data, $admin['id'], (int) $admin['company_id']);
+                    IcpRepository::create(db(), $data, $user['id'], $scope->companyId);
                     flash_set('success', "\"{$name}\" created -- now link 2 or more campaigns to it below with a percentage split.");
                 } else {
-                    IcpRepository::update(db(), (int) ($_POST['id'] ?? 0), $data, (int) $admin['company_id']);
+                    IcpRepository::update(db(), (int) ($_POST['id'] ?? 0), $data, $scope);
                     flash_set('success', "\"{$name}\" updated.");
                 }
             } catch (PDOException $ex) {
@@ -49,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'toggle_active') {
-        IcpRepository::toggleActive(db(), (int) ($_POST['id'] ?? 0), (int) $admin['company_id']);
+        IcpRepository::toggleActive(db(), (int) ($_POST['id'] ?? 0), $scope);
         flash_set('success', 'Status updated.');
     } elseif ($action === 'add_link') {
         $icpId = (int) ($_POST['icp_id'] ?? 0);
@@ -58,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('danger', 'Pick a campaign to link.');
         } else {
             try {
-                IcpRepository::addLink(db(), $icpId, $campaignId, (int) $admin['company_id']);
+                IcpRepository::addLink(db(), $icpId, $campaignId, $scope);
                 flash_set('success', 'Campaign linked -- percentages auto-split evenly across all linked campaigns.');
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'That campaign is already linked to this ICP.' : 'Could not link campaign.');
@@ -67,15 +67,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'remove_link') {
-        IcpRepository::removeLink(db(), (int) ($_POST['link_id'] ?? 0), (int) $admin['company_id']);
+        IcpRepository::removeLink(db(), (int) ($_POST['link_id'] ?? 0), $scope);
         flash_set('success', 'Link removed -- remaining campaigns auto-split evenly.');
     } elseif ($action === 'rebalance') {
-        IcpRepository::rebalanceEvenly(db(), (int) ($_POST['icp_id'] ?? 0), (int) $admin['company_id']);
+        IcpRepository::rebalanceEvenly(db(), (int) ($_POST['icp_id'] ?? 0), $scope);
         flash_set('success', 'Split reset to an even percentage across all linked campaigns.');
     } elseif ($action === 'update_split') {
         $icpId = (int) ($_POST['icp_id'] ?? 0);
         $percentages = array_map('intval', (array) ($_POST['percentage'] ?? []));
-        if (IcpRepository::updateLinkPercentages(db(), $icpId, $percentages, (int) $admin['company_id'])) {
+        if (IcpRepository::updateLinkPercentages(db(), $icpId, $percentages, $scope)) {
             flash_set('success', 'Custom split saved.');
         } else {
             flash_set('danger', 'Could not save split -- percentages must be 1-100 each and sum to exactly 100.');
@@ -86,13 +86,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$icps = IcpRepository::list(db(), (int) $admin['company_id']);
+$icps = IcpRepository::list(db(), $scope);
 $roleGroups = LeadRepository::activeLookupOptions(db(), $scope, 'role_groups');
 $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 $countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
-$campaignsStmt = db()->prepare('SELECT id, name FROM campaigns WHERE company_id = ? AND saleshandy_sequence_id IS NOT NULL ORDER BY name');
-$campaignsStmt->execute([(int) $admin['company_id']]);
+
+// The "link a campaign" picker only ever offers campaigns this scope is
+// actually allowed to link (see IcpRepository::addLink()) -- Admin sees
+// every linkable campaign in the company, a Team Lead/Member sees only
+// their own, so nothing shown here can ever be rejected on submit.
+$campaignsClauses = ['company_id = :scope_company_id', 'saleshandy_sequence_id IS NOT NULL'];
+$campaignsParams = ['scope_company_id' => $scope->companyId];
+if (!$scope->isAdmin()) {
+    $campaignsClauses[] = 'saleshandy_account_owner_id = :scope_user_id';
+    $campaignsParams['scope_user_id'] = $scope->userId;
+}
+$campaignsStmt = db()->prepare('SELECT id, name FROM campaigns WHERE ' . implode(' AND ', $campaignsClauses) . ' ORDER BY name');
+$campaignsStmt->execute($campaignsParams);
 $campaigns = $campaignsStmt->fetchAll();
 
 $companyCountries = LeadRepository::distinctValues(db(), $scope, 'company_country');
@@ -103,7 +114,7 @@ $employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
 $linksByIcp = [];
 $matchingCountByIcp = [];
 foreach ($icps as $icp) {
-    $linksByIcp[(int) $icp['id']] = IcpRepository::links(db(), (int) $icp['id']);
+    $linksByIcp[(int) $icp['id']] = IcpRepository::links(db(), (int) $icp['id'], $scope);
     // Same filters + "never assigned to any campaign before" scoping the
     // distribution cron itself uses (IcpRepository::toFilters()) -- so
     // this is exactly the pool the next cron run would pick up and split,
@@ -115,21 +126,25 @@ foreach ($icps as $icp) {
 // yet (not just zero *active* ones -- even an unfinished draft ICP still
 // counts as "started"), most classified leads first -- so the gap most
 // worth closing shows up on top instead of just a flat A-Z list.
-$unmappedPersonas = db()->query(
+$unmappedPersonasStmt = db()->prepare(
     "SELECT rg.id, rg.label,
-        (SELECT COUNT(*) FROM leads l WHERE l.role_group_id = rg.id AND l.deleted_at IS NULL) AS lead_count
+        (SELECT COUNT(*) FROM leads l WHERE l.role_group_id = rg.id AND l.deleted_at IS NULL AND l.company_id = ?) AS lead_count
        FROM role_groups rg
-      WHERE rg.is_active = 1
-        AND NOT EXISTS (SELECT 1 FROM icp_segments icp WHERE icp.role_group_id = rg.id)
+      WHERE rg.is_active = 1 AND rg.company_id = ?
+        AND NOT EXISTS (SELECT 1 FROM icp_segments icp WHERE icp.role_group_id = rg.id AND icp.company_id = ?)
       ORDER BY lead_count DESC, rg.label"
-)->fetchAll();
+);
+$unmappedPersonasStmt->execute([$scope->companyId, $scope->companyId, $scope->companyId]);
+$unmappedPersonas = $unmappedPersonasStmt->fetchAll();
 
 $activeIcpCount = count(array_filter($icps, static fn (array $i): bool => (bool) $i['is_active']));
 $lastSyncRun = CronRunLog::lastRun(db(), 'saleshandy_sync');
 $lastDistributionRun = CronRunLog::lastRun(db(), 'icp_distribution');
 $lastBackfillRun = CronRunLog::lastRun(db(), 'saleshandy_backfill');
 $lastFieldSyncRun = CronRunLog::lastRun(db(), 'saleshandy_field_sync');
-$fieldSyncEnabledCount = (int) db()->query('SELECT COUNT(*) FROM companies WHERE saleshandy_field_sync_cron_enabled = 1')->fetchColumn();
+$fieldSyncEnabledStmt = db()->prepare('SELECT saleshandy_field_sync_cron_enabled FROM companies WHERE id = ?');
+$fieldSyncEnabledStmt->execute([$scope->companyId]);
+$fieldSyncEnabledForCompany = (bool) $fieldSyncEnabledStmt->fetchColumn();
 
 /** Renders a "how long ago" string from a MySQL DATETIME, for the cron-status card. */
 $timeAgo = static function (string $mysqlDatetime): string {
@@ -173,6 +188,7 @@ render_header('ICP Segments');
   </div>
 </div>
 
+<?php if ($scope->isAdmin()): ?>
 <div class="card icp-card mb-4">
   <div class="card-header fw-semibold">Cron status</div>
   <div class="card-body">
@@ -236,8 +252,8 @@ render_header('ICP Segments');
       <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
         <div>
           <div class="fw-semibold">Saleshandy field sync</div>
-          <?php if ($fieldSyncEnabledCount === 0): ?>
-            <div class="small text-muted">Scheduled cron is off for every company -- enable it on <a href="company_profile.php">Company Profile</a>, or use "Run now" any time regardless.</div>
+          <?php if (!$fieldSyncEnabledForCompany): ?>
+            <div class="small text-muted">Scheduled cron is off for your company -- enable it on <a href="company_profile.php">Company Profile</a>, or use "Run now" any time regardless.</div>
           <?php endif; ?>
           <?php if ($lastFieldSyncRun): ?>
             <div class="small text-muted">
@@ -256,6 +272,7 @@ render_header('ICP Segments');
     </div>
   </div>
 </div>
+<?php endif; ?>
 
 <?php if ($unmappedPersonas): ?>
 <div class="card icp-card mb-4">

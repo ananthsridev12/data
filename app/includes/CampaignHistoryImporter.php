@@ -44,7 +44,7 @@ class CampaignHistoryImporter
      *   skipped_notes:array<int,string>
      * }
      */
-    public static function import($handle, PDO $db, int $userId): array
+    public static function import($handle, PDO $db, int $userId, int $companyId): array
     {
         $stats = [
             'processed' => 0, 'lead_not_found' => 0, 'vertical_updated' => 0, 'service_updated' => 0,
@@ -72,8 +72,8 @@ class CampaignHistoryImporter
             return $stats;
         }
 
-        $verticalMap = self::loadLookupMap($db, 'verticals');
-        $serviceMap = self::loadLookupMap($db, 'services');
+        $verticalMap = self::loadLookupMap($db, 'verticals', $companyId);
+        $serviceMap = self::loadLookupMap($db, 'services', $companyId);
         $campaignIdCache = [];
         $rowNum = 1;
 
@@ -87,8 +87,8 @@ class CampaignHistoryImporter
                 continue;
             }
 
-            $leadStmt = $db->prepare('SELECT id, vertical_id, service_id FROM leads WHERE email = ?');
-            $leadStmt->execute([$email]);
+            $leadStmt = $db->prepare('SELECT id, vertical_id, service_id FROM leads WHERE email = ? AND company_id = ?');
+            $leadStmt->execute([$email, $companyId]);
             $lead = $leadStmt->fetch();
             if (!$lead) {
                 $stats['lead_not_found']++;
@@ -166,11 +166,14 @@ class CampaignHistoryImporter
             }
 
             if (!isset($campaignIdCache[$campaignName])) {
-                $campStmt = $db->prepare('SELECT id FROM campaigns WHERE name = ?');
-                $campStmt->execute([$campaignName]);
+                $campStmt = $db->prepare('SELECT id FROM campaigns WHERE name = ? AND company_id = ?');
+                $campStmt->execute([$campaignName, $companyId]);
                 $campaignId = $campStmt->fetchColumn();
                 if (!$campaignId) {
-                    $db->prepare('INSERT INTO campaigns (name, created_by) VALUES (?, ?)')->execute([$campaignName, $userId]);
+                    // The importer becomes the campaign's owner by default,
+                    // same as creating one by hand on campaigns.php.
+                    $db->prepare('INSERT INTO campaigns (company_id, name, created_by, saleshandy_account_owner_id) VALUES (?, ?, ?, ?)')
+                        ->execute([$companyId, $campaignName, $userId, $userId]);
                     $campaignId = (int) $db->lastInsertId();
                     $stats['campaigns_created']++;
                 }
@@ -205,7 +208,7 @@ class CampaignHistoryImporter
                 $stats['delivery_status_updated']++;
 
                 if (in_array($deliveryStatus, DELIVERY_STATUS_BOUNCE_VALUES, true)) {
-                    WaveAssigner::suppressByEmail($db, $email, $userId, "Campaign history import: {$deliveryStatus}", $deliveryStatus);
+                    WaveAssigner::suppressByEmail($db, $email, $userId, $companyId, "Campaign history import: {$deliveryStatus}", $deliveryStatus);
                     $stats['bounces_processed']++;
                 }
             }
@@ -214,10 +217,12 @@ class CampaignHistoryImporter
         return $stats;
     }
 
-    private static function loadLookupMap(PDO $db, string $table): array
+    private static function loadLookupMap(PDO $db, string $table, int $companyId): array
     {
         $map = [];
-        foreach ($db->query("SELECT id, code, label FROM {$table} WHERE is_active = 1") as $row) {
+        $stmt = $db->prepare("SELECT id, code, label FROM {$table} WHERE is_active = 1 AND company_id = ?");
+        $stmt->execute([$companyId]);
+        foreach ($stmt as $row) {
             $map[mb_strtolower($row['code'])] = (int) $row['id'];
             $map[mb_strtolower($row['label'])] = (int) $row['id'];
         }

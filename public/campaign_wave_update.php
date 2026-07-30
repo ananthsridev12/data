@@ -48,7 +48,7 @@ if ($action === 'release') {
     if (!in_array($bounceType, WaveAssigner::BOUNCE_TYPES, true)) {
         $bounceType = null;
     }
-    $result = WaveAssigner::suppress(db(), $leaderAssignmentId, $user['id'], 'Wave-1 bounce', $bounceType);
+    $result = WaveAssigner::suppress(db(), $leaderAssignmentId, $user['id'], $scope->companyId, 'Wave-1 bounce', $bounceType);
     $message = "{$result['held_suppressed']} held lead(s) suppressed.";
     $message .= $result['domain_suppressed']
         ? ' Their domain has been added to the global suppression list.'

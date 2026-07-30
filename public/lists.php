@@ -1,7 +1,8 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $tables = ['vertical' => 'verticals', 'service' => 'services'];
 
@@ -21,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('danger', 'Both a code and a name are required.');
         } else {
             try {
-                db()->prepare("INSERT INTO {$table} (code, label) VALUES (?, ?)")->execute([$code, $label]);
+                db()->prepare("INSERT INTO {$table} (company_id, code, label) VALUES (?, ?, ?)")->execute([$scope->companyId, $code, $label]);
                 flash_set('success', "\"{$label}\" added.");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'That code already exists.' : 'Could not add entry.');
@@ -29,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'toggle_active') {
         $id = (int) ($_POST['id'] ?? 0);
-        db()->prepare("UPDATE {$table} SET is_active = NOT is_active WHERE id = ?")->execute([$id]);
+        db()->prepare("UPDATE {$table} SET is_active = NOT is_active WHERE id = ? AND company_id = ?")->execute([$id, $scope->companyId]);
         flash_set('success', 'Status updated.');
     }
 
@@ -37,8 +38,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$verticals = db()->query('SELECT * FROM verticals ORDER BY label')->fetchAll();
-$services = db()->query('SELECT * FROM services ORDER BY label')->fetchAll();
+$verticalsStmt = db()->prepare('SELECT * FROM verticals WHERE company_id = ? ORDER BY label');
+$verticalsStmt->execute([$scope->companyId]);
+$verticals = $verticalsStmt->fetchAll();
+$servicesStmt = db()->prepare('SELECT * FROM services WHERE company_id = ? ORDER BY label');
+$servicesStmt->execute([$scope->companyId]);
+$services = $servicesStmt->fetchAll();
 
 render_header('Lists');
 

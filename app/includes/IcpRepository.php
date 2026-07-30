@@ -12,9 +12,35 @@ require_once __DIR__ . '/SaleshandyClient.php';
  */
 class IcpRepository
 {
-    /** @return array<int,array<string,mixed>> every ICP in this company, with joined labels + linked-campaign summary. */
-    public static function list(PDO $db, int $companyId): array
+    /**
+     * Every ICP visible to this scope, with joined labels + linked-campaign
+     * summary. Admin sees every ICP in the company. Team Lead and Member
+     * are both scoped to campaigns they PERSONALLY own (not team-pooled --
+     * an explicit choice, since an ICP can auto-push into any campaign it
+     * links, and pooling would let a Team Lead build an ICP that pushes
+     * into a teammate's Saleshandy account without that teammate's say):
+     * an ICP is visible if they created it (covers a fresh, still-empty
+     * ICP) or they own at least one of its linked campaigns.
+     * link_count/percentage_total still reflect the WHOLE ICP (every
+     * link, not just the viewer's own) so a partially-visible ICP's
+     * overall split still makes sense on screen -- individual link rows
+     * are filtered separately, see links().
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public static function list(PDO $db, Scope $scope): array
     {
+        $clauses = ['icp.company_id = :company_id'];
+        $params = ['company_id' => $scope->companyId];
+        if (!$scope->isAdmin()) {
+            $clauses[] = '(icp.created_by = :user_id OR EXISTS (
+                SELECT 1 FROM icp_campaign_links vl JOIN campaigns vc ON vc.id = vl.campaign_id
+                 WHERE vl.icp_id = icp.id AND vc.saleshandy_account_owner_id = :user_id2
+            ))';
+            $params['user_id'] = $scope->userId;
+            $params['user_id2'] = $scope->userId;
+        }
+
         $stmt = $db->prepare(
             "SELECT icp.*, rg.label AS role_group_label, v.label AS vertical_label, s.label AS service_label,
                     cg.label AS country_group_label,
@@ -25,10 +51,10 @@ class IcpRepository
                LEFT JOIN verticals v ON v.id = icp.vertical_id
                LEFT JOIN services s ON s.id = icp.service_id
                LEFT JOIN country_groups cg ON cg.id = icp.country_group_id
-              WHERE icp.company_id = ?
-              ORDER BY icp.name"
+              WHERE " . implode(' AND ', $clauses) . '
+              ORDER BY icp.name'
         );
-        $stmt->execute([$companyId]);
+        $stmt->execute($params);
         $rows = $stmt->fetchAll();
 
         foreach ($rows as &$r) {
@@ -38,6 +64,23 @@ class IcpRepository
         unset($r);
 
         return $rows;
+    }
+
+    /**
+     * Whether every campaign currently linked to this ICP is personally
+     * owned by $userId -- vacuously true for an ICP with zero links (a
+     * fresh one its creator hasn't linked anything to yet). The gate for
+     * every ICP-mutating action a non-admin (Team Lead or Member) takes:
+     * they may only ever touch an ICP that's still "fully theirs".
+     */
+    private static function isFullyOwnedBySelf(PDO $db, int $icpId, int $userId): bool
+    {
+        $stmt = $db->prepare(
+            'SELECT COUNT(*) FROM icp_campaign_links l JOIN campaigns c ON c.id = l.campaign_id
+              WHERE l.icp_id = ? AND c.saleshandy_account_owner_id != ?'
+        );
+        $stmt->execute([$icpId, $userId]);
+        return (int) $stmt->fetchColumn() === 0;
     }
 
     public static function find(PDO $db, int $id): ?array
@@ -61,17 +104,32 @@ class IcpRepository
         return $valid;
     }
 
-    /** @return array<int,array{id:int,campaign_id:int,campaign_name:string,percentage:int}> */
-    public static function links(PDO $db, int $icpId): array
+    /**
+     * @param Scope|null $scope pass to filter down to only the campaigns
+     *   the scope personally owns (Admin: unfiltered, same as omitting
+     *   it) -- used for display on a partially-visible ICP, where a
+     *   Team Lead/Member should only ever see their own slice of a
+     *   split that also touches a teammate's campaign.
+     * @return array<int,array{id:int,campaign_id:int,campaign_name:string,percentage:int,owner_id:int,owner_name:string}>
+     */
+    public static function links(PDO $db, int $icpId, ?Scope $scope = null): array
     {
+        $ownerClause = '';
+        $params = [$icpId];
+        if ($scope !== null && !$scope->isAdmin()) {
+            $ownerClause = ' AND c.saleshandy_account_owner_id = ?';
+            $params[] = $scope->userId;
+        }
         $stmt = $db->prepare(
-            'SELECT l.id, l.campaign_id, c.name AS campaign_name, l.percentage
+            "SELECT l.id, l.campaign_id, c.name AS campaign_name, l.percentage,
+                    c.saleshandy_account_owner_id AS owner_id, u.name AS owner_name
                FROM icp_campaign_links l
                JOIN campaigns c ON c.id = l.campaign_id
-              WHERE l.icp_id = ?
-              ORDER BY l.percentage DESC'
+               LEFT JOIN users u ON u.id = c.saleshandy_account_owner_id
+              WHERE l.icp_id = ?{$ownerClause}
+              ORDER BY l.percentage DESC"
         );
-        $stmt->execute([$icpId]);
+        $stmt->execute($params);
         return $stmt->fetchAll();
     }
 
@@ -99,8 +157,11 @@ class IcpRepository
     }
 
     /** @param array<string,mixed> $data */
-    public static function update(PDO $db, int $id, array $data, int $companyId): void
+    public static function update(PDO $db, int $id, array $data, Scope $scope): void
     {
+        if (!$scope->isAdmin() && !self::isFullyOwnedBySelf($db, $id, $scope->userId)) {
+            return;
+        }
         $stmt = $db->prepare(
             'UPDATE icp_segments
                 SET name = ?, role_group_id = ?, vertical_id = ?, service_id = ?, country_group_id = ?,
@@ -110,13 +171,16 @@ class IcpRepository
         $stmt->execute([
             $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
-            !empty($data['auto_push_enabled']) ? 1 : 0, $id, $companyId,
+            !empty($data['auto_push_enabled']) ? 1 : 0, $id, $scope->companyId,
         ]);
     }
 
-    public static function toggleActive(PDO $db, int $id, int $companyId): void
+    public static function toggleActive(PDO $db, int $id, Scope $scope): void
     {
-        $db->prepare('UPDATE icp_segments SET is_active = NOT is_active WHERE id = ? AND company_id = ?')->execute([$id, $companyId]);
+        if (!$scope->isAdmin() && !self::isFullyOwnedBySelf($db, $id, $scope->userId)) {
+            return;
+        }
+        $db->prepare('UPDATE icp_segments SET is_active = NOT is_active WHERE id = ? AND company_id = ?')->execute([$id, $scope->companyId]);
     }
 
     /**
@@ -124,42 +188,58 @@ class IcpRepository
      * every link on this ICP to an even split -- so an admin never has
      * to hand-pick a percentage that happens to make the total land on
      * 100 (1 link -> 100%, 2 -> 50/50, 3 -> 34/33/33, etc). Both the ICP
-     * and the campaign must belong to the acting admin's own company --
+     * and the campaign must belong to the acting scope's own company --
      * rejects otherwise, since an ICP and a campaign from different
      * companies can never legitimately be linked (see sql/032's note on
      * icp_segments.company_id needing to match every linked campaign's).
+     * A non-admin (Team Lead or Member) may only link a campaign they
+     * personally own, and only onto an ICP that's still fully theirs --
+     * never a teammate's campaign, and never an ICP that already touches
+     * one (see isFullyOwnedBySelf()).
      */
-    public static function addLink(PDO $db, int $icpId, int $campaignId, int $companyId): void
+    public static function addLink(PDO $db, int $icpId, int $campaignId, Scope $scope): void
     {
         $matchStmt = $db->prepare(
-            'SELECT icp.company_id = ? AND c.company_id = ? FROM icp_segments icp, campaigns c WHERE icp.id = ? AND c.id = ?'
+            'SELECT icp.company_id = ? AND c.company_id = ? AS same_company, c.saleshandy_account_owner_id AS campaign_owner_id
+               FROM icp_segments icp, campaigns c WHERE icp.id = ? AND c.id = ?'
         );
-        $matchStmt->execute([$companyId, $companyId, $icpId, $campaignId]);
-        $sameCompany = $matchStmt->fetchColumn();
-        if ($sameCompany === false || !(bool) $sameCompany) {
+        $matchStmt->execute([$scope->companyId, $scope->companyId, $icpId, $campaignId]);
+        $row = $matchStmt->fetch();
+        if (!$row || !$row['same_company']) {
             throw new InvalidArgumentException('That campaign belongs to a different company than this ICP segment.');
+        }
+        if (!$scope->isAdmin()) {
+            if ((int) $row['campaign_owner_id'] !== $scope->userId) {
+                throw new InvalidArgumentException('You can only link campaigns you own.');
+            }
+            if (!self::isFullyOwnedBySelf($db, $icpId, $scope->userId)) {
+                throw new InvalidArgumentException('This ICP already includes a campaign you don\'t own -- ask an admin to change its links.');
+            }
         }
 
         $stmt = $db->prepare('INSERT INTO icp_campaign_links (icp_id, campaign_id, percentage) VALUES (?, ?, 0)');
         $stmt->execute([$icpId, $campaignId]);
-        self::rebalanceEvenly($db, $icpId, $companyId);
+        self::rebalanceEvenly($db, $icpId, $scope);
     }
 
     /** Removes a link, then rebalances whatever campaigns remain back to an even split. */
-    public static function removeLink(PDO $db, int $linkId, int $companyId): void
+    public static function removeLink(PDO $db, int $linkId, Scope $scope): void
     {
         $stmt = $db->prepare(
             'SELECT l.icp_id FROM icp_campaign_links l JOIN icp_segments icp ON icp.id = l.icp_id WHERE l.id = ? AND icp.company_id = ?'
         );
-        $stmt->execute([$linkId, $companyId]);
+        $stmt->execute([$linkId, $scope->companyId]);
         $icpId = $stmt->fetchColumn();
 
         if ($icpId === false) {
             return;
         }
+        if (!$scope->isAdmin() && !self::isFullyOwnedBySelf($db, (int) $icpId, $scope->userId)) {
+            return;
+        }
 
         $db->prepare('DELETE FROM icp_campaign_links WHERE id = ?')->execute([$linkId]);
-        self::rebalanceEvenly($db, (int) $icpId, $companyId);
+        self::rebalanceEvenly($db, (int) $icpId, $scope);
     }
 
     /**
@@ -171,11 +251,14 @@ class IcpRepository
      * button) to discard a manual custom split, or to fix an ICP whose
      * links don't currently sum to 100 for any other reason.
      */
-    public static function rebalanceEvenly(PDO $db, int $icpId, int $companyId): void
+    public static function rebalanceEvenly(PDO $db, int $icpId, Scope $scope): void
     {
         $ownStmt = $db->prepare('SELECT 1 FROM icp_segments WHERE id = ? AND company_id = ?');
-        $ownStmt->execute([$icpId, $companyId]);
+        $ownStmt->execute([$icpId, $scope->companyId]);
         if (!$ownStmt->fetchColumn()) {
+            return;
+        }
+        if (!$scope->isAdmin() && !self::isFullyOwnedBySelf($db, $icpId, $scope->userId)) {
             return;
         }
 
@@ -205,11 +288,14 @@ class IcpRepository
      *
      * @param array<int,int> $percentagesByLinkId link_id => percentage
      */
-    public static function updateLinkPercentages(PDO $db, int $icpId, array $percentagesByLinkId, int $companyId): bool
+    public static function updateLinkPercentages(PDO $db, int $icpId, array $percentagesByLinkId, Scope $scope): bool
     {
         $ownStmt = $db->prepare('SELECT 1 FROM icp_segments WHERE id = ? AND company_id = ?');
-        $ownStmt->execute([$icpId, $companyId]);
+        $ownStmt->execute([$icpId, $scope->companyId]);
         if (!$ownStmt->fetchColumn()) {
+            return false;
+        }
+        if (!$scope->isAdmin() && !self::isFullyOwnedBySelf($db, $icpId, $scope->userId)) {
             return false;
         }
 
@@ -260,15 +346,32 @@ class IcpRepository
      * auto-push cron run (or a manual "Push to Saleshandy" click) would
      * actually pick up right now.
      *
+     * Visibility and per-row scoping follow list(): Admin sees every ICP
+     * and its full stats; a non-admin only sees ICPs they created or own
+     * a link on, and the campaign_names / aggregated counts are limited
+     * to campaigns they personally own -- a teammate's slice of a shared
+     * ICP never shows up in their numbers.
+     *
      * @return array<int,array<string,mixed>>
      */
-    public static function performanceStats(PDO $db, int $companyId): array
+    public static function performanceStats(PDO $db, Scope $scope): array
     {
+        $isAdmin = $scope->isAdmin();
+        $campaignNamesOwnerClause = $isAdmin ? '' : ' AND c.saleshandy_account_owner_id = :owner_id_names';
+        $assignmentOwnerClause = $isAdmin ? '' : ' AND EXISTS (SELECT 1 FROM campaigns oc WHERE oc.id = a.campaign_id AND oc.saleshandy_account_owner_id = :owner_id_assign)';
+        $visibilityClause = 'icp.company_id = :company_id';
+        if (!$isAdmin) {
+            $visibilityClause .= ' AND (icp.created_by = :owner_id_visible OR EXISTS (
+                SELECT 1 FROM icp_campaign_links vl JOIN campaigns vc ON vc.id = vl.campaign_id
+                 WHERE vl.icp_id = icp.id AND vc.saleshandy_account_owner_id = :owner_id_visible2
+            ))';
+        }
+
         $stmt = $db->prepare(
             "SELECT icp.id, icp.name, icp.is_active, icp.auto_push_enabled,
                     (SELECT GROUP_CONCAT(c.name ORDER BY c.name SEPARATOR ', ')
                        FROM icp_campaign_links lk JOIN campaigns c ON c.id = lk.campaign_id
-                      WHERE lk.icp_id = icp.id) AS campaign_names,
+                      WHERE lk.icp_id = icp.id{$campaignNamesOwnerClause}) AS campaign_names,
                     COUNT(a.id) AS leads_assigned,
                     SUM(CASE WHEN a.wave_status = 'active' AND a.status != 'pushed'
                               AND NOT EXISTS (SELECT 1 FROM suppressed_domains sd WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1))
@@ -280,13 +383,20 @@ class IcpRepository
                     SUM(CASE WHEN a.open_count > 0 THEN 1 ELSE 0 END) AS opened,
                     SUM(CASE WHEN a.reply_sentiment IS NOT NULL THEN 1 ELSE 0 END) AS replied
                FROM icp_segments icp
-               LEFT JOIN lead_campaign_assignments a ON a.icp_id = icp.id
+               LEFT JOIN lead_campaign_assignments a ON a.icp_id = icp.id{$assignmentOwnerClause}
                LEFT JOIN leads l ON l.id = a.lead_id
-              WHERE (l.deleted_at IS NULL OR a.id IS NULL) AND icp.company_id = ?
+              WHERE (l.deleted_at IS NULL OR a.id IS NULL) AND {$visibilityClause}
               GROUP BY icp.id
               ORDER BY icp.name"
         );
-        $stmt->execute([$companyId]);
+        $params = ['company_id' => $scope->companyId];
+        if (!$isAdmin) {
+            $params['owner_id_names'] = $scope->userId;
+            $params['owner_id_assign'] = $scope->userId;
+            $params['owner_id_visible'] = $scope->userId;
+            $params['owner_id_visible2'] = $scope->userId;
+        }
+        $stmt->execute($params);
         $rows = $stmt->fetchAll();
 
         foreach ($rows as &$r) {

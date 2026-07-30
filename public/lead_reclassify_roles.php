@@ -2,7 +2,8 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/RoleGroupClassifier.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: role_groups.php');
@@ -16,14 +17,17 @@ $db = db();
 // Ordered id ASC -- matches RoleGroupClassifier's documented "caller
 // controls ordering" contract; simplest stable order, first active group
 // with a keyword hit wins.
-$groups = $db->query('SELECT id, keywords FROM role_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
+$groupsStmt = $db->prepare('SELECT id, keywords FROM role_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
+$groupsStmt->execute([$scope->companyId]);
+$groups = $groupsStmt->fetchAll();
 
 $checked = 0;
 $changed = 0;
 $nowUnclassified = 0;
 
 $updateStmt = $db->prepare('UPDATE leads SET role_group_id = ? WHERE id = ?');
-$stmt = $db->query("SELECT id, title, role_group_id FROM leads WHERE deleted_at IS NULL AND title IS NOT NULL AND title != ''");
+$stmt = $db->prepare("SELECT id, title, role_group_id FROM leads WHERE company_id = ? AND deleted_at IS NULL AND title IS NOT NULL AND title != ''");
+$stmt->execute([$scope->companyId]);
 
 while ($lead = $stmt->fetch()) {
     $checked++;

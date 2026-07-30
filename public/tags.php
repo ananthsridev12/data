@@ -3,7 +3,8 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/TagRepository.php';
 require_once __DIR__ . '/../app/includes/SaleshandyClient.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -15,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('danger', 'A tag name is required.');
         } else {
             try {
-                TagRepository::findOrCreateByName(db(), $name);
+                TagRepository::findOrCreateByName(db(), $name, $scope->companyId);
                 flash_set('success', "Tag \"{$name}\" added.");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'That tag already exists.' : 'Could not add tag.');
@@ -23,12 +24,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'delete') {
         $id = (int) ($_POST['id'] ?? 0);
-        db()->prepare('DELETE FROM tags WHERE id = ?')->execute([$id]);
+        db()->prepare('DELETE FROM tags WHERE id = ? AND company_id = ?')->execute([$id, $scope->companyId]);
         flash_set('success', 'Tag deleted.');
     } elseif ($action === 'sync') {
         try {
-            $client = SaleshandyClient::forUser(db(), $admin['id']);
-            $count = TagRepository::syncFromSaleshandy(db(), $client->listTags());
+            $client = SaleshandyClient::forUser(db(), $user['id']);
+            $count = TagRepository::syncFromSaleshandy(db(), $client->listTags(), $scope->companyId);
             flash_set('success', "Synced {$count} tag(s) from Saleshandy.");
         } catch (SaleshandyApiException $ex) {
             flash_set('danger', 'Could not sync tags from Saleshandy: ' . $ex->getMessage());
@@ -39,9 +40,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$tags = db()->query(
-    'SELECT t.*, (SELECT COUNT(*) FROM lead_tags lt WHERE lt.tag_id = t.id) AS lead_count FROM tags t ORDER BY t.name'
-)->fetchAll();
+$tagsStmt = db()->prepare(
+    'SELECT t.*, (SELECT COUNT(*) FROM lead_tags lt WHERE lt.tag_id = t.id) AS lead_count FROM tags t WHERE t.company_id = ? ORDER BY t.name'
+);
+$tagsStmt->execute([$scope->companyId]);
+$tags = $tagsStmt->fetchAll();
 
 render_header('Tags');
 ?>

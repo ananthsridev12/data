@@ -93,7 +93,7 @@ if ($action === 'mark_imported') {
         );
         $emailStmt->execute(array_merge([$campaignId], $ids));
         foreach ($emailStmt->fetchAll(PDO::FETCH_COLUMN) as $email) {
-            $result = WaveAssigner::suppressByEmail(db(), $email, $user['id'], "Delivery status: {$deliveryStatus}", $deliveryStatus);
+            $result = WaveAssigner::suppressByEmail(db(), $email, $user['id'], $scope->companyId, "Delivery status: {$deliveryStatus}", $deliveryStatus);
             if ($result['suppressed']) {
                 $suppressedCount++;
             }

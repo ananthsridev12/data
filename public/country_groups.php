@@ -3,7 +3,8 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/CountryGroupClassifier.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -18,8 +19,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('danger', 'Both a code and a name are required.');
         } else {
             try {
-                db()->prepare('INSERT INTO country_groups (code, label, countries) VALUES (?, ?, ?)')
-                    ->execute([$code, $label, $countries !== '' ? $countries : null]);
+                db()->prepare('INSERT INTO country_groups (company_id, code, label, countries) VALUES (?, ?, ?, ?)')
+                    ->execute([$scope->companyId, $code, $label, $countries !== '' ? $countries : null]);
                 flash_set('success', "\"{$label}\" added.");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'That code already exists.' : 'Could not add country group.');
@@ -33,13 +34,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($label === '') {
             flash_set('danger', 'Name is required.');
         } else {
-            db()->prepare('UPDATE country_groups SET label = ?, countries = ? WHERE id = ?')
-                ->execute([$label, $countries !== '' ? $countries : null, $id]);
+            db()->prepare('UPDATE country_groups SET label = ?, countries = ? WHERE id = ? AND company_id = ?')
+                ->execute([$label, $countries !== '' ? $countries : null, $id, $scope->companyId]);
             flash_set('success', "\"{$label}\" updated -- run \"Reclassify all leads now\" below to apply country list changes to existing leads.");
         }
     } elseif ($action === 'toggle_active') {
         $id = (int) ($_POST['id'] ?? 0);
-        db()->prepare('UPDATE country_groups SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
+        db()->prepare('UPDATE country_groups SET is_active = NOT is_active WHERE id = ? AND company_id = ?')->execute([$id, $scope->companyId]);
         flash_set('success', 'Status updated.');
     } elseif ($action === 'add_country') {
         // One-click helper for the "Unmapped countries" list below --
@@ -49,8 +50,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // applies it.
         $id = (int) ($_POST['id'] ?? 0);
         $country = trim((string) ($_POST['country'] ?? ''));
-        $stmt = db()->prepare('SELECT label, countries FROM country_groups WHERE id = ?');
-        $stmt->execute([$id]);
+        $stmt = db()->prepare('SELECT label, countries FROM country_groups WHERE id = ? AND company_id = ?');
+        $stmt->execute([$id, $scope->companyId]);
         $cg = $stmt->fetch();
         if (!$cg || $country === '') {
             flash_set('danger', 'Could not add country.');
@@ -60,8 +61,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('info', "\"{$country}\" is already listed on \"{$cg['label']}\".");
             } else {
                 $existing[] = $country;
-                db()->prepare('UPDATE country_groups SET countries = ? WHERE id = ?')
-                    ->execute([implode(', ', $existing), $id]);
+                db()->prepare('UPDATE country_groups SET countries = ? WHERE id = ? AND company_id = ?')
+                    ->execute([implode(', ', $existing), $id, $scope->companyId]);
                 flash_set('success', "\"{$country}\" added to \"{$cg['label']}\" -- run \"Reclassify all leads now\" below to apply it.");
             }
         }
@@ -71,9 +72,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$countryGroups = db()->query('SELECT * FROM country_groups ORDER BY label')->fetchAll();
+$countryGroupsStmt = db()->prepare('SELECT * FROM country_groups WHERE company_id = ? ORDER BY label');
+$countryGroupsStmt->execute([$scope->companyId]);
+$countryGroups = $countryGroupsStmt->fetchAll();
 $activeCountryGroups = array_values(array_filter($countryGroups, static fn (array $cg): bool => (bool) $cg['is_active']));
-$unmappedCount = (int) db()->query("SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND country_group_id IS NULL AND company_country IS NOT NULL AND company_country != ''")->fetchColumn();
+$unmappedCountStmt = db()->prepare("SELECT COUNT(*) FROM leads WHERE company_id = ? AND deleted_at IS NULL AND country_group_id IS NULL AND company_country IS NOT NULL AND company_country != ''");
+$unmappedCountStmt->execute([$scope->companyId]);
+$unmappedCount = (int) $unmappedCountStmt->fetchColumn();
 // Distinct unmapped company_country values, most common first -- so
 // mapping effort goes to the countries affecting the most leads first.
 //
@@ -86,12 +91,16 @@ $unmappedCount = (int) db()->query("SELECT COUNT(*) FROM leads WHERE deleted_at 
 // using the same id-ordered group list (first match wins) that
 // LeadImporter/lead_reclassify_country_groups.php actually classify
 // with, not the label-ordered $activeCountryGroups used for display.
-$classifyOrderCountryGroups = db()->query('SELECT id, countries FROM country_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
-$unmappedCountriesCandidates = db()->query(
+$classifyOrderCountryGroupsStmt = db()->prepare('SELECT id, countries FROM country_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
+$classifyOrderCountryGroupsStmt->execute([$scope->companyId]);
+$classifyOrderCountryGroups = $classifyOrderCountryGroupsStmt->fetchAll();
+$unmappedCountriesCandidatesStmt = db()->prepare(
     "SELECT company_country, COUNT(*) AS cnt FROM leads
-      WHERE deleted_at IS NULL AND country_group_id IS NULL AND company_country IS NOT NULL AND company_country != ''
+      WHERE company_id = ? AND deleted_at IS NULL AND country_group_id IS NULL AND company_country IS NOT NULL AND company_country != ''
       GROUP BY company_country ORDER BY cnt DESC, company_country"
-)->fetchAll();
+);
+$unmappedCountriesCandidatesStmt->execute([$scope->companyId]);
+$unmappedCountriesCandidates = $unmappedCountriesCandidatesStmt->fetchAll();
 $unmappedCountries = [];
 foreach ($unmappedCountriesCandidates as $row) {
     if (CountryGroupClassifier::classify($row['company_country'], $classifyOrderCountryGroups) === null) {

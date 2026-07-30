@@ -50,7 +50,7 @@ foreach ($candidates as $candidate) {
         $invalid++;
         continue;
     }
-    $result = WaveAssigner::suppressByEmail(db(), $email, $user['id'], "Campaign bounce: {$campaignName}", $bounceType);
+    $result = WaveAssigner::suppressByEmail(db(), $email, $user['id'], $scope->companyId, "Campaign bounce: {$campaignName}", $bounceType);
     if ($result['suppressed']) {
         $domains[$result['domain']] = true;
     } else {

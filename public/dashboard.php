@@ -80,7 +80,7 @@ $campaigns = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORD
 $importers = db()->query(
     "SELECT DISTINCT u.id, u.name FROM users u JOIN import_batches ib ON ib.uploaded_by = u.id ORDER BY u.name"
 )->fetchAll();
-$existingTags = TagRepository::all(db());
+$existingTags = TagRepository::all(db(), $scope->companyId);
 
 // Rebuild the current filter query string (minus `page`) for pagination links
 // and for the "export/assign everything matching this filter" hidden fields.

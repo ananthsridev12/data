@@ -4,15 +4,16 @@ require_once __DIR__ . '/../app/includes/LeadImporter.php';
 require_once __DIR__ . '/../app/includes/ImportMapper.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/TagRepository.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
-$admin = require_admin();
-$scope = Scope::fromUser(db(), $admin);
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 $config = require __DIR__ . '/../app/config/config.php';
 $uploadsDir = rtrim($config['uploads_dir'], '/');
 
 $batchId = (int) ($_GET['batch_id'] ?? $_POST['batch_id'] ?? 0);
-$stmt = db()->prepare('SELECT * FROM import_batches WHERE id = ?');
-$stmt->execute([$batchId]);
+$stmt = db()->prepare('SELECT * FROM import_batches WHERE id = ? AND company_id = ?');
+$stmt->execute([$batchId, $scope->companyId]);
 $batch = $stmt->fetch();
 
 if (!$batch) {
@@ -30,15 +31,31 @@ if (in_array($batch['status'], ['completed', 'failed', 'partial'], true)) {
 $sourcePath = $uploadsDir . '/' . $batch['stored_path'];
 $formError = null;
 
-$customFieldRows = db()->query('SELECT field_key, label FROM custom_fields WHERE is_active = 1 ORDER BY label')->fetchAll();
+$customFieldRowsStmt = db()->prepare('SELECT field_key, label FROM custom_fields WHERE is_active = 1 AND company_id = ? ORDER BY label');
+$customFieldRowsStmt->execute([$scope->companyId]);
+$customFieldRows = $customFieldRowsStmt->fetchAll();
 $customFieldLabels = array_column($customFieldRows, 'label', 'field_key');
 
 $lookupOptions = [
     'vertical' => LeadRepository::activeLookupOptions(db(), $scope, 'verticals'),
     'service' => LeadRepository::activeLookupOptions(db(), $scope, 'services'),
 ];
-$campaignOptions = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORDER BY name')->fetchAll();
-$allTags = TagRepository::all(db());
+// Auto-assign target must be a campaign this scope can actually mutate
+// (own campaign, or any campaign for an Admin) -- same rule as every
+// other campaign-mutating action, so an import can't silently drop
+// leads into a campaign the importer doesn't control.
+$campaignOptionsClauses = ['company_id = :scope_company_id', 'is_active = 1'];
+$campaignOptionsParams = ['scope_company_id' => $scope->companyId];
+if (!$scope->isAdmin()) {
+    $campaignOptionsClauses[] = 'saleshandy_account_owner_id = :scope_user_id';
+    $campaignOptionsParams['scope_user_id'] = $scope->userId;
+}
+$campaignOptionsStmt = db()->prepare(
+    'SELECT id, name FROM campaigns WHERE ' . implode(' AND ', $campaignOptionsClauses) . ' ORDER BY name'
+);
+$campaignOptionsStmt->execute($campaignOptionsParams);
+$campaignOptions = $campaignOptionsStmt->fetchAll();
+$allTags = TagRepository::all(db(), $scope->companyId);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confirm_mapping') {
     csrf_verify();
@@ -90,8 +107,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
     $defaultTagNames = [];
     if ($defaultTagIds) {
         $placeholders = implode(',', array_fill(0, count($defaultTagIds), '?'));
-        $tagNameStmt = db()->prepare("SELECT name FROM tags WHERE id IN ({$placeholders})");
-        $tagNameStmt->execute($defaultTagIds);
+        $tagNameStmt = db()->prepare("SELECT name FROM tags WHERE id IN ({$placeholders}) AND company_id = ?");
+        $tagNameStmt->execute([...$defaultTagIds, $scope->companyId]);
         $defaultTagNames = $tagNameStmt->fetchAll(PDO::FETCH_COLUMN);
     }
     $newDefaultTags = array_filter(array_map('trim', explode(',', (string) ($_POST['defaults_tags_new'] ?? ''))));
@@ -115,9 +132,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 
     $assignCampaignId = (int) ($_POST['assign_campaign_id'] ?? 0);
     if ($assignCampaignId > 0) {
-        $campaignCheck = db()->prepare('SELECT id FROM campaigns WHERE id = ? AND is_active = 1');
-        $campaignCheck->execute([$assignCampaignId]);
-        if (!$campaignCheck->fetch()) {
+        $campaignCheck = CampaignAccess::loadVisible(db(), $scope, $assignCampaignId);
+        if (!$campaignCheck || !$campaignCheck['is_active'] || !CampaignAccess::canMutate($scope, $campaignCheck)) {
             $assignCampaignId = 0;
         }
     }
@@ -134,10 +150,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
         $templateSaved = false;
         if ($templateName !== '') {
             $tplStmt = db()->prepare(
-                'INSERT INTO import_field_mappings (name, mapping_json, created_by, last_used_at) VALUES (?, ?, ?, NOW())
+                'INSERT INTO import_field_mappings (company_id, name, mapping_json, created_by, last_used_at) VALUES (?, ?, ?, ?, NOW())
                  ON DUPLICATE KEY UPDATE mapping_json = VALUES(mapping_json), last_used_at = NOW()'
             );
-            $tplStmt->execute([$templateName, $mappingJson, $admin['id']]);
+            $tplStmt->execute([$scope->companyId, $templateName, $mappingJson, $user['id']]);
             $templateSaved = true;
         }
 
@@ -168,7 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'confi
 }
 
 // Refresh in case status changed (e.g. we just flipped it to 'processing' above without redirecting on error path -- re-fetch to be safe).
-$stmt->execute([$batchId]);
+$stmt->execute([$batchId, $scope->companyId]);
 $batch = $stmt->fetch();
 
 // Precompute mapping-screen data (and any flash_set() for a matched template)
@@ -180,7 +196,7 @@ if ($batch['status'] !== 'processing') {
     $headerKeys = ImportMapper::buildHeaderKeys($headers);
 
     $suggestion = ImportMapper::suggestMapping($headers);
-    $template = ImportMapper::findMatchingTemplate(db(), $headerKeys);
+    $template = ImportMapper::findMatchingTemplate(db(), $headerKeys, $scope->companyId);
     if ($template) {
         $suggestion = $template['mapping'];
         flash_set('info', 'Auto-filled from saved mapping "' . $template['name'] . '". Review and adjust if needed.');
@@ -189,7 +205,9 @@ if ($batch['status'] !== 'processing') {
     $postedMapping = $_POST['mapping'] ?? null;
     $postedDefaults = $_POST['defaults'] ?? [];
 
-    $savedTemplates = db()->query('SELECT id, name, mapping_json FROM import_field_mappings ORDER BY name')->fetchAll();
+    $savedTemplatesStmt = db()->prepare('SELECT id, name, mapping_json FROM import_field_mappings WHERE company_id = ? ORDER BY name');
+    $savedTemplatesStmt->execute([$scope->companyId]);
+    $savedTemplates = $savedTemplatesStmt->fetchAll();
 }
 
 render_header('Map columns');

@@ -1,7 +1,9 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: dashboard.php');
@@ -14,13 +16,15 @@ $leadId = (int) ($_POST['lead_id'] ?? 0);
 $returnTo = $_POST['return_to'] ?? 'dashboard.php';
 $values = $_POST['values'] ?? [];
 
-if ($leadId <= 0 || !is_array($values)) {
-    flash_set('danger', 'Invalid update request.');
+if ($leadId <= 0 || !is_array($values) || !LeadRepository::findByIds(db(), $scope, [$leadId])) {
+    flash_set('danger', 'Lead not found.');
     header('Location: ' . $returnTo);
     exit;
 }
 
-$fields = db()->query('SELECT id, field_key FROM custom_fields WHERE is_active = 1')->fetchAll();
+$fieldsStmt = db()->prepare('SELECT id, field_key FROM custom_fields WHERE is_active = 1 AND company_id = ?');
+$fieldsStmt->execute([$scope->companyId]);
+$fields = $fieldsStmt->fetchAll();
 $fieldIds = array_column($fields, 'id', 'field_key');
 
 $upsert = db()->prepare(

@@ -2,8 +2,10 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/ImportMapper.php';
 require_once __DIR__ . '/../app/includes/LeadImporter.php';
+require_once __DIR__ . '/../app/includes/ScopeFilter.php';
 
-require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -18,8 +20,11 @@ csrf_verify();
 @set_time_limit(0);
 
 $batchId = (int) ($_POST['batch_id'] ?? 0);
-$stmt = db()->prepare('SELECT * FROM import_batches WHERE id = ?');
-$stmt->execute([$batchId]);
+$batchClauses = ['ib.id = :batch_id', 'ib.company_id = :scope_company_id'];
+$batchParams = ['batch_id' => $batchId, 'scope_company_id' => $scope->companyId];
+ScopeFilter::applyOwnerScope($batchClauses, $batchParams, $scope, db(), 'ib', 'uploaded_by');
+$stmt = db()->prepare('SELECT ib.* FROM import_batches ib WHERE ' . implode(' AND ', $batchClauses));
+$stmt->execute($batchParams);
 $batch = $stmt->fetch();
 
 if (!$batch) {
@@ -56,6 +61,8 @@ const IMPORT_CHUNK_SIZE = 300;
 $result = LeadImporter::processChunk(
     db(),
     $batchId,
+    (int) $batch['company_id'],
+    (int) $batch['uploaded_by'],
     $sourcePath,
     $batch['file_type'],
     $cachePath,

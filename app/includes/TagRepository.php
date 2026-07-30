@@ -9,21 +9,23 @@
 class TagRepository
 {
     /** @return array<int,array{id:int,name:string,saleshandy_tag_id:?string}> */
-    public static function all(PDO $db): array
+    public static function all(PDO $db, int $companyId): array
     {
-        return $db->query('SELECT id, name, saleshandy_tag_id FROM tags ORDER BY name')->fetchAll();
+        $stmt = $db->prepare('SELECT id, name, saleshandy_tag_id FROM tags WHERE company_id = ? ORDER BY name');
+        $stmt->execute([$companyId]);
+        return $stmt->fetchAll();
     }
 
-    public static function findOrCreateByName(PDO $db, string $name): int
+    public static function findOrCreateByName(PDO $db, string $name, int $companyId): int
     {
         $name = trim($name);
-        $stmt = $db->prepare('SELECT id FROM tags WHERE name = ?');
-        $stmt->execute([$name]);
+        $stmt = $db->prepare('SELECT id FROM tags WHERE name = ? AND company_id = ?');
+        $stmt->execute([$name, $companyId]);
         $id = $stmt->fetchColumn();
         if ($id) {
             return (int) $id;
         }
-        $db->prepare('INSERT INTO tags (name) VALUES (?)')->execute([$name]);
+        $db->prepare('INSERT INTO tags (company_id, name) VALUES (?, ?)')->execute([$companyId, $name]);
         return (int) $db->lastInsertId();
     }
 
@@ -35,10 +37,10 @@ class TagRepository
      * @param array<int,array{id:string,name:string}> $saleshandyTags
      * @return int number of tags created or updated
      */
-    public static function syncFromSaleshandy(PDO $db, array $saleshandyTags): int
+    public static function syncFromSaleshandy(PDO $db, array $saleshandyTags, int $companyId): int
     {
         $stmt = $db->prepare(
-            'INSERT INTO tags (name, saleshandy_tag_id) VALUES (?, ?)
+            'INSERT INTO tags (company_id, name, saleshandy_tag_id) VALUES (?, ?, ?)
              ON DUPLICATE KEY UPDATE saleshandy_tag_id = VALUES(saleshandy_tag_id)'
         );
         $count = 0;
@@ -47,7 +49,7 @@ class TagRepository
             if ($name === '') {
                 continue;
             }
-            $stmt->execute([$name, (string) $tag['id']]);
+            $stmt->execute([$companyId, $name, (string) $tag['id']]);
             $count++;
         }
         return $count;
@@ -77,7 +79,7 @@ class TagRepository
      *
      * @param array<int,string> $tagNames
      */
-    public static function setTagsForLead(PDO $db, int $leadId, array $tagNames): void
+    public static function setTagsForLead(PDO $db, int $leadId, array $tagNames, int $companyId): void
     {
         $tagIds = [];
         foreach ($tagNames as $name) {
@@ -85,7 +87,7 @@ class TagRepository
             if ($name === '') {
                 continue;
             }
-            $tagIds[] = self::findOrCreateByName($db, $name);
+            $tagIds[] = self::findOrCreateByName($db, $name, $companyId);
         }
 
         $db->prepare('DELETE FROM lead_tags WHERE lead_id = ?')->execute([$leadId]);
@@ -105,7 +107,7 @@ class TagRepository
      *
      * @param array<int,string> $tagNames
      */
-    public static function addTagsToLead(PDO $db, int $leadId, array $tagNames): void
+    public static function addTagsToLead(PDO $db, int $leadId, array $tagNames, int $companyId): void
     {
         $insert = $db->prepare('INSERT IGNORE INTO lead_tags (lead_id, tag_id) VALUES (?, ?)');
         foreach ($tagNames as $name) {
@@ -113,7 +115,7 @@ class TagRepository
             if ($name === '') {
                 continue;
             }
-            $insert->execute([$leadId, self::findOrCreateByName($db, $name)]);
+            $insert->execute([$leadId, self::findOrCreateByName($db, $name, $companyId)]);
         }
     }
 
@@ -127,14 +129,14 @@ class TagRepository
      * @return int how many leads actually gained the tag (excludes ones
      *   that already had it, since INSERT IGNORE is a no-op there)
      */
-    public static function addTagToLeadIds(PDO $db, array $leadIds, string $tagName): int
+    public static function addTagToLeadIds(PDO $db, array $leadIds, string $tagName, int $companyId): int
     {
         $leadIds = array_values(array_unique(array_filter(array_map('intval', $leadIds))));
         $tagName = trim($tagName);
         if (!$leadIds || $tagName === '') {
             return 0;
         }
-        $tagId = self::findOrCreateByName($db, $tagName);
+        $tagId = self::findOrCreateByName($db, $tagName, $companyId);
         $insert = $db->prepare('INSERT IGNORE INTO lead_tags (lead_id, tag_id) VALUES (?, ?)');
         $count = 0;
         foreach ($leadIds as $leadId) {

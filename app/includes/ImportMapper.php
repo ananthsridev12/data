@@ -78,12 +78,13 @@ class ImportMapper
      * file's header keys. Returns the template row (with mapping decoded)
      * or null if none matches.
      */
-    public static function findMatchingTemplate(PDO $db, array $headerKeys): ?array
+    public static function findMatchingTemplate(PDO $db, array $headerKeys, int $companyId): ?array
     {
         $sortedNew = $headerKeys;
         sort($sortedNew);
 
-        $stmt = $db->query('SELECT id, name, mapping_json FROM import_field_mappings ORDER BY last_used_at DESC, created_at DESC');
+        $stmt = $db->prepare('SELECT id, name, mapping_json FROM import_field_mappings WHERE company_id = ? ORDER BY last_used_at DESC, created_at DESC');
+        $stmt->execute([$companyId]);
 
         foreach ($stmt as $row) {
             $decoded = json_decode($row['mapping_json'], true);

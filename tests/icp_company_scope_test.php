@@ -5,7 +5,10 @@
 // have violated the NOT NULL constraint on every "Create ICP" click);
 // addLink()/removeLink()/update()/toggleActive()/rebalanceEvenly()/
 // updateLinkPercentages() all reject an id belonging to a different
-// company instead of silently acting on it. Rolled back at the end.
+// company instead of silently acting on it. Uses Admin scopes throughout
+// so only the company boundary is exercised here -- see
+// icp_owner_scope_test.php for the Team Lead/Member self-ownership
+// rules. Rolled back at the end.
 //
 // Usage: php tests/icp_company_scope_test.php
 
@@ -37,6 +40,9 @@ try {
     $adminAId = $mkUser($companyAId, 'admin@a.test');
     $adminBId = $mkUser($companyBId, 'admin@b.test');
 
+    $scopeA = Scope::fromUser($db, ['id' => $adminAId, 'company_id' => $companyAId, 'role' => ROLE_ADMIN, 'team_id' => null]);
+    $scopeB = Scope::fromUser($db, ['id' => $adminBId, 'company_id' => $companyBId, 'role' => ROLE_ADMIN, 'team_id' => null]);
+
     $mkCampaign = function (int $companyId, int $ownerId, string $name) use ($db): int {
         $stmt = $db->prepare('INSERT INTO campaigns (company_id, name, created_by, saleshandy_account_owner_id) VALUES (?, ?, ?, ?)');
         $stmt->execute([$companyId, $name, $ownerId, $ownerId]);
@@ -54,13 +60,13 @@ try {
     $assert($storedCompanyId === $companyAId, 'create() stamps the acting company_id onto the new ICP');
 
     // --- list(): only the acting company's own ICPs.
-    $listA = IcpRepository::list($db, $companyAId);
+    $listA = IcpRepository::list($db, $scopeA);
     $namesA = array_column($listA, 'name');
     $assert(in_array('ICP A', $namesA, true), 'list(): company A sees its own ICP');
     $assert(!in_array('ICP B', $namesA, true), 'list(): company A does NOT see company B\'s ICP');
 
     // --- performanceStats(): same scoping.
-    $statsA = IcpRepository::performanceStats($db, $companyAId);
+    $statsA = IcpRepository::performanceStats($db, $scopeA);
     $statNamesA = array_column($statsA, 'name');
     $assert(in_array('ICP A', $statNamesA, true), 'performanceStats(): company A sees its own ICP');
     $assert(!in_array('ICP B', $statNamesA, true), 'performanceStats(): company A does NOT see company B\'s ICP');
@@ -69,7 +75,7 @@ try {
     // than the ICP, even if both ids are individually real.
     $threw = false;
     try {
-        IcpRepository::addLink($db, $icpAId, $campBId, $companyAId);
+        IcpRepository::addLink($db, $icpAId, $campBId, $scopeA);
     } catch (InvalidArgumentException $ex) {
         $threw = true;
     }
@@ -78,39 +84,39 @@ try {
     // --- addLink()/update()/toggleActive()/rebalanceEvenly()/
     // updateLinkPercentages(): company B cannot act on company A's ICP
     // by id, even though the id is real.
-    IcpRepository::update($db, $icpAId, ['name' => 'Hacked', 'vertical_id' => null, 'role_group_id' => null, 'service_id' => null, 'country_group_id' => null, 'company_country' => '', 'industry' => '', 'seniority' => '', 'employee_count' => ''], $companyBId);
+    IcpRepository::update($db, $icpAId, ['name' => 'Hacked', 'vertical_id' => null, 'role_group_id' => null, 'service_id' => null, 'country_group_id' => null, 'company_country' => '', 'industry' => '', 'seniority' => '', 'employee_count' => ''], $scopeB);
     $nameAfter = $db->query("SELECT name FROM icp_segments WHERE id = {$icpAId}")->fetchColumn();
     $assert($nameAfter === 'ICP A', 'update(): company B cannot rename company A\'s ICP by id');
 
-    IcpRepository::toggleActive($db, $icpAId, $companyBId);
+    IcpRepository::toggleActive($db, $icpAId, $scopeB);
     $activeAfter = (int) $db->query("SELECT is_active FROM icp_segments WHERE id = {$icpAId}")->fetchColumn();
     $assert($activeAfter === 1, 'toggleActive(): company B cannot toggle company A\'s ICP by id');
 
     $threw2 = false;
     try {
-        IcpRepository::addLink($db, $icpAId, $campAId, $companyBId);
+        IcpRepository::addLink($db, $icpAId, $campAId, $scopeB);
     } catch (InvalidArgumentException $ex) {
         $threw2 = true;
     }
     $assert($threw2, 'addLink(): company B cannot link a campaign onto company A\'s ICP by id');
 
     // Legitimately link Campaign A onto ICP A (same company both sides).
-    IcpRepository::addLink($db, $icpAId, $campAId, $companyAId);
+    IcpRepository::addLink($db, $icpAId, $campAId, $scopeA);
     $linkCountAfterLegit = (int) $db->query("SELECT COUNT(*) FROM icp_campaign_links WHERE icp_id = {$icpAId}")->fetchColumn();
     $assert($linkCountAfterLegit === 1, 'addLink(): same-company link succeeds');
 
     $linkId = (int) $db->query("SELECT id FROM icp_campaign_links WHERE icp_id = {$icpAId} LIMIT 1")->fetchColumn();
 
-    IcpRepository::removeLink($db, $linkId, $companyBId);
+    IcpRepository::removeLink($db, $linkId, $scopeB);
     $linkStillThere = (int) $db->query("SELECT COUNT(*) FROM icp_campaign_links WHERE id = {$linkId}")->fetchColumn();
     $assert($linkStillThere === 1, 'removeLink(): company B cannot remove company A\'s link by id');
 
-    IcpRepository::rebalanceEvenly($db, $icpAId, $companyBId);
+    IcpRepository::rebalanceEvenly($db, $icpAId, $scopeB);
     // No assertion needed beyond "did not throw" -- rebalanceEvenly()
     // silently no-ops for a non-owning company, verified by removeLink()
     // above already confirming the link itself is untouched.
 
-    $notOwnedResult = IcpRepository::updateLinkPercentages($db, $icpAId, [$linkId => 100], $companyBId);
+    $notOwnedResult = IcpRepository::updateLinkPercentages($db, $icpAId, [$linkId => 100], $scopeB);
     $assert($notOwnedResult === false, 'updateLinkPercentages(): company B cannot update company A\'s split by id');
 
     if ($failures) {

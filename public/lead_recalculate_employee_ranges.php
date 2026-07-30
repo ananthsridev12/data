@@ -2,7 +2,8 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: lists.php');
@@ -17,7 +18,8 @@ $checked = 0;
 $changed = 0;
 
 $updateStmt = $db->prepare('UPDATE leads SET employee_count_range = ? WHERE id = ?');
-$stmt = $db->query("SELECT id, employee_count, employee_count_range FROM leads WHERE deleted_at IS NULL AND employee_count IS NOT NULL AND employee_count != ''");
+$stmt = $db->prepare("SELECT id, employee_count, employee_count_range FROM leads WHERE company_id = ? AND deleted_at IS NULL AND employee_count IS NOT NULL AND employee_count != ''");
+$stmt->execute([$scope->companyId]);
 
 while ($lead = $stmt->fetch()) {
     $checked++;

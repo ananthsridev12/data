@@ -2,7 +2,8 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/config/constants.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 function slugify_field_key(string $label): string
 {
@@ -26,8 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('danger', "\"{$label}\" collides with a built-in field name -- choose a different name.");
         } else {
             try {
-                db()->prepare('INSERT INTO custom_fields (field_key, label, created_by) VALUES (?, ?, ?)')
-                    ->execute([$key, $label, $admin['id']]);
+                db()->prepare('INSERT INTO custom_fields (company_id, field_key, label, created_by) VALUES (?, ?, ?, ?)')
+                    ->execute([$scope->companyId, $key, $label, $user['id']]);
                 flash_set('success', "Custom field \"{$label}\" added.");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'A field with that name already exists.' : 'Could not create field.');
@@ -35,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'toggle_active') {
         $id = (int) ($_POST['id'] ?? 0);
-        db()->prepare('UPDATE custom_fields SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
+        db()->prepare('UPDATE custom_fields SET is_active = NOT is_active WHERE id = ? AND company_id = ?')->execute([$id, $scope->companyId]);
         flash_set('success', 'Field status updated.');
     }
 
@@ -43,7 +44,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$fields = db()->query('SELECT * FROM custom_fields ORDER BY label')->fetchAll();
+$fieldsStmt = db()->prepare('SELECT * FROM custom_fields WHERE company_id = ? ORDER BY label');
+$fieldsStmt->execute([$scope->companyId]);
+$fields = $fieldsStmt->fetchAll();
 
 render_header('Custom fields');
 ?>

@@ -1,8 +1,11 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
+require_once __DIR__ . '/../app/includes/LeadRepository.php';
+require_once __DIR__ . '/../app/includes/CampaignAccess.php';
 
 $user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: dashboard.php');
@@ -13,7 +16,7 @@ csrf_verify();
 
 $returnTo = (string) ($_POST['return_to'] ?? 'dashboard.php');
 $campaignId = (int) ($_POST['campaign_id'] ?? 0);
-$leadIds = array_values(array_unique(array_map('intval', (array) ($_POST['lead_ids'] ?? []))));
+$requestedLeadIds = array_values(array_unique(array_map('intval', (array) ($_POST['lead_ids'] ?? []))));
 
 if (!$campaignId) {
     flash_set('danger', 'Pick a campaign to add the checked leads to.');
@@ -21,18 +24,26 @@ if (!$campaignId) {
     exit;
 }
 
-if (!$leadIds) {
+if (!$requestedLeadIds) {
     flash_set('danger', 'No leads were checked.');
     header('Location: ' . $returnTo);
     exit;
 }
 
-$campStmt = db()->prepare('SELECT id, name FROM campaigns WHERE id = ?');
-$campStmt->execute([$campaignId]);
-$campaign = $campStmt->fetch();
-
-if (!$campaign) {
+$campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
+if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
     flash_set('danger', 'Campaign not found.');
+    header('Location: ' . $returnTo);
+    exit;
+}
+
+// Only leads actually visible to the acting scope -- a checked id for a
+// lead outside their company/ownership is silently dropped rather than
+// trusted from the POST body.
+$leadIds = array_map('intval', array_column(LeadRepository::findByIds(db(), $scope, $requestedLeadIds), 'id'));
+
+if (!$leadIds) {
+    flash_set('danger', 'No leads were checked.');
     header('Location: ' . $returnTo);
     exit;
 }

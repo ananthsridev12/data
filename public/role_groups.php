@@ -3,8 +3,8 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/RoleGroupClassifier.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
-$admin = require_admin();
-$scope = Scope::fromUser(db(), $admin);
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
@@ -19,8 +19,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('danger', 'Both a code and a name are required.');
         } else {
             try {
-                db()->prepare('INSERT INTO role_groups (code, label, keywords) VALUES (?, ?, ?)')
-                    ->execute([$code, $label, $keywords !== '' ? $keywords : null]);
+                db()->prepare('INSERT INTO role_groups (company_id, code, label, keywords) VALUES (?, ?, ?, ?)')
+                    ->execute([$scope->companyId, $code, $label, $keywords !== '' ? $keywords : null]);
                 flash_set('success', "\"{$label}\" added.");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'That code already exists.' : 'Could not add role group.');
@@ -34,13 +34,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($label === '') {
             flash_set('danger', 'Name is required.');
         } else {
-            db()->prepare('UPDATE role_groups SET label = ?, keywords = ? WHERE id = ?')
-                ->execute([$label, $keywords !== '' ? $keywords : null, $id]);
+            db()->prepare('UPDATE role_groups SET label = ?, keywords = ? WHERE id = ? AND company_id = ?')
+                ->execute([$label, $keywords !== '' ? $keywords : null, $id, $scope->companyId]);
             flash_set('success', "\"{$label}\" updated -- run \"Reclassify all leads now\" below to apply keyword changes to existing leads.");
         }
     } elseif ($action === 'toggle_active') {
         $id = (int) ($_POST['id'] ?? 0);
-        db()->prepare('UPDATE role_groups SET is_active = NOT is_active WHERE id = ?')->execute([$id]);
+        db()->prepare('UPDATE role_groups SET is_active = NOT is_active WHERE id = ? AND company_id = ?')->execute([$id, $scope->companyId]);
         flash_set('success', 'Status updated.');
     } elseif ($action === 'add_keyword') {
         // One-click helper for the "Unclassified titles" list below --
@@ -50,8 +50,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // "Reclassify all leads now" still applies it.
         $id = (int) ($_POST['id'] ?? 0);
         $keyword = trim((string) ($_POST['keyword'] ?? ''));
-        $stmt = db()->prepare('SELECT label, keywords FROM role_groups WHERE id = ?');
-        $stmt->execute([$id]);
+        $stmt = db()->prepare('SELECT label, keywords FROM role_groups WHERE id = ? AND company_id = ?');
+        $stmt->execute([$id, $scope->companyId]);
         $rg = $stmt->fetch();
         if (!$rg || $keyword === '') {
             flash_set('danger', 'Could not add keyword.');
@@ -61,8 +61,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('info', "\"{$keyword}\" is already a keyword on \"{$rg['label']}\".");
             } else {
                 $existing[] = $keyword;
-                db()->prepare('UPDATE role_groups SET keywords = ? WHERE id = ?')
-                    ->execute([implode(', ', $existing), $id]);
+                db()->prepare('UPDATE role_groups SET keywords = ? WHERE id = ? AND company_id = ?')
+                    ->execute([implode(', ', $existing), $id, $scope->companyId]);
                 flash_set('success', "\"{$keyword}\" added to \"{$rg['label']}\" -- run \"Reclassify all leads now\" below to apply it.");
             }
         }
@@ -111,9 +111,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        $findStmt = db()->prepare('SELECT id FROM role_groups WHERE code = ?');
-        $insertStmt = db()->prepare('INSERT INTO role_groups (code, label, keywords) VALUES (?, ?, ?)');
-        $updateStmt = db()->prepare('UPDATE role_groups SET label = ?, keywords = ? WHERE id = ?');
+        $findStmt = db()->prepare('SELECT id FROM role_groups WHERE code = ? AND company_id = ?');
+        $insertStmt = db()->prepare('INSERT INTO role_groups (company_id, code, label, keywords) VALUES (?, ?, ?, ?)');
+        $updateStmt = db()->prepare('UPDATE role_groups SET label = ?, keywords = ? WHERE id = ? AND company_id = ?');
 
         $created = 0;
         $updated = 0;
@@ -128,13 +128,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 continue;
             }
 
-            $findStmt->execute([$code]);
+            $findStmt->execute([$code, $scope->companyId]);
             $existingId = $findStmt->fetchColumn();
             if ($existingId) {
-                $updateStmt->execute([$label, $keywords !== '' ? $keywords : null, $existingId]);
+                $updateStmt->execute([$label, $keywords !== '' ? $keywords : null, $existingId, $scope->companyId]);
                 $updated++;
             } else {
-                $insertStmt->execute([$code, $label, $keywords !== '' ? $keywords : null]);
+                $insertStmt->execute([$scope->companyId, $code, $label, $keywords !== '' ? $keywords : null]);
                 $created++;
             }
         }
@@ -151,9 +151,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$roleGroups = db()->query('SELECT * FROM role_groups ORDER BY label')->fetchAll();
+$roleGroupsStmt = db()->prepare('SELECT * FROM role_groups WHERE company_id = ? ORDER BY label');
+$roleGroupsStmt->execute([$scope->companyId]);
+$roleGroups = $roleGroupsStmt->fetchAll();
 $activeRoleGroups = array_values(array_filter($roleGroups, static fn (array $rg): bool => (bool) $rg['is_active']));
-$unclassifiedCount = (int) db()->query("SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL AND role_group_id IS NULL AND title IS NOT NULL AND title != ''")->fetchColumn();
+$unclassifiedCountStmt = db()->prepare("SELECT COUNT(*) FROM leads WHERE company_id = ? AND deleted_at IS NULL AND role_group_id IS NULL AND title IS NOT NULL AND title != ''");
+$unclassifiedCountStmt->execute([$scope->companyId]);
+$unclassifiedCount = (int) $unclassifiedCountStmt->fetchColumn();
 // Distinct unclassified titles, most common first -- so mapping effort
 // goes to the titles affecting the most leads first, and the raw text
 // is right there to copy/pick into an active group's keywords via the
@@ -168,12 +172,16 @@ $unclassifiedCount = (int) db()->query("SELECT COUNT(*) FROM leads WHERE deleted
 // using the same id-ordered group list (first match wins) that
 // LeadImporter/lead_reclassify_roles.php actually classify with, not the
 // label-ordered $activeRoleGroups used for this page's own display.
-$classifyOrderRoleGroups = db()->query('SELECT id, keywords FROM role_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
-$unclassifiedTitlesCandidates = db()->query(
+$classifyOrderRoleGroupsStmt = db()->prepare('SELECT id, keywords FROM role_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
+$classifyOrderRoleGroupsStmt->execute([$scope->companyId]);
+$classifyOrderRoleGroups = $classifyOrderRoleGroupsStmt->fetchAll();
+$unclassifiedTitlesCandidatesStmt = db()->prepare(
     "SELECT title, COUNT(*) AS cnt FROM leads
-      WHERE deleted_at IS NULL AND role_group_id IS NULL AND title IS NOT NULL AND title != ''
+      WHERE company_id = ? AND deleted_at IS NULL AND role_group_id IS NULL AND title IS NOT NULL AND title != ''
       GROUP BY title ORDER BY cnt DESC, title"
-)->fetchAll();
+);
+$unclassifiedTitlesCandidatesStmt->execute([$scope->companyId]);
+$unclassifiedTitlesCandidates = $unclassifiedTitlesCandidatesStmt->fetchAll();
 $unclassifiedTitles = [];
 foreach ($unclassifiedTitlesCandidates as $row) {
     if (RoleGroupClassifier::classify($row['title'], $classifyOrderRoleGroups) === null) {

@@ -2,7 +2,8 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/CountryGroupClassifier.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: country_groups.php');
@@ -13,14 +14,17 @@ csrf_verify();
 
 $db = db();
 
-$groups = $db->query('SELECT id, countries FROM country_groups WHERE is_active = 1 ORDER BY id')->fetchAll();
+$groupsStmt = $db->prepare('SELECT id, countries FROM country_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
+$groupsStmt->execute([$scope->companyId]);
+$groups = $groupsStmt->fetchAll();
 
 $checked = 0;
 $changed = 0;
 $nowUnmapped = 0;
 
 $updateStmt = $db->prepare('UPDATE leads SET country_group_id = ? WHERE id = ?');
-$stmt = $db->query("SELECT id, company_country, country_group_id FROM leads WHERE deleted_at IS NULL AND company_country IS NOT NULL AND company_country != ''");
+$stmt = $db->prepare("SELECT id, company_country, country_group_id FROM leads WHERE company_id = ? AND deleted_at IS NULL AND company_country IS NOT NULL AND company_country != ''");
+$stmt->execute([$scope->companyId]);
 
 while ($lead = $stmt->fetch()) {
     $checked++;

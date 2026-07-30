@@ -211,7 +211,7 @@ $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 $roleGroups = LeadRepository::activeLookupOptions(db(), $scope, 'role_groups');
 $countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
-$existingTags = TagRepository::all(db());
+$existingTags = TagRepository::all(db(), $scope->companyId);
 
 render_header('Select leads');
 ?>

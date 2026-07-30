@@ -1,12 +1,21 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/../app/includes/ScopeFilter.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 $perPage = 50;
 $page = max(1, (int) ($_GET['page'] ?? 1));
 
-$total = (int) db()->query('SELECT COUNT(*) FROM leads WHERE deleted_at IS NOT NULL')->fetchColumn();
+$deletedClauses = ['l.company_id = :scope_company_id', 'l.deleted_at IS NOT NULL'];
+$deletedParams = ['scope_company_id' => $scope->companyId];
+ScopeFilter::applyOwnerScope($deletedClauses, $deletedParams, $scope, db(), 'l');
+$deletedWhere = implode(' AND ', $deletedClauses);
+
+$countStmt = db()->prepare("SELECT COUNT(*) FROM leads l WHERE {$deletedWhere}");
+$countStmt->execute($deletedParams);
+$total = (int) $countStmt->fetchColumn();
 $totalPages = max(1, (int) ceil($total / $perPage));
 $page = min($page, $totalPages);
 $offset = ($page - 1) * $perPage;
@@ -15,11 +24,11 @@ $stmt = db()->prepare(
     "SELECT l.id, l.na_company_name, l.first_name, l.last_name, l.email, l.deleted_at, u.name AS deleted_by_name
        FROM leads l
        LEFT JOIN users u ON u.id = l.deleted_by
-      WHERE l.deleted_at IS NOT NULL
+      WHERE {$deletedWhere}
       ORDER BY l.deleted_at DESC
       LIMIT {$perPage} OFFSET {$offset}"
 );
-$stmt->execute();
+$stmt->execute($deletedParams);
 $leads = $stmt->fetchAll();
 
 render_header('Deleted leads');

@@ -2,9 +2,10 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/IcpRepository.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
-$icps = IcpRepository::performanceStats(db(), (int) $admin['company_id']);
+$icps = IcpRepository::performanceStats(db(), $scope);
 
 $pct = static function (int $numerator, int $denominator): string {
     if ($denominator === 0) {

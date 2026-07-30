@@ -910,7 +910,7 @@ class SaleshandyClient
                 if ($row['bounced']) {
                     $status = 'Bounced';
                     $stats['bounced']++;
-                    WaveAssigner::suppressByEmail($db, $email, $userId, "Saleshandy sync: {$campaign['name']}", $status);
+                    WaveAssigner::suppressByEmail($db, $email, $userId, (int) $campaign['company_id'], "Saleshandy sync: {$campaign['name']}", $status);
                 } elseif ($row['replied']) {
                     $status = 'Replied';
                     $stats['replied']++;
@@ -1120,7 +1120,7 @@ class SaleshandyClient
             $stats['assignments_created']++;
 
             if ($row['bounced']) {
-                WaveAssigner::suppressByEmail($db, $email, $userId, "Saleshandy pull-in: {$campaign['name']}", 'Bounced');
+                WaveAssigner::suppressByEmail($db, $email, $userId, (int) $campaign['company_id'], "Saleshandy pull-in: {$campaign['name']}", 'Bounced');
             }
         }
 
@@ -1311,7 +1311,7 @@ class SaleshandyClient
             if ($row['bounced']) {
                 $newStatus = 'Bounced';
                 $stats['bounced']++;
-                WaveAssigner::suppressByEmail($db, $email, $userId, "Saleshandy backfill: {$campaign['name']}", $newStatus);
+                WaveAssigner::suppressByEmail($db, $email, $userId, (int) $campaign['company_id'], "Saleshandy backfill: {$campaign['name']}", $newStatus);
             } elseif ($row['replied']) {
                 $newStatus = 'Replied';
                 $stats['replied']++;

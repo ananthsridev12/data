@@ -2,15 +2,18 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 
-$admin = require_admin();
+$user = require_login();
+$scope = Scope::fromUser(db(), $user);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
 
     $checked = array_flip($_POST['suppresses'] ?? []);
-    $stmt = db()->prepare('UPDATE bounce_type_suppression_settings SET suppresses = ? WHERE bounce_type = ?');
-    foreach (db()->query('SELECT bounce_type FROM bounce_type_suppression_settings')->fetchAll(PDO::FETCH_COLUMN) as $bounceType) {
-        $stmt->execute([isset($checked[$bounceType]) ? 1 : 0, $bounceType]);
+    $bounceTypesStmt = db()->prepare('SELECT bounce_type FROM bounce_type_suppression_settings WHERE company_id = ?');
+    $bounceTypesStmt->execute([$scope->companyId]);
+    $stmt = db()->prepare('UPDATE bounce_type_suppression_settings SET suppresses = ? WHERE bounce_type = ? AND company_id = ?');
+    foreach ($bounceTypesStmt->fetchAll(PDO::FETCH_COLUMN) as $bounceType) {
+        $stmt->execute([isset($checked[$bounceType]) ? 1 : 0, $bounceType, $scope->companyId]);
     }
 
     flash_set('success', 'Bounce suppression settings saved.');
@@ -18,7 +21,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-$settings = db()->query('SELECT bounce_type, suppresses FROM bounce_type_suppression_settings ORDER BY bounce_type')->fetchAll();
+$settingsStmt = db()->prepare('SELECT bounce_type, suppresses FROM bounce_type_suppression_settings WHERE company_id = ? ORDER BY bounce_type');
+$settingsStmt->execute([$scope->companyId]);
+$settings = $settingsStmt->fetchAll();
 
 render_header('Bounce settings');
 ?>
