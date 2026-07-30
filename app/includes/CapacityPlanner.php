@@ -43,16 +43,34 @@ final class CapacityPlanner
             ->execute([$active, $ownerId]);
     }
 
-    /** Refreshes one campaign's step count/cadence from its linked sequence. */
+    /**
+     * Refreshes one campaign's step count/cadence/per-step schedule from
+     * its linked sequence. Only automated EMAIL steps (executionType 1)
+     * count -- a LinkedIn/call/WhatsApp/custom (task-based) step in the
+     * same sequence doesn't consume email-account send capacity, so
+     * including it would inflate the step count and skew every
+     * downstream capacity estimate.
+     */
     public static function refreshCampaign(PDO $db, SaleshandyClient $client, array $campaign): void
     {
-        $steps = $client->listSequenceSteps($campaign['saleshandy_sequence_id']);
-        $cadenceDays = 0;
-        foreach ($steps as $step) {
-            $cadenceDays = max($cadenceDays, (int) ($step['relativeDays'] ?? 0));
-        }
-        $db->prepare('UPDATE campaigns SET saleshandy_step_count = ?, saleshandy_cadence_days = ?, saleshandy_capacity_synced_at = NOW() WHERE id = ?')
-            ->execute([count($steps), $cadenceDays, $campaign['id']]);
+        $allSteps = $client->listSequenceSteps($campaign['saleshandy_sequence_id']);
+        $emailSteps = array_values(array_filter($allSteps, static fn(array $s) => (int) ($s['executionType'] ?? 1) === 1));
+        usort($emailSteps, static fn(array $a, array $b) => ($a['number'] ?? 0) <=> ($b['number'] ?? 0));
+
+        // Step NUMBER is kept alongside its day-offset, not just a plain
+        // offset list -- lead_campaign_assignments.saleshandy_current_step
+        // refers to Saleshandy's own step numbering, which can have gaps
+        // once non-email steps are filtered out of this array (see
+        // CapacityPlanner::forecast()).
+        $schedule = array_map(
+            static fn(array $s) => ['number' => (int) ($s['number'] ?? 0), 'days' => (int) ($s['relativeDays'] ?? 0)],
+            $emailSteps
+        );
+        $cadenceDays = $schedule ? max(array_column($schedule, 'days')) : 0;
+
+        $db->prepare(
+            'UPDATE campaigns SET saleshandy_step_count = ?, saleshandy_cadence_days = ?, saleshandy_step_schedule_json = ?, saleshandy_capacity_synced_at = NOW() WHERE id = ?'
+        )->execute([count($schedule), $cadenceDays, json_encode($schedule), $campaign['id']]);
     }
 
     /**
@@ -216,5 +234,185 @@ final class CapacityPlanner
             ],
             'campaigns' => $campaigns,
         ];
+    }
+
+    /**
+     * Day-by-day send forecast for the next $days days (today included):
+     * how many emails are actually due to go out each day, and the
+     * resulting capacity balance. Two sources feed each day's total:
+     *
+     *  - IN-FLIGHT leads already enrolled (delivery_status Active/Paused)
+     *    -- their remaining touches are projected from real data
+     *    (saleshandy_pushed_at as the sequence start date,
+     *    saleshandy_current_step as how far they've gotten) against the
+     *    campaign's actual per-step schedule. A touch that's already
+     *    overdue (before today, still unsent per our last sync) is
+     *    bucketed into today rather than a past date, since it's about
+     *    to go out.
+     *  - PLANNED new-lead cohorts -- a what-if: leads not yet pushed
+     *    (delivery_status NULL) enrolled at $plannedDailyIntakeByCampaignId
+     *    leads/day starting today (defaulting to that campaign's own
+     *    plan()-computed sustainable rate), each cohort's own full step
+     *    ripple projected the same way from its (simulated) start date.
+     *
+     * Capacity is the same pooled-per-owner total plan() already
+     * computes, shown constant across every day in the horizon --
+     * Saleshandy doesn't expose any day-of-week variation to plan
+     * around.
+     *
+     * @param array<int,int> $plannedDailyIntakeByCampaignId campaign_id => leads/day to enroll starting today
+     * @return array{dates:string[],consolidated:array<string,array>,campaigns:array<int,array>}
+     */
+    public static function forecast(PDO $db, Scope $scope, int $days, array $plannedDailyIntakeByCampaignId = []): array
+    {
+        $today = new DateTimeImmutable('today');
+        $horizonEnd = $today->modify('+' . ($days - 1) . ' day');
+        $dates = [];
+        for ($i = 0; $i < $days; $i++) {
+            $dates[] = $today->modify("+{$i} day")->format('Y-m-d');
+        }
+
+        $plan = self::plan($db, $scope);
+        $totalDailyCapacity = $plan['summary']['total_daily_capacity'];
+
+        $campaignMeta = [];
+        foreach ($plan['campaigns'] as $c) {
+            $campaignMeta[$c['id']] = [
+                'name' => $c['name'],
+                'owner_name' => $c['owner_name'],
+                'suggested_rate' => $c['max_new_leads_per_day'] !== null ? (int) floor($c['max_new_leads_per_day']) : 0,
+                'schedule' => null,
+                'not_started_backlog' => 0,
+            ];
+        }
+
+        $emptyDay = static fn(): array => ['in_flight' => 0, 'new_cohort' => 0];
+        $byDateConsolidated = array_combine($dates, array_map($emptyDay, $dates));
+        $byCampaignDate = [];
+        foreach (array_keys($campaignMeta) as $id) {
+            $byCampaignDate[$id] = array_combine($dates, array_map($emptyDay, $dates));
+        }
+
+        if (!$campaignMeta) {
+            $consolidated = [];
+            foreach ($dates as $d) {
+                $consolidated[$d] = ['in_flight' => 0, 'new_cohort' => 0, 'total' => 0, 'capacity' => $totalDailyCapacity, 'balance' => $totalDailyCapacity];
+            }
+            return ['dates' => $dates, 'consolidated' => $consolidated, 'campaigns' => []];
+        }
+
+        $idList = implode(',', array_map('intval', array_keys($campaignMeta)));
+
+        $schedStmt = $db->query("SELECT id, saleshandy_step_schedule_json FROM campaigns WHERE id IN ({$idList})");
+        foreach ($schedStmt->fetchAll() as $row) {
+            $decoded = $row['saleshandy_step_schedule_json'] !== null ? json_decode((string) $row['saleshandy_step_schedule_json'], true) : null;
+            $campaignMeta[(int) $row['id']]['schedule'] = is_array($decoded) && $decoded ? $decoded : null;
+        }
+
+        $backlogStmt = $db->query(
+            "SELECT campaign_id, SUM(CASE WHEN delivery_status IS NULL THEN 1 ELSE 0 END) AS not_started
+               FROM lead_campaign_assignments WHERE campaign_id IN ({$idList}) GROUP BY campaign_id"
+        );
+        foreach ($backlogStmt->fetchAll() as $row) {
+            $campaignMeta[(int) $row['campaign_id']]['not_started_backlog'] = (int) $row['not_started'];
+        }
+
+        // --- In-flight leads: project remaining touches from real
+        // pushed_at + current_step + this campaign's actual step schedule.
+        $inFlightStmt = $db->query(
+            "SELECT campaign_id, saleshandy_pushed_at, saleshandy_current_step
+                 FROM lead_campaign_assignments
+                WHERE campaign_id IN ({$idList}) AND delivery_status IN ('Active', 'Paused') AND saleshandy_pushed_at IS NOT NULL"
+        );
+        foreach ($inFlightStmt->fetchAll() as $row) {
+            $campaignId = (int) $row['campaign_id'];
+            $schedule = $campaignMeta[$campaignId]['schedule'];
+            if (!$schedule) {
+                continue; // not synced yet -- can't project without real step offsets
+            }
+            $startDate = new DateTimeImmutable(date('Y-m-d', strtotime((string) $row['saleshandy_pushed_at'])));
+            $currentStep = (int) ($row['saleshandy_current_step'] ?? 0);
+            foreach ($schedule as $step) {
+                if ((int) $step['number'] <= $currentStep) {
+                    continue; // already sent
+                }
+                $due = $startDate->modify('+' . (int) $step['days'] . ' day');
+                if ($due < $today) {
+                    $due = $today; // overdue per our last sync -- about to go out
+                }
+                if ($due > $horizonEnd) {
+                    continue;
+                }
+                $dateKey = $due->format('Y-m-d');
+                $byDateConsolidated[$dateKey]['in_flight']++;
+                $byCampaignDate[$campaignId][$dateKey]['in_flight']++;
+            }
+        }
+
+        // --- Planned new-lead cohorts: simulate enrolling
+        // min(rate, remaining not-yet-pushed backlog) leads each day,
+        // starting today, projecting each cohort's own full step ripple.
+        foreach ($campaignMeta as $campaignId => $meta) {
+            $schedule = $meta['schedule'];
+            if (!$schedule) {
+                continue;
+            }
+            $rate = $plannedDailyIntakeByCampaignId[$campaignId] ?? max(0, $meta['suggested_rate']);
+            $remaining = $meta['not_started_backlog'];
+            if ($rate <= 0 || $remaining <= 0) {
+                continue;
+            }
+            foreach ($dates as $dateStr) {
+                if ($remaining <= 0) {
+                    break;
+                }
+                $enrolled = min($rate, $remaining);
+                $remaining -= $enrolled;
+                $cohortStart = new DateTimeImmutable($dateStr);
+                foreach ($schedule as $step) {
+                    $due = $cohortStart->modify('+' . (int) $step['days'] . ' day');
+                    if ($due > $horizonEnd) {
+                        continue;
+                    }
+                    $dateKey = $due->format('Y-m-d');
+                    $byDateConsolidated[$dateKey]['new_cohort'] += $enrolled;
+                    $byCampaignDate[$campaignId][$dateKey]['new_cohort'] += $enrolled;
+                }
+            }
+        }
+
+        $consolidated = [];
+        foreach ($dates as $dateStr) {
+            $inFlight = $byDateConsolidated[$dateStr]['in_flight'];
+            $newCohort = $byDateConsolidated[$dateStr]['new_cohort'];
+            $consolidated[$dateStr] = [
+                'in_flight' => $inFlight,
+                'new_cohort' => $newCohort,
+                'total' => $inFlight + $newCohort,
+                'capacity' => $totalDailyCapacity,
+                'balance' => $totalDailyCapacity - ($inFlight + $newCohort),
+            ];
+        }
+
+        $campaignsOut = [];
+        foreach ($campaignMeta as $id => $meta) {
+            $rows = [];
+            foreach ($dates as $dateStr) {
+                $inFlight = $byCampaignDate[$id][$dateStr]['in_flight'];
+                $newCohort = $byCampaignDate[$id][$dateStr]['new_cohort'];
+                $rows[$dateStr] = ['in_flight' => $inFlight, 'new_cohort' => $newCohort, 'total' => $inFlight + $newCohort];
+            }
+            $campaignsOut[$id] = [
+                'name' => $meta['name'],
+                'owner_name' => $meta['owner_name'],
+                'suggested_rate' => max(0, $meta['suggested_rate']),
+                'planned_rate' => $plannedDailyIntakeByCampaignId[$id] ?? max(0, $meta['suggested_rate']),
+                'not_started_backlog' => $meta['not_started_backlog'],
+                'needs_sync' => $meta['schedule'] === null,
+                'by_date' => $rows,
+            ];
+        }
+
+        return ['dates' => $dates, 'consolidated' => $consolidated, 'campaigns' => $campaignsOut];
     }
 }
