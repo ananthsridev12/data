@@ -67,12 +67,12 @@ try {
         $stmt->execute([$companyId, 'X Co', 'Cat', 'Prod', 'First', 'Last', 'Title', 'X Co', $email, 'Industry', 'https://linkedin.test', 'https://x.test', 'https://linkedin.test/co', 'US']);
         return (int) $db->lastInsertId();
     };
-    $mkAssignment = function (int $leadId, int $campaignId, ?string $deliveryStatus, ?string $pushedAt, ?int $currentStep) use ($db, $adminId): void {
+    $mkAssignment = function (int $leadId, int $campaignId, ?string $deliveryStatus, ?string $pushedAt, ?int $currentStep, ?string $syncedAt = null) use ($db, $adminId): void {
         $stmt = $db->prepare(
-            'INSERT INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by, delivery_status, saleshandy_pushed_at, saleshandy_current_step)
-             VALUES (?, ?, ?, ?, ?, ?)'
+            'INSERT INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by, delivery_status, saleshandy_pushed_at, saleshandy_current_step, saleshandy_synced_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)'
         );
-        $stmt->execute([$leadId, $campaignId, $adminId, $deliveryStatus, $pushedAt, $currentStep]);
+        $stmt->execute([$leadId, $campaignId, $adminId, $deliveryStatus, $pushedAt, $currentStep, $syncedAt]);
     };
 
     // --- Campaign 1: D0/D2/D6 schedule, in-flight projection only.
@@ -80,7 +80,8 @@ try {
     $camp1 = $mkCampaign('In-Flight Campaign', $schedule1);
 
     // Lead X: enrolled today, step 1 already sent -- remaining: step2 due today+2, step3 due today+6.
-    $mkAssignment($mkLead('x@x.test'), $camp1, 'Active', $fmt($today) . ' 09:00:00', 1);
+    // Synced 2 hours ago -- the freshest of camp1's two assignments below.
+    $mkAssignment($mkLead('x@x.test'), $camp1, 'Active', $fmt($today) . ' 09:00:00', 1, date('Y-m-d H:i:s', strtotime('-2 hours')));
     // Lead Y: enrolled 10 days ago, only step1 sent -- step2 due 10 days ago + 2 = 8 days overdue -> clamped to today.
     // step3 due 10 days ago + 6 = 4 days overdue -> also clamped to today.
     $mkAssignment($mkLead('y@x.test'), $camp1, 'Active', $fmt($today->modify('-10 day')) . ' 09:00:00', 1);
@@ -96,6 +97,13 @@ try {
     $assert($byDate1[$fmt($today->modify('+6 day'))]['in_flight'] === 1, "Lead X's step3 (D+6) lands on today+6");
     $totalInFlight1 = array_sum(array_column($byDate1, 'in_flight'));
     $assert($totalInFlight1 === 4, "Exactly 4 projected touches total (2 remaining x 2 in-flight leads), Replied lead contributes none (got {$totalInFlight1})");
+
+    // --- lead_data_synced_at: MAX(saleshandy_synced_at) across the
+    // campaign's assignments, surfaced so a stale in-flight projection
+    // (this page's own "Refresh from Saleshandy" never touches this
+    // column) is visibly flagged rather than silently trusted.
+    $syncedAt1 = $forecast1['campaigns'][$camp1]['lead_data_synced_at'];
+    $assert($syncedAt1 !== null && abs(strtotime($syncedAt1) - strtotime('-2 hours')) < 60, "lead_data_synced_at picks up Lead X's ~2-hours-ago sync timestamp (got " . var_export($syncedAt1, true) . ')');
 
     // --- Campaign 2: D0/D3 schedule, new-lead-cohort planning only
     // (no in-flight leads) -- rate 2/day, backlog of 4 drains over 2 days.
@@ -113,6 +121,7 @@ try {
     $assert($byDate2[$fmt($today->modify('+4 day'))]['new_cohort'] === 2, "Day-1 cohort's D3 touch lands 3 days after IT enrolled (today+4, not today+3)");
     $assert($byDate2[$fmt($today->modify('+2 day'))]['new_cohort'] === 0, "No cohort touch lands on today+2 -- backlog fully drained after 2 days, no 3rd cohort");
     $assert($forecast2['campaigns'][$camp2]['not_started_backlog'] === 4, "not_started_backlog reflects the 4 not-yet-pushed leads before simulation");
+    $assert($forecast2['campaigns'][$camp2]['lead_data_synced_at'] === null, "lead_data_synced_at is null when no assignment has ever been synced (not-yet-pushed leads)");
 
     // --- A campaign with no synced schedule is excluded from projection
     // and flagged, not silently treated as zero steps.

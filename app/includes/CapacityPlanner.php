@@ -317,6 +317,22 @@ final class CapacityPlanner
             $campaignMeta[(int) $row['campaign_id']]['not_started_backlog'] = (int) $row['not_started'];
         }
 
+        // The in-flight projection below trusts saleshandy_current_step/
+        // saleshandy_pushed_at as of our LAST sync of this campaign
+        // specifically (its own regular round-robin turn or a manual
+        // "Sync" click on Campaigns) -- not this page's own "Refresh from
+        // Saleshandy" button, which only ever touches step schedules and
+        // account counts, never per-lead progress. Surfaced so a campaign
+        // that hasn't synced in a while shows an honest, visibly stale
+        // forecast instead of a silently wrong one.
+        $syncStmt = $db->query(
+            "SELECT campaign_id, MAX(saleshandy_synced_at) AS last_synced
+               FROM lead_campaign_assignments WHERE campaign_id IN ({$idList}) GROUP BY campaign_id"
+        );
+        foreach ($syncStmt->fetchAll() as $row) {
+            $campaignMeta[(int) $row['campaign_id']]['lead_data_synced_at'] = $row['last_synced'];
+        }
+
         // --- In-flight leads: project remaining touches from real
         // pushed_at + current_step + this campaign's actual step schedule.
         $inFlightStmt = $db->query(
@@ -409,6 +425,7 @@ final class CapacityPlanner
                 'planned_rate' => $plannedDailyIntakeByCampaignId[$id] ?? max(0, $meta['suggested_rate']),
                 'not_started_backlog' => $meta['not_started_backlog'],
                 'needs_sync' => $meta['schedule'] === null,
+                'lead_data_synced_at' => $meta['lead_data_synced_at'] ?? null,
                 'by_date' => $rows,
             ];
         }

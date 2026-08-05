@@ -153,7 +153,9 @@ render_header('Capacity Planner');
   projected from their real enrollment date and how far they've gotten through the sequence. "New" is a
   what-if: leads not yet sent to Saleshandy, enrolled at the planned rate below (starting today), each with
   its own D1/D3/D7-style ripple projected forward. Only campaigns with synced step data (not highlighted
-  yellow above) are included.
+  yellow above) are included. In-flight numbers are only as fresh as each campaign's own last Saleshandy sync
+  (its round-robin turn or a manual "Sync" click on Campaigns) -- see "Lead data: ..." on each campaign below;
+  red means it's more than a day old.
 </p>
 
 <form method="get" action="capacity_planner.php" class="card mb-3">
@@ -228,7 +230,17 @@ render_header('Capacity Planner');
   <div class="card mb-3">
     <div class="card-header d-flex justify-content-between align-items-center">
       <span><?= e($fc['name']) ?> <span class="text-muted small">-- <?= e($fc['owner_name'] ?? '--') ?></span></span>
-      <?php if ($fc['needs_sync']): ?><span class="badge bg-warning text-dark">Needs sync</span><?php endif; ?>
+      <span class="d-flex align-items-center gap-2">
+        <?php
+          $syncedAt = $fc['lead_data_synced_at'];
+          $staleHours = $syncedAt ? (time() - strtotime($syncedAt)) / 3600 : null;
+          $isStale = $staleHours === null || $staleHours > 24;
+        ?>
+        <span class="small <?= $isStale ? 'text-danger' : 'text-muted' ?>" title="When this campaign's per-lead progress (delivery status, current step) was last pulled from Saleshandy -- the 'Refresh from Saleshandy' button above doesn't update this, only the regular Sync/round-robin cron does.">
+          Lead data: <?= $syncedAt ? e($fmtDate($syncedAt)) : 'never synced' ?>
+        </span>
+        <?php if ($fc['needs_sync']): ?><span class="badge bg-warning text-dark">Needs sync</span><?php endif; ?>
+      </span>
     </div>
     <div class="table-responsive">
       <table class="table table-sm mb-0 align-middle">
