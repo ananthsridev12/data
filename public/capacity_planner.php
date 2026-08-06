@@ -151,9 +151,10 @@ render_header('Capacity Planner');
 <p class="text-muted">
   How many emails are actually due each day, and what's left over. "In-flight" is leads already enrolled --
   projected from their real enrollment date and how far they've gotten through the sequence. "New" is a
-  what-if: leads not yet sent to Saleshandy, enrolled at the planned rate below (starting today), each with
-  its own D1/D3/D7-style ripple projected forward. Only campaigns with synced step data (not highlighted
-  yellow above) are included. In-flight numbers are only as fresh as each campaign's own last Saleshandy sync
+  what-if: leads not yet sent to Saleshandy, enrolled at the planned rate below (starting today, weekdays only --
+  no new leads are planned to start on a Saturday/Sunday, though a resulting D3/D7-style follow-up can still land
+  on one), each with its own D1/D3/D7-style ripple projected forward. Only campaigns with synced step data (not
+  highlighted yellow above) are included. In-flight numbers are only as fresh as each campaign's own last Saleshandy sync
   (its round-robin turn or a manual "Sync" click on Campaigns) -- see "Lead data: ..." on each campaign below;
   red means it's more than a day old.
 </p>

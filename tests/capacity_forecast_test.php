@@ -105,23 +105,69 @@ try {
     $syncedAt1 = $forecast1['campaigns'][$camp1]['lead_data_synced_at'];
     $assert($syncedAt1 !== null && abs(strtotime($syncedAt1) - strtotime('-2 hours')) < 60, "lead_data_synced_at picks up Lead X's ~2-hours-ago sync timestamp (got " . var_export($syncedAt1, true) . ')');
 
-    // --- Campaign 2: D0/D3 schedule, new-lead-cohort planning only
-    // (no in-flight leads) -- rate 2/day, backlog of 4 drains over 2 days.
+    // --- Campaign 2: D0/D3 schedule, new-lead-cohort planning only (no
+    // in-flight leads) -- rate 2/day, backlog of 4 drains over 2
+    // ENROLLMENT days. Anchored on the next 2 weekdays from today (not
+    // literally "today"/"tomorrow") since planned enrollment now skips
+    // Saturday/Sunday entirely -- see the dedicated weekend-skip check below.
+    $nextWeekdayOnOrAfter = static function (DateTimeImmutable $d): DateTimeImmutable {
+        while ((int) $d->format('N') >= 6) {
+            $d = $d->modify('+1 day');
+        }
+        return $d;
+    };
+    $enrollDay0 = $nextWeekdayOnOrAfter($today);
+    $enrollDay1 = $nextWeekdayOnOrAfter($enrollDay0->modify('+1 day'));
+
     $schedule2 = [['number' => 1, 'days' => 0], ['number' => 2, 'days' => 3]];
     $camp2 = $mkCampaign('New-Cohort Campaign', $schedule2);
     for ($i = 0; $i < 4; $i++) {
         $mkAssignment($mkLead("cohort-{$i}@x.test"), $camp2, null, null, null); // not yet pushed
     }
 
-    $forecast2 = CapacityPlanner::forecast($db, $scope, 14, [$camp2 => 2]);
+    $forecast2 = CapacityPlanner::forecast($db, $scope, 21, [$camp2 => 2]);
     $byDate2 = $forecast2['campaigns'][$camp2]['by_date'];
-    $assert($byDate2[$fmt($today)]['new_cohort'] === 2, "Day-0 cohort (2 leads) gets its D0 touch today");
-    $assert($byDate2[$fmt($today->modify('+1 day'))]['new_cohort'] === 2, "Day-1 cohort (remaining 2 leads) gets its D0 touch tomorrow");
-    $assert($byDate2[$fmt($today->modify('+3 day'))]['new_cohort'] === 2, "Day-0 cohort's D3 touch lands 3 days after IT enrolled (today+3)");
-    $assert($byDate2[$fmt($today->modify('+4 day'))]['new_cohort'] === 2, "Day-1 cohort's D3 touch lands 3 days after IT enrolled (today+4, not today+3)");
-    $assert($byDate2[$fmt($today->modify('+2 day'))]['new_cohort'] === 0, "No cohort touch lands on today+2 -- backlog fully drained after 2 days, no 3rd cohort");
+    $assert($byDate2[$fmt($enrollDay0)]['new_cohort'] === 2, 'Day-0 cohort (2 leads) gets its D0 touch on the first weekday enrollment day');
+    $assert($byDate2[$fmt($enrollDay1)]['new_cohort'] === 2, 'Day-1 cohort (remaining 2 leads) gets its D0 touch on the second weekday enrollment day');
+    $assert($byDate2[$fmt($enrollDay0->modify('+3 day'))]['new_cohort'] === 2, "Day-0 cohort's D3 touch lands 3 days after IT enrolled");
+    $assert($byDate2[$fmt($enrollDay1->modify('+3 day'))]['new_cohort'] === 2, "Day-1 cohort's D3 touch lands 3 days after IT enrolled, not the same day as day-0's");
+    $totalCohort2 = array_sum(array_column($byDate2, 'new_cohort'));
+    $assert($totalCohort2 === 8, "All 4 backlog leads accounted for exactly twice each (enrollment touch + D3 touch) = 8 total (got {$totalCohort2})");
     $assert($forecast2['campaigns'][$camp2]['not_started_backlog'] === 4, "not_started_backlog reflects the 4 not-yet-pushed leads before simulation");
     $assert($forecast2['campaigns'][$camp2]['lead_data_synced_at'] === null, "lead_data_synced_at is null when no assignment has ever been synced (not-yet-pushed leads)");
+
+    // --- Weekend skip: a single-touch (D0-only) schedule with a rate
+    // and backlog spanning more than a week makes any weekend
+    // enrollment unambiguous -- no ripple from other steps to confuse
+    // the picture. Every Saturday/Sunday in the horizon must show 0
+    // new_cohort; every weekday (until backlog runs out) must show
+    // exactly the planned rate.
+    $scheduleW = [['number' => 1, 'days' => 0]];
+    $campW = $mkCampaign('Weekday-Only Campaign', $scheduleW);
+    for ($i = 0; $i < 14; $i++) {
+        $mkAssignment($mkLead("weekday-{$i}@x.test"), $campW, null, null, null);
+    }
+    $forecastW = CapacityPlanner::forecast($db, $scope, 14, [$campW => 2]);
+    $byDateW = $forecastW['campaigns'][$campW]['by_date'];
+    $weekendHadTraffic = false;
+    $weekdayMissedTraffic = false;
+    $remainingCheck = 14;
+    foreach ($byDateW as $dateStr => $row) {
+        $isWeekend = (int) (new DateTimeImmutable($dateStr))->format('N') >= 6;
+        if ($isWeekend && $row['new_cohort'] !== 0) {
+            $weekendHadTraffic = true;
+        }
+        if (!$isWeekend && $remainingCheck > 0 && $row['new_cohort'] !== min(2, $remainingCheck)) {
+            $weekdayMissedTraffic = true;
+        }
+        if (!$isWeekend) {
+            $remainingCheck -= $row['new_cohort'];
+        }
+    }
+    $assert(!$weekendHadTraffic, 'No planned new-cohort enrollment ever lands on a Saturday/Sunday');
+    $assert(!$weekdayMissedTraffic, 'Every weekday still gets the full planned rate (weekend skip doesn\'t lose a day, it just resumes on the next weekday)');
+    $totalCohortW = array_sum(array_column($byDateW, 'new_cohort'));
+    $assert($totalCohortW === 14, "All 14 backlog leads eventually enrolled across weekdays only (got {$totalCohortW})");
 
     // --- A campaign with no synced schedule is excluded from projection
     // and flagged, not silently treated as zero steps.

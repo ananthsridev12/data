@@ -366,8 +366,14 @@ final class CapacityPlanner
         }
 
         // --- Planned new-lead cohorts: simulate enrolling
-        // min(rate, remaining not-yet-pushed backlog) leads each day,
-        // starting today, projecting each cohort's own full step ripple.
+        // min(rate, remaining not-yet-pushed backlog) leads each WEEKDAY
+        // (no new cohort starts on a Saturday/Sunday -- matches how a
+        // sequence's own sending window typically doesn't run those days
+        // either), starting today, projecting each cohort's own full
+        // step ripple. A weekend is simply skipped, not a lost day --
+        // the same rate resumes the next weekday with $remaining
+        // untouched, so a 5-leads/day rate still nets 5 that Monday, not
+        // 0 carried over from Saturday.
         foreach ($campaignMeta as $campaignId => $meta) {
             $schedule = $meta['schedule'];
             if (!$schedule) {
@@ -382,9 +388,12 @@ final class CapacityPlanner
                 if ($remaining <= 0) {
                     break;
                 }
+                $cohortStart = new DateTimeImmutable($dateStr);
+                if ((int) $cohortStart->format('N') >= 6) {
+                    continue; // Saturday (6) or Sunday (7) -- no new cohort starts today
+                }
                 $enrolled = min($rate, $remaining);
                 $remaining -= $enrolled;
-                $cohortStart = new DateTimeImmutable($dateStr);
                 foreach ($schedule as $step) {
                     $due = $cohortStart->modify('+' . (int) $step['days'] . ' day');
                     if ($due > $horizonEnd) {
