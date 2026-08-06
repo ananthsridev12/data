@@ -4,7 +4,6 @@ require_once __DIR__ . '/../app/includes/IcpRepository.php';
 require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/RoleGroupClassifier.php';
 require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
-require_once __DIR__ . '/../app/includes/CronRunLog.php';
 
 $user = require_login();
 $scope = Scope::fromUser(db(), $user);
@@ -138,28 +137,6 @@ $unmappedPersonasStmt->execute([$scope->companyId, $scope->companyId, $scope->co
 $unmappedPersonas = $unmappedPersonasStmt->fetchAll();
 
 $activeIcpCount = count(array_filter($icps, static fn (array $i): bool => (bool) $i['is_active']));
-$lastSyncRun = CronRunLog::lastRun(db(), 'saleshandy_sync');
-$lastDistributionRun = CronRunLog::lastRun(db(), 'icp_distribution');
-$lastBackfillRun = CronRunLog::lastRun(db(), 'saleshandy_backfill');
-$lastFieldSyncRun = CronRunLog::lastRun(db(), 'saleshandy_field_sync');
-$fieldSyncEnabledStmt = db()->prepare('SELECT saleshandy_field_sync_cron_enabled FROM companies WHERE id = ?');
-$fieldSyncEnabledStmt->execute([$scope->companyId]);
-$fieldSyncEnabledForCompany = (bool) $fieldSyncEnabledStmt->fetchColumn();
-
-/** Renders a "how long ago" string from a MySQL DATETIME, for the cron-status card. */
-$timeAgo = static function (string $mysqlDatetime): string {
-    $diff = time() - strtotime($mysqlDatetime);
-    if ($diff < 60) {
-        return 'just now';
-    }
-    if ($diff < 3600) {
-        return floor($diff / 60) . ' min ago';
-    }
-    if ($diff < 86400) {
-        return floor($diff / 3600) . ' hr ago';
-    }
-    return floor($diff / 86400) . ' day(s) ago';
-};
 
 // Cycled per linked-campaign row so the split preview bar and its rows
 // below share a color, in a fixed order (not randomized/hashed) so a
@@ -189,92 +166,15 @@ render_header('ICP Segments');
 </div>
 
 <div class="card icp-card mb-4">
-  <div class="card-header fw-semibold">Cron status</div>
-  <div class="card-body">
-    <p class="text-muted small mb-3">
-      Each run (scheduled or "Run now") processes just <strong>one</strong> campaign/ICP -- whichever has gone
-      longest without an attempt -- rather than looping everything at once, so a single run never risks timing
-      out with many campaigns/ICPs. Successive runs rotate through all of them automatically.
-      <?php if (!$scope->isAdmin()): ?>
-        "Run now" only ever picks among your own campaigns/ICPs -- it can't touch a teammate's.
-      <?php endif; ?>
-    </p>
-    <div class="row g-3">
-      <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
-        <div>
-          <div class="fw-semibold">Saleshandy sync</div>
-          <?php if ($lastSyncRun): ?>
-            <div class="small text-muted">
-              Last run <?= $timeAgo($lastSyncRun['ran_at']) ?> (<?= e($lastSyncRun['triggered_by']) ?>)
-              <?php if ($lastSyncRun['summary']): ?><br><?= e($lastSyncRun['summary']) ?><?php endif; ?>
-            </div>
-          <?php else: ?>
-            <div class="small text-muted">Never run yet -- set up the cron job, or run it now.</div>
-          <?php endif; ?>
-        </div>
-        <form method="post" action="saleshandy_sync_run.php" class="flex-shrink-0">
-          <?= csrf_field() ?>
-          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
-        </form>
-      </div>
-      <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
-        <div>
-          <div class="fw-semibold">ICP distribution</div>
-          <?php if ($lastDistributionRun): ?>
-            <div class="small text-muted">
-              Last run <?= $timeAgo($lastDistributionRun['ran_at']) ?> (<?= e($lastDistributionRun['triggered_by']) ?>)
-              <?php if ($lastDistributionRun['summary']): ?><br><?= e($lastDistributionRun['summary']) ?><?php endif; ?>
-            </div>
-          <?php else: ?>
-            <div class="small text-muted">Never run yet -- set up the cron job, or run it now.</div>
-          <?php endif; ?>
-        </div>
-        <form method="post" action="icp_distribution_run.php" class="flex-shrink-0">
-          <?= csrf_field() ?>
-          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
-        </form>
-      </div>
-      <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
-        <div>
-          <div class="fw-semibold">Saleshandy backfill</div>
-          <?php if ($lastBackfillRun): ?>
-            <div class="small text-muted">
-              Last run <?= $timeAgo($lastBackfillRun['ran_at']) ?> (<?= e($lastBackfillRun['triggered_by']) ?>)
-              <?php if ($lastBackfillRun['summary']): ?><br><?= e($lastBackfillRun['summary']) ?><?php endif; ?>
-            </div>
-          <?php else: ?>
-            <div class="small text-muted">Never run yet -- set up the cron job, or run it now. Optional: only useful once, per campaign, for older history predating this app.</div>
-          <?php endif; ?>
-        </div>
-        <form method="post" action="campaign_saleshandy_backfill_run.php" class="flex-shrink-0">
-          <?= csrf_field() ?>
-          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
-        </form>
-      </div>
-      <div class="col-md-4 d-flex justify-content-between align-items-start gap-2">
-        <div>
-          <div class="fw-semibold">Saleshandy field sync</div>
-          <?php if (!$fieldSyncEnabledForCompany): ?>
-            <div class="small text-muted">
-              Scheduled cron is off for your company --
-              <?= $scope->isAdmin() ? 'enable it on <a href="company_profile.php">Company Profile</a>, or ' : '' ?>use "Run now" any time regardless.
-            </div>
-          <?php endif; ?>
-          <?php if ($lastFieldSyncRun): ?>
-            <div class="small text-muted">
-              Last run <?= $timeAgo($lastFieldSyncRun['ran_at']) ?> (<?= e($lastFieldSyncRun['triggered_by']) ?>)
-              <?php if ($lastFieldSyncRun['summary']): ?><br><?= e($lastFieldSyncRun['summary']) ?><?php endif; ?>
-            </div>
-          <?php else: ?>
-            <div class="small text-muted">Never run yet -- set up the cron job, or run it now. Keeps already-pushed leads' custom fields (Vertical, Service, etc.) current on Saleshandy.</div>
-          <?php endif; ?>
-        </div>
-        <form method="post" action="campaign_saleshandy_field_sync_run.php" class="flex-shrink-0">
-          <?= csrf_field() ?>
-          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3 text-nowrap">Run now</button>
-        </form>
+  <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <div class="fw-semibold">Cron status &amp; manual sync moved</div>
+      <div class="small text-muted">
+        The 4 "Run now" cron buttons, plus individual sync/backfill/push per campaign and per ICP, now live on
+        <a href="sync_center.php">Sync Center</a>.
       </div>
     </div>
+    <a href="sync_center.php" class="btn btn-outline-primary btn-sm flex-shrink-0">Open Sync Center</a>
   </div>
 </div>
 

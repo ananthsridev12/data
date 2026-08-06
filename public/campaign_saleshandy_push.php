@@ -14,7 +14,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 csrf_verify();
 
 $campaignId = (int) ($_POST['campaign_id'] ?? 0);
-$redirect = 'campaign_leads.php?campaign_id=' . $campaignId;
+$redirect = ($_POST['redirect_to'] ?? '') === 'sync_center' ? 'sync_center.php' : 'campaign_leads.php?campaign_id=' . $campaignId;
 
 $campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
 

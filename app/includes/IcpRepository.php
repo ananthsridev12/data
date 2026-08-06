@@ -543,6 +543,40 @@ class IcpRepository
     }
 
     /**
+     * Manually distribute ONE specific ICP by id, instead of round-robin
+     * "whichever is due next" -- the individual-action counterpart to
+     * runDistributionForNext(), for Sync Center's per-ICP "Distribute
+     * now" button. Same ownership/100%-links gating as every other
+     * ICP-mutating action (isFullyOwnedBySelf()).
+     *
+     * @return array{ok:bool,summary:string,lines:array<int,string>}
+     */
+    public static function runDistributionForIcp(PDO $db, Scope $scope, int $icpId): array
+    {
+        $stmt = $db->prepare('SELECT * FROM icp_segments WHERE id = ? AND company_id = ?');
+        $stmt->execute([$icpId, $scope->companyId]);
+        $icp = $stmt->fetch();
+        if (!$icp) {
+            return ['ok' => false, 'summary' => 'ICP segment not found.', 'lines' => []];
+        }
+        if (!$scope->isAdmin() && !self::isFullyOwnedBySelf($db, $icpId, $scope->userId)) {
+            return ['ok' => false, 'summary' => 'You can only distribute an ICP made up entirely of your own campaigns.', 'lines' => []];
+        }
+        if (!self::linksSumTo100($db, $icpId)) {
+            return ['ok' => false, 'summary' => "\"{$icp['name']}\": campaign link percentages don't sum to 100% -- fix the split first.", 'lines' => []];
+        }
+
+        $result = self::processIcp($db, $icp, $scope->userId);
+        $db->prepare('UPDATE icp_segments SET last_distribution_attempt_at = NOW() WHERE id = ?')->execute([$icpId]);
+
+        $summary = "\"{$icp['name']}\": " . ($result['had_matches']
+            ? "{$result['assigned']} lead(s) assigned" . ($icp['auto_push_enabled'] ? ", {$result['pushed']} lead(s) auto-pushed" : '')
+            : 'no new matching leads');
+
+        return ['ok' => true, 'summary' => $summary, 'lines' => $result['lines']];
+    }
+
+    /**
      * The active ICP (with links summing to 100%) that's gone longest
      * without a distribution attempt -- skips (without touching its
      * attempt timestamp) any active ICP whose links don't currently sum
