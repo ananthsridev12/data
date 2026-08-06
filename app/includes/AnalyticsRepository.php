@@ -22,6 +22,7 @@ class AnalyticsRepository
 {
     public const GROUP_DIMENSIONS = [
         'company_country' => 'Company Country',
+        'country_group' => 'Country Group',
         'campaign' => 'Campaign',
         'vertical' => 'Vertical',
         'service' => 'Service',
@@ -36,6 +37,7 @@ class AnalyticsRepository
         LEFT JOIN campaigns c ON c.id = a.campaign_id
         LEFT JOIN verticals v ON v.id = l.vertical_id
         LEFT JOIN services s ON s.id = l.service_id
+        LEFT JOIN country_groups cg ON cg.id = l.country_group_id
     ";
 
     /**
@@ -244,6 +246,7 @@ class AnalyticsRepository
             'campaign' => "COALESCE(c.name, '(Unassigned)')",
             'vertical' => "COALESCE(v.label, '(none)')",
             'service' => "COALESCE(s.label, '(none)')",
+            'country_group' => "COALESCE(cg.label, '(none)')",
             default => "COALESCE(NULLIF(l.company_country, ''), 'NA')",
         };
     }

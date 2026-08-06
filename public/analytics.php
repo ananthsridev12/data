@@ -25,6 +25,7 @@ $campaignsStmt->execute($campaignParams);
 $campaigns = $campaignsStmt->fetchAll();
 $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
+$countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
 $industries = LeadRepository::distinctValues(db(), $scope, 'industry');
 
 $campaignFunnel = AnalyticsRepository::campaignFunnel(db(), $scope);
@@ -59,6 +60,7 @@ $overallTotal = $sections['company_country']['pivot']['total'];
 $campaignIdByName = array_column($campaigns, 'id', 'name');
 $verticalIdByLabel = array_column($verticals, 'id', 'label');
 $serviceIdByLabel = array_column($services, 'id', 'label');
+$countryGroupIdByLabel = array_column($countryGroups, 'id', 'label');
 
 /**
  * @param string $sectionKey one of AnalyticsRepository::GROUP_DIMENSIONS' keys
@@ -67,7 +69,7 @@ $serviceIdByLabel = array_column($services, 'id', 'label');
  * @param ?string $metricKey 'imported' or 'email_sent', or null for the
  *   Prospects column (no extra metric filter)
  */
-$drillLink = function (string $sectionKey, ?string $grp, ?string $metricKey, ?string $metricValue) use ($filters, $campaignIdByName, $verticalIdByLabel, $serviceIdByLabel): string {
+$drillLink = function (string $sectionKey, ?string $grp, ?string $metricKey, ?string $metricValue) use ($filters, $campaignIdByName, $verticalIdByLabel, $serviceIdByLabel, $countryGroupIdByLabel): string {
     // Analytics counts every non-deleted lead, suppressed domains
     // included -- Dashboard's own default filter *hides* suppressed
     // leads, so without this override a drill-through link would show
@@ -103,6 +105,9 @@ $drillLink = function (string $sectionKey, ?string $grp, ?string $metricKey, ?st
                 break;
             case 'service':
                 $params['service_id'] = $serviceIdByLabel[$grp] ?? 'none';
+                break;
+            case 'country_group':
+                $params['country_group_id'] = $countryGroupIdByLabel[$grp] ?? 'none';
                 break;
         }
     }
