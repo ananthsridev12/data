@@ -279,12 +279,14 @@ render_header('ICP Segments');
   </div>
 </div>
 
+<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 mb-4">
 <?php foreach ($icps as $icp):
     $links = $linksByIcp[(int) $icp['id']];
     $total = $icp['percentage_total'];
     $ready = $total === 100;
 ?>
-  <div class="card icp-card mb-4">
+  <div class="col">
+  <div class="card icp-card h-100">
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
       <div class="d-flex flex-wrap align-items-center gap-2">
         <span class="fw-semibold"><?= e($icp['name']) ?></span>
@@ -293,7 +295,13 @@ render_header('ICP Segments');
           <span class="badge rounded-pill bg-<?= $ready ? 'success' : 'warning' ?>-subtle text-<?= $ready ? 'success' : 'warning' ?>-emphasis"><?= $ready ? 'Ready &middot; ' . $total . '%' : 'Not running &middot; ' . $total . '%' ?></span>
         <?php endif; ?>
       </div>
-      <div class="d-flex gap-2">
+      <div class="d-flex flex-wrap gap-2">
+        <form method="post" action="icp_distribution_run_one.php" class="d-inline" title="Assign eligible leads and, if auto-push is on, push them to Saleshandy now, for just this ICP.">
+          <?= csrf_field() ?>
+          <input type="hidden" name="icp_id" value="<?= (int) $icp['id'] ?>">
+          <input type="hidden" name="redirect_to" value="icp_segments">
+          <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3" <?= $ready ? '' : 'disabled' ?>>Sync/Push now</button>
+        </form>
         <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#editIcp<?= (int) $icp['id'] ?>">Edit</button>
         <form method="post" action="icp_segments.php" class="d-inline" onsubmit="return confirm('Toggle active status for <?= e($icp['name']) ?>?');">
           <?= csrf_field() ?>
@@ -386,6 +394,7 @@ render_header('ICP Segments');
       </form>
     </div>
   </div>
+  <!-- /.card -->
 
   <div class="modal fade" id="editIcp<?= (int) $icp['id'] ?>" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
@@ -469,7 +478,11 @@ render_header('ICP Segments');
       </div>
     </div>
   </div>
+  </div>
+  <!-- /.col -->
 <?php endforeach; ?>
+</div>
+<!-- /.row -->
 <?php if (!$icps): ?>
   <div class="card icp-card">
     <div class="card-body text-center py-5">
