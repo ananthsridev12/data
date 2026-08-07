@@ -25,7 +25,14 @@ $filters = [
     'delivery_status' => trim((string) ($_GET['delivery_status'] ?? '')),
     'verification' => trim((string) ($_GET['verification'] ?? '')),
     'clicked' => trim((string) ($_GET['clicked'] ?? '')),
+    'opened' => trim((string) ($_GET['opened'] ?? '')),
+    'country_group_id' => trim((string) ($_GET['country_group_id'] ?? '')),
 ];
+
+$sortableColumns = ['click_count' => 'a.click_count', 'open_count' => 'a.open_count', 'assigned_at' => 'a.assigned_at'];
+$sort = isset($sortableColumns[$_GET['sort'] ?? '']) ? $_GET['sort'] : 'click_count';
+$dir = ($_GET['dir'] ?? '') === 'asc' ? 'ASC' : 'DESC';
+$orderBySql = $sortableColumns[$sort] . ' ' . $dir;
 
 $whereClauses = ['a.campaign_id = :campaign_id', 'l.deleted_at IS NULL'];
 $whereParams = ['campaign_id' => $campaignId];
@@ -57,10 +64,22 @@ if ($filters['verification'] === 'bad') {
 } elseif ($filters['verification'] === 'none') {
     $whereClauses[] = "(l.email_verification_status IS NULL OR l.email_verification_status = '')";
 }
-if ($filters['clicked'] === '1') {
-    $whereClauses[] = 'a.click_count > 0';
-} elseif ($filters['clicked'] === '0') {
+$minCountValues = ['1', '2', '3', '5', '10'];
+if ($filters['clicked'] === '0') {
     $whereClauses[] = 'a.click_count = 0';
+} elseif (in_array($filters['clicked'], $minCountValues, true)) {
+    $whereClauses[] = 'a.click_count >= :click_min';
+    $whereParams['click_min'] = (int) $filters['clicked'];
+}
+if ($filters['opened'] === '0') {
+    $whereClauses[] = 'a.open_count = 0';
+} elseif (in_array($filters['opened'], $minCountValues, true)) {
+    $whereClauses[] = 'a.open_count >= :open_min';
+    $whereParams['open_min'] = (int) $filters['opened'];
+}
+if ($filters['country_group_id'] !== '') {
+    $whereClauses[] = 'l.country_group_id = :country_group_id';
+    $whereParams['country_group_id'] = (int) $filters['country_group_id'];
 }
 
 $stmt = db()->prepare(
@@ -69,7 +88,7 @@ $stmt = db()->prepare(
        FROM lead_campaign_assignments a
        JOIN leads l ON l.id = a.lead_id
       WHERE " . implode(' AND ', $whereClauses) . "
-      ORDER BY a.click_count DESC, l.na_company_name"
+      ORDER BY {$orderBySql}"
 );
 $stmt->execute($whereParams);
 

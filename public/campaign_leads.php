@@ -3,6 +3,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 require_once __DIR__ . '/../app/includes/ColumnPreferences.php';
 require_once __DIR__ . '/../app/includes/CampaignAccess.php';
+require_once __DIR__ . '/../app/includes/LeadRepository.php';
 
 $user = require_login();
 $scope = Scope::fromUser(db(), $user);
@@ -39,7 +40,17 @@ $filters = [
     'delivery_status' => trim((string) ($_GET['delivery_status'] ?? '')),
     'verification' => trim((string) ($_GET['verification'] ?? '')),
     'clicked' => trim((string) ($_GET['clicked'] ?? '')),
+    'opened' => trim((string) ($_GET['opened'] ?? '')),
+    'country_group_id' => trim((string) ($_GET['country_group_id'] ?? '')),
 ];
+$countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
+
+// Sorting: click/open counts and assigned date only -- whitelisted against
+// SQL injection since it's interpolated directly into ORDER BY.
+$sortableColumns = ['click_count' => 'a.click_count', 'open_count' => 'a.open_count', 'assigned_at' => 'a.assigned_at'];
+$sort = isset($sortableColumns[$_GET['sort'] ?? '']) ? $_GET['sort'] : 'assigned_at';
+$dir = ($_GET['dir'] ?? '') === 'asc' ? 'ASC' : 'DESC';
+$orderBySql = $sortableColumns[$sort] . ' ' . $dir;
 
 // Base filter (email_sent/imported/delivery_status/verification only --
 // wave_status is applied separately below, either as one explicit clause
@@ -75,16 +86,29 @@ if ($filters['verification'] === 'bad') {
 } elseif ($filters['verification'] === 'none') {
     $baseWhereClauses[] = "(l.email_verification_status IS NULL OR l.email_verification_status = '')";
 }
-// 'clicked': who clicked a link in the email -- e.g. for manually
-// following up with a LinkedIn connection request off the back of that
-// engagement signal (see the LinkedIn column below).
-if ($filters['clicked'] === '1') {
-    $baseWhereClauses[] = 'a.click_count > 0';
-} elseif ($filters['clicked'] === '0') {
+// 'clicked'/'opened': engagement-count filters (N or more times) -- e.g.
+// for manually following up with a LinkedIn connection request off the
+// back of that engagement signal (see the Link Clicks/Email Opens/
+// LinkedIn columns below).
+$minCountValues = ['1', '2', '3', '5', '10'];
+if ($filters['clicked'] === '0') {
     $baseWhereClauses[] = 'a.click_count = 0';
+} elseif (in_array($filters['clicked'], $minCountValues, true)) {
+    $baseWhereClauses[] = 'a.click_count >= :click_min';
+    $baseWhereParams['click_min'] = (int) $filters['clicked'];
+}
+if ($filters['opened'] === '0') {
+    $baseWhereClauses[] = 'a.open_count = 0';
+} elseif (in_array($filters['opened'], $minCountValues, true)) {
+    $baseWhereClauses[] = 'a.open_count >= :open_min';
+    $baseWhereParams['open_min'] = (int) $filters['opened'];
+}
+if ($filters['country_group_id'] !== '') {
+    $baseWhereClauses[] = 'l.country_group_id = :country_group_id';
+    $baseWhereParams['country_group_id'] = (int) $filters['country_group_id'];
 }
 
-$fetchAssignments = static function (array $whereClauses, array $whereParams, ?int $limit, int $offset = 0): array {
+$fetchAssignments = static function (array $whereClauses, array $whereParams, ?int $limit, int $offset = 0) use ($orderBySql): array {
     $where = 'WHERE ' . implode(' AND ', $whereClauses);
     $countStmt = db()->prepare("SELECT COUNT(*) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id {$where}");
     $countStmt->execute($whereParams);
@@ -99,7 +123,7 @@ $fetchAssignments = static function (array $whereClauses, array $whereParams, ?i
            LEFT JOIN role_groups rg ON rg.id = l.role_group_id
            LEFT JOIN country_groups cg ON cg.id = l.country_group_id
           {$where}
-          ORDER BY a.assigned_at DESC
+          ORDER BY {$orderBySql}
           {$limitSql}"
     );
     $stmt->execute($whereParams);
@@ -145,6 +169,7 @@ $statsStmt = db()->prepare(
         SUM(a.status IN ('exported', 'pushed')) AS imported_yes,
         SUM(a.status = 'assigned') AS imported_no,
         SUM(a.click_count > 0) AS clicked_yes,
+        SUM(a.open_count > 0) AS opened_yes,
         COUNT(*) AS all_count
        FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
       WHERE a.campaign_id = ? AND l.deleted_at IS NULL"
@@ -196,6 +221,7 @@ render_header('Campaign leads');
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&email_sent=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['email_sent_no'] ?> not sent</a>
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['imported_yes'] ?> imported to Saleshandy</a>
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['imported_no'] ?> not imported</a>
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&opened=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['opened_yes'] ?> opened an email</a>
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&clicked=1" class="badge bg-info text-decoration-none"><?= (int) $stats['clicked_yes'] ?> clicked a link</a>
   </div>
 </div>
@@ -234,10 +260,29 @@ render_header('Campaign leads');
         <option value="bad" <?= $filters['verification'] === 'bad' ? 'selected' : '' ?>>Bad</option>
         <option value="none" <?= $filters['verification'] === 'none' ? 'selected' : '' ?>>Not checked yet</option>
       </select>
+      <select name="opened" class="form-select form-select-sm" style="max-width: 190px;">
+        <option value="">Opened email (all)</option>
+        <option value="1" <?= $filters['opened'] === '1' ? 'selected' : '' ?>>1+ times</option>
+        <option value="2" <?= $filters['opened'] === '2' ? 'selected' : '' ?>>2+ times</option>
+        <option value="3" <?= $filters['opened'] === '3' ? 'selected' : '' ?>>3+ times</option>
+        <option value="5" <?= $filters['opened'] === '5' ? 'selected' : '' ?>>5+ times</option>
+        <option value="10" <?= $filters['opened'] === '10' ? 'selected' : '' ?>>10+ times</option>
+        <option value="0" <?= $filters['opened'] === '0' ? 'selected' : '' ?>>Never opened</option>
+      </select>
       <select name="clicked" class="form-select form-select-sm" style="max-width: 190px;">
         <option value="">Clicked a link (all)</option>
-        <option value="1" <?= $filters['clicked'] === '1' ? 'selected' : '' ?>>Yes</option>
-        <option value="0" <?= $filters['clicked'] === '0' ? 'selected' : '' ?>>No</option>
+        <option value="1" <?= $filters['clicked'] === '1' ? 'selected' : '' ?>>1+ times</option>
+        <option value="2" <?= $filters['clicked'] === '2' ? 'selected' : '' ?>>2+ times</option>
+        <option value="3" <?= $filters['clicked'] === '3' ? 'selected' : '' ?>>3+ times</option>
+        <option value="5" <?= $filters['clicked'] === '5' ? 'selected' : '' ?>>5+ times</option>
+        <option value="10" <?= $filters['clicked'] === '10' ? 'selected' : '' ?>>10+ times</option>
+        <option value="0" <?= $filters['clicked'] === '0' ? 'selected' : '' ?>>Never clicked</option>
+      </select>
+      <select name="country_group_id" class="form-select form-select-sm" style="max-width: 190px;">
+        <option value="">Country Group (all)</option>
+        <?php foreach ($countryGroups as $cg): ?>
+          <option value="<?= (int) $cg['id'] ?>" <?= (string) $filters['country_group_id'] === (string) $cg['id'] ? 'selected' : '' ?>><?= e($cg['label']) ?></option>
+        <?php endforeach; ?>
       </select>
       <button type="submit" class="btn btn-sm btn-primary">Filter</button>
       <?php if (array_filter($filters)): ?>
@@ -433,6 +478,15 @@ render_header('Campaign leads');
           case 'saleshandy_synced': ?>
               <td class="small text-muted"><?= e($a['saleshandy_synced_at'] ?? '') ?></td>
               <?php break;
+          case 'email_opens': ?>
+              <td>
+                <?php if ($a['open_count'] > 0): ?>
+                  <span class="badge bg-primary"><?= (int) $a['open_count'] ?></span>
+                <?php else: ?>
+                  <span class="text-muted small">0</span>
+                <?php endif; ?>
+              </td>
+              <?php break;
           case 'link_clicks': ?>
               <td>
                 <?php if ($a['click_count'] > 0): ?>
@@ -455,7 +509,17 @@ render_header('Campaign leads');
   };
   $visibleAssignmentColumns = array_values(array_filter($columns, static fn(array $c) => $c['visible']));
 
-  $renderAssignmentsTable = static function (array $rows) use ($visibleAssignmentColumns, $renderAssignmentCell) {
+  // Sortable column headers: only Email Opens/Link Clicks/Assigned date --
+  // mapped to the same whitelisted $sortableColumns keys used to build
+  // $orderBySql above.
+  $columnKeyToSortKey = ['email_opens' => 'open_count', 'link_clicks' => 'click_count', 'assigned' => 'assigned_at'];
+  $sortLinkParams = array_filter($filters) + ['campaign_id' => $campaignId];
+  $buildSortUrl = static function (string $sortKey) use ($sortLinkParams, $sort, $dir) {
+      $nextDir = ($sort === $sortKey && $dir === 'DESC') ? 'asc' : 'desc';
+      return 'campaign_leads.php?' . http_build_query($sortLinkParams + ['sort' => $sortKey, 'dir' => $nextDir]);
+  };
+
+  $renderAssignmentsTable = static function (array $rows) use ($visibleAssignmentColumns, $renderAssignmentCell, $columnKeyToSortKey, $buildSortUrl, $sort, $dir) {
       ?>
       <div class="table-responsive card mb-3">
         <table class="table table-hover mb-0 align-middle">
@@ -463,7 +527,15 @@ render_header('Campaign leads');
             <tr>
               <th><input type="checkbox" class="selectAllInTable"></th>
               <?php foreach ($visibleAssignmentColumns as $col): ?>
-                <th><?= e($col['label']) ?></th>
+                <th>
+                  <?php if (isset($columnKeyToSortKey[$col['key']])): $sortKey = $columnKeyToSortKey[$col['key']]; ?>
+                    <a href="<?= e($buildSortUrl($sortKey)) ?>" class="text-reset text-decoration-none">
+                      <?= e($col['label']) ?><?= $sort === $sortKey ? ($dir === 'DESC' ? ' &#9660;' : ' &#9650;') : '' ?>
+                    </a>
+                  <?php else: ?>
+                    <?= e($col['label']) ?>
+                  <?php endif; ?>
+                </th>
               <?php endforeach; ?>
             </tr>
           </thead>
