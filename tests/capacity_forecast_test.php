@@ -105,11 +105,17 @@ try {
     $syncedAt1 = $forecast1['campaigns'][$camp1]['lead_data_synced_at'];
     $assert($syncedAt1 !== null && abs(strtotime($syncedAt1) - strtotime('-2 hours')) < 60, "lead_data_synced_at picks up Lead X's ~2-hours-ago sync timestamp (got " . var_export($syncedAt1, true) . ')');
 
-    // --- Campaign 2: D0/D3 schedule, new-lead-cohort planning only (no
+    // --- Campaign 2: D0/D5 schedule, new-lead-cohort planning only (no
     // in-flight leads) -- rate 2/day, backlog of 4 drains over 2
     // ENROLLMENT days. Anchored on the next 2 weekdays from today (not
     // literally "today"/"tomorrow") since planned enrollment now skips
     // Saturday/Sunday entirely -- see the dedicated weekend-skip check below.
+    // D5 (not D3) is deliberate: the gap between two consecutive weekday
+    // enrollment days is always either 1 day (both weekdays) or 3 days
+    // (Friday -> Monday) -- a D3 second step would sometimes coincide
+    // with day-1's own enrollment date whenever day-0 happens to fall on
+    // a Friday, silently combining two touches into one date and making
+    // this test flaky depending only on which weekday it's run.
     $nextWeekdayOnOrAfter = static function (DateTimeImmutable $d): DateTimeImmutable {
         while ((int) $d->format('N') >= 6) {
             $d = $d->modify('+1 day');
@@ -119,7 +125,7 @@ try {
     $enrollDay0 = $nextWeekdayOnOrAfter($today);
     $enrollDay1 = $nextWeekdayOnOrAfter($enrollDay0->modify('+1 day'));
 
-    $schedule2 = [['number' => 1, 'days' => 0], ['number' => 2, 'days' => 3]];
+    $schedule2 = [['number' => 1, 'days' => 0], ['number' => 2, 'days' => 5]];
     $camp2 = $mkCampaign('New-Cohort Campaign', $schedule2);
     for ($i = 0; $i < 4; $i++) {
         $mkAssignment($mkLead("cohort-{$i}@x.test"), $camp2, null, null, null); // not yet pushed
@@ -129,10 +135,10 @@ try {
     $byDate2 = $forecast2['campaigns'][$camp2]['by_date'];
     $assert($byDate2[$fmt($enrollDay0)]['new_cohort'] === 2, 'Day-0 cohort (2 leads) gets its D0 touch on the first weekday enrollment day');
     $assert($byDate2[$fmt($enrollDay1)]['new_cohort'] === 2, 'Day-1 cohort (remaining 2 leads) gets its D0 touch on the second weekday enrollment day');
-    $assert($byDate2[$fmt($enrollDay0->modify('+3 day'))]['new_cohort'] === 2, "Day-0 cohort's D3 touch lands 3 days after IT enrolled");
-    $assert($byDate2[$fmt($enrollDay1->modify('+3 day'))]['new_cohort'] === 2, "Day-1 cohort's D3 touch lands 3 days after IT enrolled, not the same day as day-0's");
+    $assert($byDate2[$fmt($enrollDay0->modify('+5 day'))]['new_cohort'] === 2, "Day-0 cohort's D5 touch lands 5 days after IT enrolled");
+    $assert($byDate2[$fmt($enrollDay1->modify('+5 day'))]['new_cohort'] === 2, "Day-1 cohort's D5 touch lands 5 days after IT enrolled, not the same day as day-0's");
     $totalCohort2 = array_sum(array_column($byDate2, 'new_cohort'));
-    $assert($totalCohort2 === 8, "All 4 backlog leads accounted for exactly twice each (enrollment touch + D3 touch) = 8 total (got {$totalCohort2})");
+    $assert($totalCohort2 === 8, "All 4 backlog leads accounted for exactly twice each (enrollment touch + D5 touch) = 8 total (got {$totalCohort2})");
     $assert($forecast2['campaigns'][$camp2]['not_started_backlog'] === 4, "not_started_backlog reflects the 4 not-yet-pushed leads before simulation");
     $assert($forecast2['campaigns'][$camp2]['lead_data_synced_at'] === null, "lead_data_synced_at is null when no assignment has ever been synced (not-yet-pushed leads)");
 
