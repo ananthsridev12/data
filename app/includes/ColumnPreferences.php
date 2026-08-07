@@ -44,6 +44,8 @@ class ColumnPreferences
             'email_verification' => 'Email Verification',
             'saleshandy_step' => 'Saleshandy Step',
             'saleshandy_synced' => 'Last Synced',
+            'link_clicks' => 'Link Clicks',
+            'linkedin' => 'LinkedIn',
         ],
     ];
 

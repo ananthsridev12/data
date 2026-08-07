@@ -38,6 +38,7 @@ $filters = [
     'imported' => trim((string) ($_GET['imported'] ?? '')),
     'delivery_status' => trim((string) ($_GET['delivery_status'] ?? '')),
     'verification' => trim((string) ($_GET['verification'] ?? '')),
+    'clicked' => trim((string) ($_GET['clicked'] ?? '')),
 ];
 
 // Base filter (email_sent/imported/delivery_status/verification only --
@@ -74,6 +75,14 @@ if ($filters['verification'] === 'bad') {
 } elseif ($filters['verification'] === 'none') {
     $baseWhereClauses[] = "(l.email_verification_status IS NULL OR l.email_verification_status = '')";
 }
+// 'clicked': who clicked a link in the email -- e.g. for manually
+// following up with a LinkedIn connection request off the back of that
+// engagement signal (see the LinkedIn column below).
+if ($filters['clicked'] === '1') {
+    $baseWhereClauses[] = 'a.click_count > 0';
+} elseif ($filters['clicked'] === '0') {
+    $baseWhereClauses[] = 'a.click_count = 0';
+}
 
 $fetchAssignments = static function (array $whereClauses, array $whereParams, ?int $limit, int $offset = 0): array {
     $where = 'WHERE ' . implode(' AND ', $whereClauses);
@@ -83,7 +92,7 @@ $fetchAssignments = static function (array $whereClauses, array $whereParams, ?i
 
     $limitSql = $limit !== null ? "LIMIT {$limit} OFFSET {$offset}" : '';
     $stmt = db()->prepare(
-        "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email, l.email_verification_status, rg.label AS role_group_label, cg.label AS country_group_label, u.name AS assigned_by_name
+        "SELECT a.*, l.na_company_name, l.first_name, l.last_name, l.email, l.email_verification_status, l.person_linkedin_url, rg.label AS role_group_label, cg.label AS country_group_label, u.name AS assigned_by_name
            FROM lead_campaign_assignments a
            JOIN leads l ON l.id = a.lead_id
            JOIN users u ON u.id = a.assigned_by
@@ -135,6 +144,7 @@ $statsStmt = db()->prepare(
         SUM(a.email_sent = 0) AS email_sent_no,
         SUM(a.status IN ('exported', 'pushed')) AS imported_yes,
         SUM(a.status = 'assigned') AS imported_no,
+        SUM(a.click_count > 0) AS clicked_yes,
         COUNT(*) AS all_count
        FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
       WHERE a.campaign_id = ? AND l.deleted_at IS NULL"
@@ -171,7 +181,8 @@ render_header('Campaign leads');
   <?= number_format($total) ?> lead(s) match<?= array_filter($filters) ? ' this filter' : '' ?><?= $showByWaveStatus ? ' (page ' . $page . ' of ' . $totalPages . ')' : ' -- grouped by Wave status below' ?> --
   <a href="campaign_select_leads.php?campaign_id=<?= (int) $campaignId ?>">Add leads to this campaign</a> --
   <a href="campaign_flow.php?campaign_id=<?= (int) $campaignId ?>">Campaign flow</a> --
-  <a href="column_settings.php?page=campaign_leads&return_to=<?= urlencode('campaign_leads.php?campaign_id=' . $campaignId) ?>">Manage columns</a>
+  <a href="column_settings.php?page=campaign_leads&return_to=<?= urlencode('campaign_leads.php?campaign_id=' . $campaignId) ?>">Manage columns</a> --
+  <a href="campaign_leads_export_csv.php?<?= http_build_query(array_filter($filters) + ['campaign_id' => $campaignId]) ?>">Export filtered leads (CSV)</a>
 </p>
 
 <div class="card mb-3">
@@ -185,6 +196,7 @@ render_header('Campaign leads');
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&email_sent=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['email_sent_no'] ?> not sent</a>
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['imported_yes'] ?> imported to Saleshandy</a>
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['imported_no'] ?> not imported</a>
+    <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&clicked=1" class="badge bg-info text-decoration-none"><?= (int) $stats['clicked_yes'] ?> clicked a link</a>
   </div>
 </div>
 
@@ -221,6 +233,11 @@ render_header('Campaign leads');
         <option value="risky" <?= $filters['verification'] === 'risky' ? 'selected' : '' ?>>Risky</option>
         <option value="bad" <?= $filters['verification'] === 'bad' ? 'selected' : '' ?>>Bad</option>
         <option value="none" <?= $filters['verification'] === 'none' ? 'selected' : '' ?>>Not checked yet</option>
+      </select>
+      <select name="clicked" class="form-select form-select-sm" style="max-width: 190px;">
+        <option value="">Clicked a link (all)</option>
+        <option value="1" <?= $filters['clicked'] === '1' ? 'selected' : '' ?>>Yes</option>
+        <option value="0" <?= $filters['clicked'] === '0' ? 'selected' : '' ?>>No</option>
       </select>
       <button type="submit" class="btn btn-sm btn-primary">Filter</button>
       <?php if (array_filter($filters)): ?>
@@ -415,6 +432,24 @@ render_header('Campaign leads');
               <?php break;
           case 'saleshandy_synced': ?>
               <td class="small text-muted"><?= e($a['saleshandy_synced_at'] ?? '') ?></td>
+              <?php break;
+          case 'link_clicks': ?>
+              <td>
+                <?php if ($a['click_count'] > 0): ?>
+                  <span class="badge bg-info"><?= (int) $a['click_count'] ?></span>
+                <?php else: ?>
+                  <span class="text-muted small">0</span>
+                <?php endif; ?>
+              </td>
+              <?php break;
+          case 'linkedin': ?>
+              <td>
+                <?php if (!empty($a['person_linkedin_url'])): ?>
+                  <a href="<?= e($a['person_linkedin_url']) ?>" target="_blank" rel="noopener">Profile</a>
+                <?php else: ?>
+                  <span class="text-muted small">--</span>
+                <?php endif; ?>
+              </td>
               <?php break;
       }
   };
