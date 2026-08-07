@@ -63,8 +63,9 @@ and import, in order:
 37. `sql/037_capacity_forecast.sql`
 38. `sql/038_link_click_tracking.sql`
 39. `sql/039_follow_up_tasks.sql`
+40. `sql/040_followup_task_connection_status.sql`
 
-(If you're setting up a brand-new site, import all thirty-nine in order. If
+(If you're setting up a brand-new site, import all forty in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -767,11 +768,28 @@ Each task is assigned to **the campaign's owner** (`saleshandy_account_owner_id`
 at creation time, not re-resolved if the campaign's owner changes later) and
 visible under the same row-scoping rule as everywhere else (Admin sees the
 whole company, Team Lead their team, Member only their own). **One open
-task per lead+campaign** -- a lead that keeps engaging after a task already
-exists gets that task's signal flags updated and a "Re-engaged" badge/timestamp
-instead of a duplicate task; only once the existing task is marked Done or
-Skipped does further engagement start a fresh one. Status (Pending/In
-progress/Done/Skipped) and free-text notes are editable directly on the
+task per lead+campaign** -- a lead that keeps engaging while a task is still
+open gets that task's signal flags updated and a "Re-engaged" badge/timestamp
+instead of a duplicate task; only once the existing task reaches a terminal
+state does further engagement start a fresh one.
+
+**Status flow is specific to what every task here actually is -- a LinkedIn
+connection request** (`sql/040_followup_task_connection_status.sql`): Pending
+&rarr; In progress (optional, "I've started working this") &rarr; Connection
+sent &rarr; Connection accepted (terminal), with Skipped reachable from any
+non-terminal state for opting out instead of following up. **Connection
+sent is set automatically** the moment you click the task's LinkedIn
+"Profile" link -- a background, fire-and-forget request
+(`FollowUpTaskRepository::markConnectionSentIfEarlier()`) fires alongside the
+normal link navigation, and only advances a task still at Pending/In
+progress (a second click, or clicking on an already-sent/accepted task, is a
+silent no-op -- it never regresses status). The manual **"Mark connection
+sent"** button on each row still works regardless, for whenever the
+automatic click tracking doesn't fire (e.g. the request was actually sent
+through some other channel). A separate **"Mark accepted"** button records
+once you've confirmed they accepted -- Saleshandy's API exposes no
+connection-acceptance signal, so this is manual by design, not something
+that can be auto-detected. Free-text notes are editable directly on the
 Follow-up Tasks page, filterable by status/campaign/triggering signal/assignee.
 
 ## Email verification (Bad / Risky / Verified)

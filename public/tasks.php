@@ -9,6 +9,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify();
     $action = $_POST['action'] ?? '';
     $taskId = (int) ($_POST['task_id'] ?? 0);
+
+    // Fire-and-forget background call from the LinkedIn "Profile" link's
+    // onclick handler -- no flash message, no redirect, since the browser
+    // is already navigating to LinkedIn in a new tab and never sees this
+    // response. A task that isn't visible/already past pending/in_progress
+    // is silently ignored, not an error, since a click firing twice (or
+    // after the task was already advanced by hand) is expected, not a bug.
+    if ($action === 'mark_connection_sent_click') {
+        $task = FollowUpTaskRepository::loadVisible(db(), $scope, $taskId);
+        if ($task) {
+            FollowUpTaskRepository::markConnectionSentIfEarlier(db(), $scope, $taskId);
+        }
+        http_response_code(204);
+        exit;
+    }
+
     $task = FollowUpTaskRepository::loadVisible(db(), $scope, $taskId);
 
     if (!$task) {
@@ -92,11 +108,12 @@ render_header('Follow-up Tasks');
   <div class="card-header">Filters</div>
   <div class="card-body">
     <form method="get" action="tasks.php" class="d-flex flex-wrap gap-2 align-items-center">
-      <select name="status" class="form-select form-select-sm" style="max-width: 180px;">
-        <option value="">Open (pending/in progress)</option>
+      <select name="status" class="form-select form-select-sm" style="max-width: 200px;">
+        <option value="">Open (not yet resolved)</option>
         <option value="pending" <?= $filters['status'] === 'pending' ? 'selected' : '' ?>>Pending</option>
         <option value="in_progress" <?= $filters['status'] === 'in_progress' ? 'selected' : '' ?>>In progress</option>
-        <option value="done" <?= $filters['status'] === 'done' ? 'selected' : '' ?>>Done</option>
+        <option value="connection_sent" <?= $filters['status'] === 'connection_sent' ? 'selected' : '' ?>>Connection sent</option>
+        <option value="connection_accepted" <?= $filters['status'] === 'connection_accepted' ? 'selected' : '' ?>>Connection accepted</option>
         <option value="skipped" <?= $filters['status'] === 'skipped' ? 'selected' : '' ?>>Skipped</option>
       </select>
       <select name="campaign_id" class="form-select form-select-sm" style="max-width: 220px;">
@@ -152,7 +169,7 @@ render_header('Follow-up Tasks');
           <td class="small"><?= e($t['email']) ?></td>
           <td>
             <?php if (!empty($t['person_linkedin_url'])): ?>
-              <a href="<?= e($t['person_linkedin_url']) ?>" target="_blank" rel="noopener">Profile</a>
+              <a href="<?= e($t['person_linkedin_url']) ?>" target="_blank" rel="noopener" onclick="markConnectionSentOnClick(<?= (int) $t['id'] ?>)">Profile</a>
             <?php else: ?>
               <span class="text-muted small">--</span>
             <?php endif; ?>
@@ -167,8 +184,8 @@ render_header('Follow-up Tasks');
           <td class="small text-muted"><?= e($t['assigned_to_name'] ?? 'Unassigned') ?></td>
           <td>
             <?php
-            $statusBadge = ['pending' => 'secondary', 'in_progress' => 'primary', 'done' => 'success', 'skipped' => 'dark'];
-            $statusLabel = ['pending' => 'Pending', 'in_progress' => 'In progress', 'done' => 'Done', 'skipped' => 'Skipped'];
+            $statusBadge = ['pending' => 'secondary', 'in_progress' => 'primary', 'connection_sent' => 'info', 'connection_accepted' => 'success', 'skipped' => 'dark'];
+            $statusLabel = ['pending' => 'Pending', 'in_progress' => 'In progress', 'connection_sent' => 'Connection sent', 'connection_accepted' => 'Connection accepted', 'skipped' => 'Skipped'];
             ?>
             <span class="badge bg-<?= $statusBadge[$t['status']] ?>"><?= e($statusLabel[$t['status']]) ?></span>
           </td>
@@ -190,7 +207,10 @@ render_header('Follow-up Tasks');
                 <button type="submit" name="status" value="in_progress" class="btn btn-sm btn-outline-primary">Start</button>
               <?php endif; ?>
               <?php if (in_array($t['status'], ['pending', 'in_progress'], true)): ?>
-                <button type="submit" name="status" value="done" class="btn btn-sm btn-outline-success">Done</button>
+                <button type="submit" name="status" value="connection_sent" class="btn btn-sm btn-outline-info">Mark connection sent</button>
+                <button type="submit" name="status" value="skipped" class="btn btn-sm btn-outline-dark">Skip</button>
+              <?php elseif ($t['status'] === 'connection_sent'): ?>
+                <button type="submit" name="status" value="connection_accepted" class="btn btn-sm btn-outline-success">Mark accepted</button>
                 <button type="submit" name="status" value="skipped" class="btn btn-sm btn-outline-dark">Skip</button>
               <?php else: ?>
                 <button type="submit" name="status" value="pending" class="btn btn-sm btn-outline-secondary">Reopen</button>
@@ -217,5 +237,22 @@ render_header('Follow-up Tasks');
   </ul>
 </nav>
 <?php endif; ?>
+
+<script>
+  // Fired by the LinkedIn "Profile" link's onclick -- auto-advances a task
+  // to "Connection sent" the moment you actually open the profile, without
+  // blocking the link's own navigation (target="_blank" + no preventDefault,
+  // this is a fire-and-forget background call). No-ops server-side if the
+  // task is already past pending/in_progress, or if this fails outright
+  // (e.g. offline) -- the manual "Mark connection sent" button on the row
+  // is always there as a fallback either way.
+  function markConnectionSentOnClick(taskId) {
+    var body = new URLSearchParams();
+    body.set('csrf_token', <?= json_encode(csrf_token()) ?>);
+    body.set('action', 'mark_connection_sent_click');
+    body.set('task_id', taskId);
+    fetch('tasks.php', { method: 'POST', body: body, keepalive: true }).catch(function () {});
+  }
+</script>
 
 <?php render_footer(); ?>

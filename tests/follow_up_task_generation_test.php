@@ -109,15 +109,51 @@ try {
     $task = $taskStmt->fetch();
     $assert((int) $task['flag_reply'] === 1, 'Task is now also flagged for the positive reply');
 
-    // --- Once the task is done, further engagement starts a FRESH task instead of reopening it.
-    FollowUpTaskRepository::setStatus($db, Scope::fromUser($db, ['id' => $ownerId, 'company_id' => $companyId, 'role' => ROLE_MEMBER, 'team_id' => $teamId]), $firstTaskId, 'done', $ownerId);
-    $db->prepare('UPDATE lead_campaign_assignments SET open_count = 5 WHERE id = ?')->execute([$assignmentId]);
-    // Reset reply_sentiment away from Positive so only the (already-satisfied) open threshold is newly re-checked --
-    // otherwise this assertion can't tell "found existing done task, ignored it" apart from "reply flag stayed off".
+    // --- markConnectionSentIfEarlier(): advances pending/in_progress -> connection_sent, a no-op once already past that.
+    $ownerScope = Scope::fromUser($db, ['id' => $ownerId, 'company_id' => $companyId, 'role' => ROLE_MEMBER, 'team_id' => $teamId]);
+    $advanced = FollowUpTaskRepository::markConnectionSentIfEarlier($db, $ownerScope, $firstTaskId);
+    $assert($advanced === true, 'markConnectionSentIfEarlier() advances a pending task to connection_sent');
+    $taskStmt->execute([$leadId, $campaignId]);
+    $task = $taskStmt->fetch();
+    $assert($task['status'] === 'connection_sent', 'Task status is now connection_sent');
+    $advancedAgain = FollowUpTaskRepository::markConnectionSentIfEarlier($db, $ownerScope, $firstTaskId);
+    $assert($advancedAgain === false, 'A second click on an already-sent task is a silent no-op, not a regression');
+
+    // --- A task still in connection_sent counts as "open" -- further engagement bumps it, not a duplicate.
+    // (flag_opens is already saturated from earlier steps -- reset it so this bump is observable.)
+    $db->prepare("UPDATE follow_up_tasks SET flag_opens = 0 WHERE id = ?")->execute([$firstTaskId]);
+    $db->prepare('UPDATE lead_campaign_assignments SET open_count = 4 WHERE id = ?')->execute([$assignmentId]);
     $created = FollowUpTaskRepository::generateForCampaign($db, $reload());
-    $assert($created === 1, 'Engagement after the prior task is done creates a new task, not a reopen');
+    $assert($created === 1, 'A connection_sent task still gets bumped by new engagement, not duplicated');
     $countStmt->execute([$campaignId]);
-    $assert((int) $countStmt->fetchColumn() === 2, 'Two tasks now exist: the done one and the fresh one');
+    $assert((int) $countStmt->fetchColumn() === 1, 'Still exactly one task -- connection_sent counts as open');
+
+    // --- Once the task reaches a terminal state (connection_accepted), further engagement starts a FRESH task.
+    FollowUpTaskRepository::setStatus($db, $ownerScope, $firstTaskId, 'connection_accepted', $ownerId);
+    $db->prepare('UPDATE lead_campaign_assignments SET open_count = 5 WHERE id = ?')->execute([$assignmentId]);
+    $created = FollowUpTaskRepository::generateForCampaign($db, $reload());
+    $assert($created === 1, 'Engagement after the prior task is connection_accepted creates a new task, not a reopen');
+    $countStmt->execute([$campaignId]);
+    $assert((int) $countStmt->fetchColumn() === 2, 'Two tasks now exist: the accepted one and the fresh one');
+    $secondTaskStmt = $db->prepare("SELECT id FROM follow_up_tasks WHERE lead_id = ? AND campaign_id = ? AND id != ?");
+    $secondTaskStmt->execute([$leadId, $campaignId, $firstTaskId]);
+    $secondTaskId = (int) $secondTaskStmt->fetchColumn();
+    $assert($secondTaskId > 0, 'A distinct second task id exists alongside the first');
+
+    // --- markConnectionSentIfEarlier() never regresses a terminal task.
+    $regressed = FollowUpTaskRepository::markConnectionSentIfEarlier($db, $ownerScope, $firstTaskId);
+    $assert($regressed === false, 'Clicking the LinkedIn link again on an accepted task never regresses its status');
+    $firstTaskStmt = $db->prepare('SELECT status FROM follow_up_tasks WHERE id = ?');
+    $firstTaskStmt->execute([$firstTaskId]);
+    $assert($firstTaskStmt->fetchColumn() === 'connection_accepted', 'The accepted task is still connection_accepted after the click');
+
+    // --- Skip is reachable and is also a terminal state for the "one open task" rule.
+    FollowUpTaskRepository::setStatus($db, $ownerScope, $secondTaskId, 'skipped', $ownerId);
+    $db->prepare('UPDATE lead_campaign_assignments SET click_count = 3 WHERE id = ?')->execute([$assignmentId]);
+    $created = FollowUpTaskRepository::generateForCampaign($db, $reload());
+    $assert($created === 1, 'Engagement after the second task is skipped creates yet another fresh task');
+    $countStmt->execute([$campaignId]);
+    $assert((int) $countStmt->fetchColumn() === 3, 'Three tasks now exist total');
 
     // --- No rules configured on a campaign: generateForCampaign() is a no-op, not an error.
     $stmt = $db->prepare('INSERT INTO campaigns (company_id, name, created_by, saleshandy_account_owner_id) VALUES (?, ?, ?, ?)');

@@ -3,20 +3,33 @@
 require_once __DIR__ . '/ScopeFilter.php';
 
 /**
- * Auto-generates "go follow up manually" tasks (e.g. send a LinkedIn
- * connection request) from a campaign's own engagement thresholds --
- * opens, clicks, and/or a positive reply -- and provides the scoped
- * listing/status-change methods behind public/tasks.php.
+ * Auto-generates "go follow up manually" tasks (a LinkedIn connection
+ * request) from a campaign's own engagement thresholds -- opens, clicks,
+ * and/or a positive reply -- and provides the scoped listing/status-change
+ * methods behind public/tasks.php.
  *
- * One open (not done/skipped) task per lead+campaign: a lead that keeps
- * engaging after a task already exists gets that task's flags updated and
- * `reengaged_at` bumped, never a second task for the same lead+campaign
- * (enforced in generateForCampaign() in application code, not a DB
- * constraint, since MySQL/MariaDB has no partial-unique-index support to
- * express "unique while status != done").
+ * Status flow: pending -> in_progress (optional, "I've started working
+ * this") -> connection_sent (the LinkedIn request went out -- either
+ * auto-marked when the task's Profile link is clicked, see
+ * markConnectionSentIfEarlier(), or via the manual "Mark connection sent"
+ * button for when that automatic tracking doesn't fire) ->
+ * connection_accepted (terminal). skipped is reachable from any non-
+ * terminal state, for opting out instead of following up.
+ *
+ * One open task per lead+campaign: "open" means anything before the two
+ * terminal states (connection_accepted/skipped) -- a lead that keeps
+ * engaging while a task is still open gets that task's flags updated and
+ * `reengaged_at` bumped instead of a second task (enforced in
+ * generateForCampaign() in application code, not a DB constraint, since
+ * MySQL/MariaDB has no partial-unique-index support to express "unique
+ * while not yet terminal").
  */
 class FollowUpTaskRepository
 {
+    private const OPEN_STATUSES = ['pending', 'in_progress', 'connection_sent'];
+    private const TERMINAL_STATUSES = ['connection_accepted', 'skipped'];
+    private const ALL_STATUSES = ['pending', 'in_progress', 'connection_sent', 'connection_accepted', 'skipped'];
+
     /**
      * Evaluates campaign.followup_open_threshold/followup_click_threshold/
      * followup_on_positive_reply against every assignment on this campaign
@@ -61,9 +74,10 @@ class FollowUpTaskRepository
             return 0;
         }
 
+        $openStatusPlaceholders = implode(',', array_fill(0, count(self::OPEN_STATUSES), '?'));
         $findExisting = $db->prepare(
             "SELECT id, flag_opens, flag_clicks, flag_reply FROM follow_up_tasks
-              WHERE lead_id = ? AND campaign_id = ? AND status IN ('pending', 'in_progress')
+              WHERE lead_id = ? AND campaign_id = ? AND status IN ({$openStatusPlaceholders})
               LIMIT 1"
         );
         $insert = $db->prepare(
@@ -80,7 +94,7 @@ class FollowUpTaskRepository
             $flagClicks = $clickThreshold !== null && (int) $row['click_count'] >= $clickThreshold;
             $flagReply = $onPositiveReply && $row['reply_sentiment'] === 'Positive';
 
-            $findExisting->execute([$row['lead_id'], $campaign['id']]);
+            $findExisting->execute(array_merge([$row['lead_id'], $campaign['id']], self::OPEN_STATUSES));
             $existing = $findExisting->fetch();
 
             if ($existing) {
@@ -158,12 +172,18 @@ class FollowUpTaskRepository
         ScopeFilter::apply($clauses, $params, $scope, 't');
         ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db, 't', 'assigned_to');
 
-        if (!empty($filters['status']) && in_array($filters['status'], ['pending', 'in_progress', 'done', 'skipped'], true)) {
+        if (!empty($filters['status']) && in_array($filters['status'], self::ALL_STATUSES, true)) {
             $clauses[] = 't.status = :status';
             $params['status'] = $filters['status'];
         } elseif (empty($filters['status'])) {
-            // Default view: hide done/skipped so the list is "what's left to do".
-            $clauses[] = "t.status IN ('pending', 'in_progress')";
+            // Default view: hide the terminal statuses so the list is "what's left to do".
+            $openPlaceholders = [];
+            foreach (self::OPEN_STATUSES as $i => $s) {
+                $key = "default_open_status_{$i}";
+                $openPlaceholders[] = ":{$key}";
+                $params[$key] = $s;
+            }
+            $clauses[] = 't.status IN (' . implode(',', $openPlaceholders) . ')';
         }
         if (!empty($filters['campaign_id'])) {
             $clauses[] = 't.campaign_id = :campaign_id';
@@ -208,15 +228,35 @@ class FollowUpTaskRepository
 
     public static function setStatus(PDO $db, Scope $scope, int $taskId, string $status, int $userId): bool
     {
-        if (!in_array($status, ['pending', 'in_progress', 'done', 'skipped'], true)) {
+        if (!in_array($status, self::ALL_STATUSES, true)) {
             return false;
         }
-        $completedAt = in_array($status, ['done', 'skipped'], true) ? 'NOW()' : 'NULL';
-        $completedBy = in_array($status, ['done', 'skipped'], true) ? $userId : null;
+        $isTerminal = in_array($status, self::TERMINAL_STATUSES, true);
+        $completedAt = $isTerminal ? 'NOW()' : 'NULL';
+        $completedBy = $isTerminal ? $userId : null;
         $stmt = $db->prepare(
             "UPDATE follow_up_tasks SET status = ?, completed_at = {$completedAt}, completed_by = ? WHERE id = ? AND company_id = ?"
         );
         $stmt->execute([$status, $completedBy, $taskId, $scope->companyId]);
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * Auto-advances a task to Connection Sent the moment its LinkedIn
+     * Profile link is clicked -- only if it's still earlier in the flow
+     * (pending/in_progress), so a background click on an already-sent or
+     * already-accepted task (e.g. someone re-opens the link to double-check
+     * the profile) never regresses it. Silent no-op, not a full status
+     * change, for a fire-and-forget background call from the task list's
+     * onclick handler -- see tasks.php's `action=mark_connection_sent_click`.
+     */
+    public static function markConnectionSentIfEarlier(PDO $db, Scope $scope, int $taskId): bool
+    {
+        $stmt = $db->prepare(
+            "UPDATE follow_up_tasks SET status = 'connection_sent'
+              WHERE id = ? AND company_id = ? AND status IN ('pending', 'in_progress')"
+        );
+        $stmt->execute([$taskId, $scope->companyId]);
         return $stmt->rowCount() > 0;
     }
 
