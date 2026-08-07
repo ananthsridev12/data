@@ -60,8 +60,11 @@ and import, in order:
 34. `sql/034_multi_tenant_tighten.sql`
 35. `sql/035_saleshandy_field_sync_cron.sql`
 36. `sql/036_capacity_planner.sql`
+37. `sql/037_capacity_forecast.sql`
+38. `sql/038_link_click_tracking.sql`
+39. `sql/039_follow_up_tasks.sql`
 
-(If you're setting up a brand-new site, import all thirty-six in order. If
+(If you're setting up a brand-new site, import all thirty-nine in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -722,6 +725,54 @@ back far enough to fill in past history. "Contacts in database"
 it's ever been assigned to a campaign -- so Coverage % will read low if
 you've imported more leads than you've started outreach to, which is
 expected, not a bug.
+
+## Link click tracking + LinkedIn follow-up (Campaign Leads, Follow-up Tasks)
+
+**Link clicks are now tracked alongside email opens** -- `sql/038_link_click_tracking.sql`
+adds `lead_campaign_assignments.click_count`/`saleshandy_send_events.click_count`.
+`SaleshandyClient::fetchSequenceActivity()` already discarded Saleshandy's own
+`Click Count` field on every fetch (confirmed present in the same
+`/analytics/consolidated-stats` response `open_count` comes from); it now
+parses and persists it, same cumulative-snapshot caveat as Open Count (no
+per-click timestamp or which-link-was-clicked history, only a running total).
+
+Surfaced on **Campaign Leads**: a "Clicked" filter and Overview badge
+(both N-or-more-times thresholds, same treatment as the existing "Opened"
+filter/badge), sortable Email Opens/Link Clicks columns, a LinkedIn column
+(clickable `person_linkedin_url`), and an **Export filtered leads (CSV)**
+link (`campaign_leads_export_csv.php`) for taking a filtered list (e.g.
+"clicked 1+ times") out for manual LinkedIn outreach -- read-only, unlike
+the Saleshandy-import CSV export, it never touches `status`/`exported_at`.
+
+**Existing, already-synced campaigns start at zero for both signals** until
+re-synced -- the regular "Refresh statuses" sync only asks Saleshandy for
+activity since the campaign's last sync checkpoint, so historical
+opens/clicks that happened before that checkpoint are never re-fetched by
+an incremental sync. Run **Backfill dates & status** once per existing
+campaign after deploying to pull in the full 2-year history; going forward,
+new opens/clicks are picked up automatically by the regular sync/cron.
+
+**Follow-up Tasks** (`public/tasks.php`, `sql/039_follow_up_tasks.sql`)
+auto-creates a task once a lead crosses a campaign's own configurable
+engagement thresholds -- Email opens &ge; N, Link clicks &ge; N, and/or a
+positive reply -- so a rep doesn't have to manually scan the Clicked/Opened
+filters to find who's ready for a LinkedIn connection request. Thresholds
+are set **per campaign** (Campaign &rarr; Saleshandy settings &rarr;
+"Follow-up task rules"; leave a count blank to disable that signal for that
+campaign) via `SaleshandyClient::syncCampaign()`/`backfillHistoricalDates()`
+calling `FollowUpTaskRepository::generateForCampaign()` at the end of every
+sync/backfill, same placement as `releaseResolvedWaveLeaders()`.
+
+Each task is assigned to **the campaign's owner** (`saleshandy_account_owner_id`
+at creation time, not re-resolved if the campaign's owner changes later) and
+visible under the same row-scoping rule as everywhere else (Admin sees the
+whole company, Team Lead their team, Member only their own). **One open
+task per lead+campaign** -- a lead that keeps engaging after a task already
+exists gets that task's signal flags updated and a "Re-engaged" badge/timestamp
+instead of a duplicate task; only once the existing task is marked Done or
+Skipped does further engagement start a fresh one. Status (Pending/In
+progress/Done/Skipped) and free-text notes are editable directly on the
+Follow-up Tasks page, filterable by status/campaign/triggering signal/assignee.
 
 ## Email verification (Bad / Risky / Verified)
 

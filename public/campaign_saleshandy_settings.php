@@ -63,6 +63,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'unlink') {
         db()->prepare('UPDATE campaigns SET saleshandy_sequence_id = NULL, saleshandy_step_id = NULL WHERE id = ?')->execute([$campaignId]);
         flash_set('success', 'Unlinked from Saleshandy.');
+    } elseif ($action === 'set_followup_rules') {
+        $openThreshold = trim((string) ($_POST['followup_open_threshold'] ?? ''));
+        $clickThreshold = trim((string) ($_POST['followup_click_threshold'] ?? ''));
+        db()->prepare(
+            'UPDATE campaigns SET followup_open_threshold = ?, followup_click_threshold = ?, followup_on_positive_reply = ? WHERE id = ?'
+        )->execute([
+            $openThreshold !== '' ? (int) $openThreshold : null,
+            $clickThreshold !== '' ? (int) $clickThreshold : null,
+            !empty($_POST['followup_on_positive_reply']) ? 1 : 0,
+            $campaignId,
+        ]);
+        flash_set('success', 'Follow-up task rules saved.');
     }
 
     header('Location: campaign_saleshandy_settings.php?campaign_id=' . $campaignId);
@@ -111,6 +123,30 @@ render_header('Saleshandy settings');
         <button type="submit" class="btn btn-sm btn-outline-danger">Unlink</button>
       </form>
     <?php endif; ?>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Follow-up task rules <?= info_icon('Automatically creates a "Follow-up Tasks" entry (e.g. to manually send a LinkedIn connection request) once a lead on this campaign crosses these thresholds -- checked on every sync/backfill. Leave a count blank to disable that signal for this campaign.') ?></div>
+  <div class="card-body">
+    <form method="post" action="campaign_saleshandy_settings.php" class="d-flex flex-wrap gap-3 align-items-end">
+      <?= csrf_field() ?>
+      <input type="hidden" name="campaign_id" value="<?= (int) $campaignId ?>">
+      <input type="hidden" name="action" value="set_followup_rules">
+      <div>
+        <label class="form-label small mb-1">Email opens &ge;</label>
+        <input type="number" min="1" name="followup_open_threshold" class="form-control form-control-sm" style="max-width: 100px;" value="<?= e($campaign['followup_open_threshold'] ?? '') ?>" placeholder="off">
+      </div>
+      <div>
+        <label class="form-label small mb-1">Link clicks &ge;</label>
+        <input type="number" min="1" name="followup_click_threshold" class="form-control form-control-sm" style="max-width: 100px;" value="<?= e($campaign['followup_click_threshold'] ?? '') ?>" placeholder="off">
+      </div>
+      <div class="form-check mb-1">
+        <input class="form-check-input" type="checkbox" name="followup_on_positive_reply" value="1" id="followupPositiveReply" <?= $campaign['followup_on_positive_reply'] ? 'checked' : '' ?>>
+        <label class="form-check-label small" for="followupPositiveReply">On positive reply</label>
+      </div>
+      <button type="submit" class="btn btn-sm btn-primary">Save</button>
+    </form>
   </div>
 </div>
 

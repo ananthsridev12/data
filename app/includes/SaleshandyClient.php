@@ -4,6 +4,7 @@ require_once __DIR__ . '/../config/constants.php';
 require_once __DIR__ . '/WaveAssigner.php';
 require_once __DIR__ . '/TagRepository.php';
 require_once __DIR__ . '/SaleshandyKeyCipher.php';
+require_once __DIR__ . '/FollowUpTaskRepository.php';
 
 /**
  * Thin cURL wrapper around Saleshandy's REST API. No SDK/Composer, matching
@@ -922,11 +923,11 @@ class SaleshandyClient
      * it runs even when Saleshandy reports zero new activity.
      *
      * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
-     * @return array{matched:int,bounced:int,replied:int,released:int,verified:int,verification_error:?string,events_persisted:int}
+     * @return array{matched:int,bounced:int,replied:int,released:int,verified:int,verification_error:?string,events_persisted:int,tasks_generated:int}
      */
     public function syncCampaign(PDO $db, array $campaign, int $userId): array
     {
-        $stats = ['matched' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0, 'verified' => 0, 'verification_error' => null, 'events_persisted' => 0];
+        $stats = ['matched' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0, 'verified' => 0, 'verification_error' => null, 'events_persisted' => 0, 'tasks_generated' => 0];
         $sequenceId = $campaign['saleshandy_sequence_id'];
         if (!$sequenceId) {
             return $stats;
@@ -988,6 +989,7 @@ class SaleshandyClient
         $verifyResult = $this->refreshVerificationStatus($db, (int) $campaign['id']);
         $stats['verified'] += $verifyResult['checked'];
         $stats['verification_error'] = $verifyResult['error'];
+        $stats['tasks_generated'] = FollowUpTaskRepository::generateForCampaign($db, $campaign);
         $db->prepare('UPDATE campaigns SET saleshandy_last_synced_at = NOW() WHERE id = ?')->execute([$campaign['id']]);
 
         return $stats;
@@ -1316,14 +1318,14 @@ class SaleshandyClient
      * rather than on every "Refresh statuses" click.
      *
      * @param array<string,mixed> $campaign a row from `campaigns` (must have saleshandy_sequence_id)
-     * @return array{checked:int, email_date_fixed:int, pushed_at_fixed:int, delivery_status_fixed:int, bounced:int, replied:int, released:int, opens_fixed:int, events_persisted:int}
+     * @return array{checked:int, email_date_fixed:int, pushed_at_fixed:int, delivery_status_fixed:int, bounced:int, replied:int, released:int, opens_fixed:int, events_persisted:int, tasks_generated:int}
      */
     public function backfillHistoricalDates(PDO $db, array $campaign, int $userId): array
     {
         $stats = [
             'checked' => 0, 'email_date_fixed' => 0, 'pushed_at_fixed' => 0,
             'delivery_status_fixed' => 0, 'bounced' => 0, 'replied' => 0, 'released' => 0, 'opens_fixed' => 0,
-            'events_persisted' => 0,
+            'events_persisted' => 0, 'tasks_generated' => 0,
         ];
         $sequenceId = $campaign['saleshandy_sequence_id'];
         if (!$sequenceId) {
@@ -1409,6 +1411,7 @@ class SaleshandyClient
         }
 
         $stats['released'] += $this->releaseResolvedWaveLeaders($db, (int) $campaign['id']);
+        $stats['tasks_generated'] = FollowUpTaskRepository::generateForCampaign($db, $campaign);
 
         return $stats;
     }

@@ -61,6 +61,7 @@ function nav_links(array $user): array
     $links = [
         ['href' => 'dashboard.php', 'label' => 'Dashboard'],
         ['href' => 'campaigns.php', 'label' => 'Campaigns'],
+        ['href' => 'tasks.php', 'label' => 'Follow-up Tasks'],
         ['href' => 'accounts.php', 'label' => 'Accounts'],
         ['href' => 'analytics.php', 'label' => 'Analytics'],
         ['href' => 'reports.php', 'label' => 'Reports'],
