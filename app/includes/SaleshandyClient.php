@@ -1675,10 +1675,15 @@ class SaleshandyClient
      * Retries a request up to 3 extra times (1s, 2s, 4s backoff) if
      * Saleshandy responds with "Rate Limit exceeded" (error_code 4000,
      * seen in practice when a bulk action like syncFieldsToSaleshandy()
-     * fires many requests back-to-back) -- Saleshandy's own CLI doesn't
-     * document or handle a rate limit at all, so these numbers are a
-     * conservative guess, not a confirmed spec. Any other error type
-     * still fails immediately, unretried.
+     * fires many requests back-to-back). Confirmed directly with
+     * Saleshandy support (not just inferred from hitting it): per API
+     * key, the limit is 20 requests/minute per endpoint and 300
+     * requests/minute total across all endpoints combined -- since a key
+     * is per-member here (see forUser()), that budget is never shared
+     * across members, only ever burned by one member's own calls
+     * (manual clicks on Sync Center, that member's slice of a
+     * round-robin cron tick, etc.). Any other error type still fails
+     * immediately, unretried.
      *
      * @param array<string,mixed> $params query params (GET) or JSON body (POST/PUT)
      * @return array<string,mixed>
