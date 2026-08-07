@@ -41,19 +41,32 @@ class AnalyticsRepository
     ";
 
     /**
-     * One consolidated table for a single dimension: Prospects / Imported
-     * to Saleshandy / Not Imported / Email Sent / Email Not Sent, each
-     * row's Imported+Not Imported (and Email Sent+Email Not Sent) always
-     * adding back up to Prospects -- "not imported"/"email not sent" both
-     * mean "everyone else", not a narrower in-flight-pipeline subset, so
-     * the numbers need no extra explanation.
+     * One consolidated table for a single dimension: Prospects / Linked to
+     * a campaign / Imported to Saleshandy / Not Imported (broken down by
+     * WHY) / Email Sent / Email Not Sent, each row's Imported+Not Imported
+     * (and Email Sent+Email Not Sent) always adding back up to Prospects.
+     *
+     * "Not imported" is further split into 5 mutually-exclusive reasons
+     * (summing back to not_imported exactly), each row's assignment
+     * falling into exactly one bucket:
+     *  - not_imported_no_campaign: never assigned to any campaign at all.
+     *  - not_imported_suppressed: assigned, but held back -- its domain
+     *    bounced (wave_status = 'suppressed').
+     *  - not_imported_held: assigned, but waiting on its wave-1 leader's
+     *    delivery to be confirmed first (wave_status = 'held').
+     *  - not_imported_no_sequence: assigned to a campaign that isn't
+     *    linked to a Saleshandy sequence yet, so pushing it isn't even
+     *    possible until that's configured.
+     *  - not_imported_queued: assigned, wave-active, campaign linked --
+     *    genuinely just hasn't been pushed yet (nobody's clicked "Push"
+     *    for it, or it's mid-verification-filter).
      *
      * @param array<string,mixed> $filters campaign_id, vertical_id, service_id, industry,
      *   created_from, created_to (leads.created_at date range, Y-m-d),
      *   email_sent_from, email_sent_to (assignment email_sent_at date range, Y-m-d)
      * @return array{
-     *   rows: array<int,array{grp:string,prospects:int,imported:int,not_imported:int,email_sent:int,email_not_sent:int}>,
-     *   total: array{prospects:int,imported:int,not_imported:int,email_sent:int,email_not_sent:int}
+     *   rows: array<int,array{grp:string,prospects:int,linked_to_campaign:int,imported:int,not_imported:int,not_imported_no_campaign:int,not_imported_suppressed:int,not_imported_held:int,not_imported_no_sequence:int,not_imported_queued:int,email_sent:int,email_not_sent:int}>,
+     *   total: array{prospects:int,linked_to_campaign:int,imported:int,not_imported:int,not_imported_no_campaign:int,not_imported_suppressed:int,not_imported_held:int,not_imported_no_sequence:int,not_imported_queued:int,email_sent:int,email_not_sent:int}
      * }
      */
     public static function pivotByDimension(PDO $db, Scope $scope, string $groupBy, array $filters): array
@@ -71,8 +84,14 @@ class AnalyticsRepository
         // campaign_leads.php's own "Imported" column definition.
         $sql = "SELECT {$groupExpr} AS grp,
                    COUNT(*) AS prospects,
+                   SUM(CASE WHEN a.campaign_id IS NOT NULL THEN 1 ELSE 0 END) AS linked_to_campaign,
                    SUM(CASE WHEN a.status IN ('exported', 'pushed') THEN 1 ELSE 0 END) AS imported,
                    SUM(CASE WHEN a.status IS NULL OR a.status NOT IN ('exported', 'pushed') THEN 1 ELSE 0 END) AS not_imported,
+                   SUM(CASE WHEN a.campaign_id IS NULL THEN 1 ELSE 0 END) AS not_imported_no_campaign,
+                   SUM(CASE WHEN a.campaign_id IS NOT NULL AND a.status NOT IN ('exported', 'pushed') AND a.wave_status = 'suppressed' THEN 1 ELSE 0 END) AS not_imported_suppressed,
+                   SUM(CASE WHEN a.campaign_id IS NOT NULL AND a.status NOT IN ('exported', 'pushed') AND a.wave_status = 'held' THEN 1 ELSE 0 END) AS not_imported_held,
+                   SUM(CASE WHEN a.campaign_id IS NOT NULL AND a.status NOT IN ('exported', 'pushed') AND a.wave_status = 'active' AND c.saleshandy_sequence_id IS NULL THEN 1 ELSE 0 END) AS not_imported_no_sequence,
+                   SUM(CASE WHEN a.campaign_id IS NOT NULL AND a.status NOT IN ('exported', 'pushed') AND a.wave_status = 'active' AND c.saleshandy_sequence_id IS NOT NULL THEN 1 ELSE 0 END) AS not_imported_queued,
                    SUM(CASE WHEN a.email_sent = 1 THEN 1 ELSE 0 END) AS email_sent,
                    SUM(CASE WHEN a.email_sent IS NULL OR a.email_sent = 0 THEN 1 ELSE 0 END) AS email_not_sent
                  FROM leads l "
@@ -85,14 +104,19 @@ class AnalyticsRepository
         $stmt->execute($params);
         $rows = $stmt->fetchAll();
 
-        $total = ['prospects' => 0, 'imported' => 0, 'not_imported' => 0, 'email_sent' => 0, 'email_not_sent' => 0];
-        foreach ($rows as $r) {
-            $total['prospects'] += (int) $r['prospects'];
-            $total['imported'] += (int) $r['imported'];
-            $total['not_imported'] += (int) $r['not_imported'];
-            $total['email_sent'] += (int) $r['email_sent'];
-            $total['email_not_sent'] += (int) $r['email_not_sent'];
+        $total = [
+            'prospects' => 0, 'linked_to_campaign' => 0, 'imported' => 0, 'not_imported' => 0,
+            'not_imported_no_campaign' => 0, 'not_imported_suppressed' => 0, 'not_imported_held' => 0,
+            'not_imported_no_sequence' => 0, 'not_imported_queued' => 0,
+            'email_sent' => 0, 'email_not_sent' => 0,
+        ];
+        foreach ($rows as &$r) {
+            foreach ($total as $key => $_) {
+                $r[$key] = (int) $r[$key];
+                $total[$key] += $r[$key];
+            }
         }
+        unset($r);
         return ['rows' => $rows, 'total' => $total];
     }
 

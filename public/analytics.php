@@ -36,9 +36,9 @@ foreach ($campaignFunnel as $cf) {
     }
 }
 
-// All four breakdowns shown together, same filters applied to each --
-// no "group by" dropdown to click through, so country/vertical/service/
-// campaign are all visible on one screen at once.
+// All breakdowns share the same filters -- no "group by" dropdown to
+// click through, so country group/vertical/service/campaign/company
+// country are all visible on one screen at once.
 $sections = [];
 foreach (AnalyticsRepository::GROUP_DIMENSIONS as $key => $label) {
     $sections[$key] = ['label' => $label, 'pivot' => AnalyticsRepository::pivotByDimension(db(), $scope, $key, $filters)];
@@ -46,7 +46,7 @@ foreach (AnalyticsRepository::GROUP_DIMENSIONS as $key => $label) {
 
 $filterQuery = $_GET;
 
-// All four sections share identical Grand Totals by construction (same
+// Every section shares identical Grand Totals by construction (same
 // filtered dataset, just grouped differently) -- reuse one for the two
 // top summary charts instead of computing anything new.
 $overallTotal = $sections['company_country']['pivot']['total'];
@@ -124,77 +124,113 @@ $drillLink = function (string $sectionKey, ?string $grp, ?string $metricKey, ?st
     return 'dashboard.php?' . http_build_query($params);
 };
 
+/** Small "why" breakdown under a Not Imported count -- only the reasons that actually have leads in them. */
+$notImportedReasons = static function (array $row): string {
+    $reasons = [
+        'Not assigned yet' => $row['not_imported_no_campaign'],
+        'Campaign not linked to Saleshandy' => $row['not_imported_no_sequence'],
+        'Domain suppressed' => $row['not_imported_suppressed'],
+        'Held (wave-1 pending)' => $row['not_imported_held'],
+        'Queued, not pushed yet' => $row['not_imported_queued'],
+    ];
+    $lines = [];
+    foreach ($reasons as $label => $count) {
+        if ($count > 0) {
+            $lines[] = e($label) . ': ' . number_format($count);
+        }
+    }
+    return $lines ? '<div class="small text-muted mt-1" style="line-height:1.4;">' . implode('<br>', $lines) . '</div>' : '';
+};
+
+// One breakdown card (table + chart tabs) -- a closure so the exact same
+// markup can render both in the main run (every dimension except Company
+// Country) and again at the bottom (Company Country alone), without
+// duplicating ~70 lines of HTML.
+$renderSection = function (string $key, array $section) use ($drillLink, $notImportedReasons): void {
+    $pivot = $section['pivot'];
+    ?>
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>By <?= e($section['label']) ?></span>
+      <ul class="nav nav-pills nav-sm" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#table-<?= e($key) ?>" type="button" role="tab">Table</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#chart-<?= e($key) ?>" type="button" role="tab" data-chart-key="<?= e($key) ?>">Chart</button>
+        </li>
+      </ul>
+    </div>
+    <div class="tab-content">
+      <div class="tab-pane fade show active" id="table-<?= e($key) ?>" role="tabpanel">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0 align-middle">
+            <thead>
+              <tr>
+                <th><?= e($section['label']) ?></th>
+                <th class="text-end">Prospects</th>
+                <th class="text-end">Linked to campaign</th>
+                <th class="text-end">Imported to Saleshandy</th>
+                <th class="text-end">Not imported</th>
+                <th class="text-end">Email sent</th>
+                <th class="text-end">Email not sent</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($pivot['rows'] as $row): ?>
+                <tr>
+                  <td><?= e($row['grp']) ?></td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], null, null)) ?>"><?= number_format($row['prospects']) ?></a></td>
+                  <td class="text-end"><?= number_format($row['linked_to_campaign']) ?></td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'imported', '1')) ?>"><?= number_format($row['imported']) ?></a></td>
+                  <td class="text-end">
+                    <a href="<?= e($drillLink($key, $row['grp'], 'imported', '0')) ?>"><?= number_format($row['not_imported']) ?></a>
+                    <?= $notImportedReasons($row) ?>
+                  </td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'email_sent', '1')) ?>"><?= number_format($row['email_sent']) ?></a></td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'email_sent', '0')) ?>"><?= number_format($row['email_not_sent']) ?></a></td>
+                </tr>
+              <?php endforeach; ?>
+              <?php if (!$pivot['rows']): ?>
+                <tr><td colspan="7" class="text-center text-muted py-3">No leads match this filter.</td></tr>
+              <?php endif; ?>
+            </tbody>
+            <?php if ($pivot['rows']): ?>
+            <tfoot>
+              <tr class="fw-bold table-light">
+                <td>Grand Total</td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, null, null)) ?>"><?= number_format($pivot['total']['prospects']) ?></a></td>
+                <td class="text-end"><?= number_format($pivot['total']['linked_to_campaign']) ?></td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, 'imported', '1')) ?>"><?= number_format($pivot['total']['imported']) ?></a></td>
+                <td class="text-end">
+                  <a href="<?= e($drillLink($key, null, 'imported', '0')) ?>"><?= number_format($pivot['total']['not_imported']) ?></a>
+                  <?= $notImportedReasons($pivot['total']) ?>
+                </td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, 'email_sent', '1')) ?>"><?= number_format($pivot['total']['email_sent']) ?></a></td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, 'email_sent', '0')) ?>"><?= number_format($pivot['total']['email_not_sent']) ?></a></td>
+              </tr>
+            </tfoot>
+            <?php endif; ?>
+          </table>
+        </div>
+      </div>
+      <div class="tab-pane fade" id="chart-<?= e($key) ?>" role="tabpanel">
+        <?php if ($pivot['rows']): ?>
+          <div class="p-3" style="height: <?= max(220, count($pivot['rows']) * 32) ?>px;">
+            <canvas id="canvas-<?= e($key) ?>"></canvas>
+          </div>
+          <script type="application/json" id="chartdata-<?= e($key) ?>"><?= json_encode($pivot['rows'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+        <?php else: ?>
+          <p class="text-center text-muted py-3 mb-0">No leads match this filter.</p>
+        <?php endif; ?>
+      </div>
+    </div>
+  </div>
+<?php };
+
 render_header('Analytics');
 ?>
 <h1 class="h4 mb-3">Analytics</h1>
-
-<div class="card mb-4">
-  <div class="card-header">
-    Campaign outreach funnel
-    <?= info_icon('Prospects: everyone assigned to this campaign. Contacted: had at least the first email sent. Step N sent: reached that step or later (cumulative -- since sequence steps fire in order, "reached step 3" means steps 1 and 2 went out too). Replies: currently marked Replied. All local-DB counts, not a live Saleshandy call.') ?>
-  </div>
-  <div class="table-responsive">
-    <table class="table table-sm mb-0 align-middle">
-      <thead>
-        <tr>
-          <th>S No</th>
-          <th>Campaign</th>
-          <th>Vertical</th>
-          <th>Service pitched</th>
-          <th class="text-end">Prospects</th>
-          <th class="text-end">Contacted</th>
-          <?php for ($n = 1; $n <= $funnelMaxStep; $n++): ?>
-            <th class="text-end">Step <?= $n ?> sent</th>
-          <?php endfor; ?>
-          <th class="text-end">Replies</th>
-          <th>First email date</th>
-        </tr>
-      </thead>
-      <tbody>
-        <?php foreach ($campaignFunnel as $i => $c): ?>
-          <tr>
-            <td><?= $i + 1 ?></td>
-            <td><?= e($c['name']) ?></td>
-            <td><?= e($c['vertical_label'] ?? '') ?></td>
-            <td><?= e($c['service_label'] ?? '') ?></td>
-            <td class="text-end"><?= number_format((int) $c['prospects']) ?></td>
-            <td class="text-end"><?= number_format((int) $c['contacted']) ?></td>
-            <?php for ($n = 1; $n <= $funnelMaxStep; $n++): ?>
-              <td class="text-end"><?= isset($c['steps'][$n]) ? number_format($c['steps'][$n]) : '' ?></td>
-            <?php endfor; ?>
-            <td class="text-end"><?= number_format((int) $c['replies']) ?></td>
-            <td><?= $c['first_email_date'] ? e(date('l, F j, Y', strtotime($c['first_email_date']))) : '' ?></td>
-          </tr>
-        <?php endforeach; ?>
-        <?php if (!$campaignFunnel): ?>
-          <tr><td colspan="<?= 8 + $funnelMaxStep ?>" class="text-center text-muted py-3">No campaigns yet.</td></tr>
-        <?php endif; ?>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<?php if ($overallTotal['prospects'] > 0): ?>
-<div class="row mb-4">
-  <div class="col-md-6">
-    <div class="card h-100">
-      <div class="card-header">Imported vs. not imported</div>
-      <div class="card-body" style="max-height: 260px;">
-        <canvas id="chartOverallImported"></canvas>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-6">
-    <div class="card h-100">
-      <div class="card-header">Email sent vs. not sent</div>
-      <div class="card-body" style="max-height: 260px;">
-        <canvas id="chartOverallEmail"></canvas>
-      </div>
-    </div>
-  </div>
-</div>
-<script type="application/json" id="chartdata-overall"><?= json_encode($overallTotal, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
-<?php endif; ?>
 
 <form method="get" action="analytics.php" class="card filter-card mb-4">
   <div class="card-body row g-2 align-items-end">
@@ -260,76 +296,80 @@ render_header('Analytics');
   </div>
 </form>
 
-<?php foreach ($sections as $key => $section): $pivot = $section['pivot']; ?>
-  <div class="card mb-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <span>By <?= e($section['label']) ?></span>
-      <ul class="nav nav-pills nav-sm" role="tablist">
-        <li class="nav-item" role="presentation">
-          <button class="nav-link active py-0 px-2" data-bs-toggle="tab" data-bs-target="#table-<?= e($key) ?>" type="button" role="tab">Table</button>
-        </li>
-        <li class="nav-item" role="presentation">
-          <button class="nav-link py-0 px-2" data-bs-toggle="tab" data-bs-target="#chart-<?= e($key) ?>" type="button" role="tab" data-chart-key="<?= e($key) ?>">Chart</button>
-        </li>
-      </ul>
-    </div>
-    <div class="tab-content">
-      <div class="tab-pane fade show active" id="table-<?= e($key) ?>" role="tabpanel">
-        <div class="table-responsive">
-          <table class="table table-sm mb-0 align-middle">
-            <thead>
-              <tr>
-                <th><?= e($section['label']) ?></th>
-                <th class="text-end">Prospects</th>
-                <th class="text-end">Imported to Saleshandy</th>
-                <th class="text-end">Not imported</th>
-                <th class="text-end">Email sent</th>
-                <th class="text-end">Email not sent</th>
-              </tr>
-            </thead>
-            <tbody>
-              <?php foreach ($pivot['rows'] as $row): ?>
-                <tr>
-                  <td><?= e($row['grp']) ?></td>
-                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], null, null)) ?>"><?= number_format((int) $row['prospects']) ?></a></td>
-                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'imported', '1')) ?>"><?= number_format((int) $row['imported']) ?></a></td>
-                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'imported', '0')) ?>"><?= number_format((int) $row['not_imported']) ?></a></td>
-                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'email_sent', '1')) ?>"><?= number_format((int) $row['email_sent']) ?></a></td>
-                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'email_sent', '0')) ?>"><?= number_format((int) $row['email_not_sent']) ?></a></td>
-                </tr>
-              <?php endforeach; ?>
-              <?php if (!$pivot['rows']): ?>
-                <tr><td colspan="6" class="text-center text-muted py-3">No leads match this filter.</td></tr>
-              <?php endif; ?>
-            </tbody>
-            <?php if ($pivot['rows']): ?>
-            <tfoot>
-              <tr class="fw-bold table-light">
-                <td>Grand Total</td>
-                <td class="text-end"><a href="<?= e($drillLink($key, null, null, null)) ?>"><?= number_format($pivot['total']['prospects']) ?></a></td>
-                <td class="text-end"><a href="<?= e($drillLink($key, null, 'imported', '1')) ?>"><?= number_format($pivot['total']['imported']) ?></a></td>
-                <td class="text-end"><a href="<?= e($drillLink($key, null, 'imported', '0')) ?>"><?= number_format($pivot['total']['not_imported']) ?></a></td>
-                <td class="text-end"><a href="<?= e($drillLink($key, null, 'email_sent', '1')) ?>"><?= number_format($pivot['total']['email_sent']) ?></a></td>
-                <td class="text-end"><a href="<?= e($drillLink($key, null, 'email_sent', '0')) ?>"><?= number_format($pivot['total']['email_not_sent']) ?></a></td>
-              </tr>
-            </tfoot>
-            <?php endif; ?>
-          </table>
-        </div>
-      </div>
-      <div class="tab-pane fade" id="chart-<?= e($key) ?>" role="tabpanel">
-        <?php if ($pivot['rows']): ?>
-          <div class="p-3" style="height: <?= max(220, count($pivot['rows']) * 32) ?>px;">
-            <canvas id="canvas-<?= e($key) ?>"></canvas>
-          </div>
-          <script type="application/json" id="chartdata-<?= e($key) ?>"><?= json_encode($pivot['rows'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
-        <?php else: ?>
-          <p class="text-center text-muted py-3 mb-0">No leads match this filter.</p>
-        <?php endif; ?>
+<?php if ($overallTotal['prospects'] > 0): ?>
+<div class="row mb-4">
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header">Imported vs. not imported</div>
+      <div class="card-body" style="max-height: 260px;">
+        <canvas id="chartOverallImported"></canvas>
       </div>
     </div>
   </div>
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header">Email sent vs. not sent</div>
+      <div class="card-body" style="max-height: 260px;">
+        <canvas id="chartOverallEmail"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="application/json" id="chartdata-overall"><?= json_encode($overallTotal, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+<?php endif; ?>
+
+<?php foreach ($sections as $key => $section): ?>
+  <?php if ($key === 'company_country') continue; // rendered at the very bottom instead ?>
+  <?php $renderSection($key, $section); ?>
 <?php endforeach; ?>
+
+<div class="card mb-4">
+  <div class="card-header">
+    Campaign outreach funnel
+    <?= info_icon('Prospects: everyone assigned to this campaign. Contacted: had at least the first email sent. Step N sent: reached that step or later (cumulative -- since sequence steps fire in order, "reached step 3" means steps 1 and 2 went out too). Replies: currently marked Replied. All local-DB counts, not a live Saleshandy call.') ?>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead>
+        <tr>
+          <th>S No</th>
+          <th>Campaign</th>
+          <th>Vertical</th>
+          <th>Service pitched</th>
+          <th class="text-end">Prospects</th>
+          <th class="text-end">Contacted</th>
+          <?php for ($n = 1; $n <= $funnelMaxStep; $n++): ?>
+            <th class="text-end">Step <?= $n ?> sent</th>
+          <?php endfor; ?>
+          <th class="text-end">Replies</th>
+          <th>First email date</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($campaignFunnel as $i => $c): ?>
+          <tr>
+            <td><?= $i + 1 ?></td>
+            <td><?= e($c['name']) ?></td>
+            <td><?= e($c['vertical_label'] ?? '') ?></td>
+            <td><?= e($c['service_label'] ?? '') ?></td>
+            <td class="text-end"><?= number_format((int) $c['prospects']) ?></td>
+            <td class="text-end"><?= number_format((int) $c['contacted']) ?></td>
+            <?php for ($n = 1; $n <= $funnelMaxStep; $n++): ?>
+              <td class="text-end"><?= isset($c['steps'][$n]) ? number_format($c['steps'][$n]) : '' ?></td>
+            <?php endfor; ?>
+            <td class="text-end"><?= number_format((int) $c['replies']) ?></td>
+            <td><?= $c['first_email_date'] ? e(date('l, F j, Y', strtotime($c['first_email_date']))) : '' ?></td>
+          </tr>
+        <?php endforeach; ?>
+        <?php if (!$campaignFunnel): ?>
+          <tr><td colspan="<?= 8 + $funnelMaxStep ?>" class="text-center text-muted py-3">No campaigns yet.</td></tr>
+        <?php endif; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<?php $renderSection('company_country', $sections['company_country']); ?>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="assets/js/analytics_charts.js"></script>
