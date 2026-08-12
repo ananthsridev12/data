@@ -64,8 +64,9 @@ and import, in order:
 38. `sql/038_link_click_tracking.sql`
 39. `sql/039_follow_up_tasks.sql`
 40. `sql/040_followup_task_connection_status.sql`
+41. `sql/041_email_smtp_reports.sql`
 
-(If you're setting up a brand-new site, import all forty in order. If
+(If you're setting up a brand-new site, import all forty-one in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -791,6 +792,42 @@ once you've confirmed they accepted -- Saleshandy's API exposes no
 connection-acceptance signal, so this is manual by design, not something
 that can be auto-detected. Free-text notes are editable directly on the
 Follow-up Tasks page, filterable by status/campaign/triggering signal/assignee.
+
+## Email Reports (custom campaign reports, sent by email)
+
+`public/email_reports.php` + `public/connect_email.php`, `sql/041_email_smtp_reports.sql`.
+Lets a user build a custom report -- pick exactly which campaigns and which
+metric columns to include (Prospects, Contacted, Coverage %, Emails sent,
+Opens, Open rate, Bounces, Bounce rate, Replies, Reply rate -- see
+`EmailReportRepository::METRICS`) -- save it by name for reuse, preview it
+on-page, and send it by email. Distinct from the main Reports page's fixed
+"Sequence performance" table: here every column is optional and the
+campaign list is explicit, not "everything in scope."
+
+**"Prospects" vs "Contacted"**: unlike Reports' Sequence performance table
+(which only ever shows leads already emailed), Prospects here is the full
+target list for a campaign regardless of whether they've been emailed yet;
+Contacted is the already-emailed subset -- Coverage % is Contacted/Prospects.
+"Emails sent" uses the same real per-step total from `saleshandy_send_events`
+(falling back to the Contacted count for a campaign not yet backfilled) as
+the just-fixed Sequence performance table.
+
+**No app-wide SMTP config -- each user connects their own mailbox** at
+Connect Email, same per-member pattern as `saleshandy_connect.php`
+(tested live via a real SMTP auth handshake before saving, encrypted at
+rest with `EmailAccountCipher`, same libsodium scheme as the Saleshandy
+key). A send always goes out as that user, through their own provider.
+Most providers (Gmail, Microsoft 365, etc.) require an app-specific
+password, not the account's regular login password. `SmtpMailer` is a
+small hand-rolled SMTP client (EHLO/STARTTLS or implicit TLS/AUTH
+LOGIN/MAIL FROM/RCPT TO/DATA) -- this app has no Composer/vendor
+dependency yet, so rather than pull one in just for outbound mail it
+implements the slice of RFC 5321 actually needed, same reasoning as
+`SaleshandyKeyCipher`'s hand-rolled encryption. TLS certificate
+verification is always on.
+
+Sending is **manual only** -- a "Send" button per saved report, enter
+recipients and a subject, send now. No scheduled/automatic digest yet.
 
 ## Email verification (Bad / Risky / Verified)
 

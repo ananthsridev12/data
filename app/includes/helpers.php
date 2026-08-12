@@ -65,6 +65,8 @@ function nav_links(array $user): array
         ['href' => 'accounts.php', 'label' => 'Accounts'],
         ['href' => 'analytics.php', 'label' => 'Analytics'],
         ['href' => 'reports.php', 'label' => 'Reports'],
+        ['href' => 'email_reports.php', 'label' => 'Email Reports'],
+        ['href' => 'connect_email.php', 'label' => 'Connect Email'],
         ['href' => 'import.php', 'label' => 'Import'],
         ['href' => 'import_history.php', 'label' => 'Import History'],
         ['href' => 'import_campaign_history.php', 'label' => 'Backfill History'],

@@ -48,7 +48,7 @@ render_header('Reports');
 <div class="card mb-4">
   <div class="card-header">
     About this report
-    <?= info_icon('Summary/Coverage/Sequences read one row per lead per campaign, so "Emails sent" and "Contacts" are the same number there. Daily Activity/Weekly/Steps read a separate per-send-event log that only starts filling in from the first sync or "Fetch to update" after this feature was added -- if those sections look empty or too low, click "Fetch to update" above (or a campaign\'s own "Backfill dates & status") to populate history. "Opened" everywhere reflects Saleshandy\'s own cumulative open count as of the last fetch, not a full per-day open log -- exact for "opened at all", approximate for which exact day.') ?>
+    <?= info_icon('Summary/Coverage read one row per lead per campaign, so their single "contacted"/"reached" figure is a distinct-lead count. Sequence performance below splits "Emails sent" (every step-send, including follow-ups) from "Contacts" (distinct people) once send-event history exists for a campaign -- falls back to showing the same number for both until then. Daily Activity/Weekly/Steps read that same per-send-event log, which only starts filling in from the first sync or "Fetch to update" after this feature was added -- if those sections (or Sequence performance\'s Emails sent) look empty or too low, click "Fetch to update" above (or a campaign\'s own "Backfill dates & status") to populate history. "Opened" everywhere reflects Saleshandy\'s own cumulative open count as of the last fetch, not a full per-day open log -- exact for "opened at all", approximate for which exact day.') ?>
   </div>
 </div>
 
