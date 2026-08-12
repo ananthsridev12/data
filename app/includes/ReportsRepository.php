@@ -17,18 +17,22 @@ require_once __DIR__ . '/ScopeFilter.php';
  *
  * Two different granularities feed this class, matching what's actually
  * available:
- *  - summary()/coverageByVertical()/sequences()/repliesByOutcome() read
- *    `leads` + `lead_campaign_assignments` -- one row per lead per
- *    campaign, so "Emails sent" and "Contacts" are the same count there
- *    (this table only ever tracks one lead's *first* send date and
- *    *furthest* step reached, not individual step-send events).
- *  - dailyActivity()/weeklyActivity()/stepsRaw() read the newer
- *    `saleshandy_send_events` table (sql/024_send_events.sql), which
- *    *does* have per-day, per-step granularity -- fed from
- *    SaleshandyClient::fetchSequenceActivity()'s raw (pre-aggregation)
- *    rows via persistSendEvents(). This table only starts filling in from
- *    the first post-deploy sync/backfill onward -- dateBounds() returns
- *    nulls until then.
+ *  - summary()/coverageByVertical()/repliesByOutcome() read `leads` +
+ *    `lead_campaign_assignments` -- one row per lead per campaign (it only
+ *    ever tracks one lead's *first* send date and *furthest* step reached,
+ *    not individual step-send events), so wherever those methods report a
+ *    single "contacted"/"reached" figure it's really a distinct-lead count.
+ *  - dailyActivity()/weeklyActivity()/stepsRaw()/sequences() read the newer
+ *    `saleshandy_send_events` table (sql/024_send_events.sql) for their
+ *    "Emails sent" figure, which *does* have per-day, per-step granularity
+ *    -- fed from SaleshandyClient::fetchSequenceActivity()'s raw
+ *    (pre-aggregation) rows via persistSendEvents(), so a sequence with
+ *    follow-up steps legitimately shows more emails sent than contacts
+ *    reached. This table only starts filling in from the first post-deploy
+ *    sync/backfill onward, so sequences() falls back to the old
+ *    assignment-based (one-per-lead) count for any campaign with no rows
+ *    there yet, rather than showing zero -- dateBounds() returns nulls
+ *    project-wide until the first backfill runs.
  */
 class ReportsRepository
 {
@@ -287,9 +291,14 @@ class ReportsRepository
     }
 
     /**
-     * One row per Saleshandy-linked campaign, sorted by volume. "Emails
-     * sent" and "Contacts" are identical counts here -- see this class's
-     * docblock on why a per-step breakdown isn't available yet.
+     * One row per Saleshandy-linked campaign, sorted by volume. "Contacts"
+     * is the distinct-lead count (one row per lead in
+     * lead_campaign_assignments). "Emails sent" is the *real* total send
+     * count from saleshandy_send_events (so a sequence with follow-up
+     * steps correctly shows more emails sent than contacts reached) --
+     * except for a campaign with no rows there yet (not backfilled since
+     * sql/024), where it falls back to the same distinct-lead count as
+     * Contacts, same as before this table existed.
      *
      * @return array<int,array{name:string,vertical_label:?string,emails_sent:int,contacts:int,opens:int,open_rate:float,bounces:int,bounce_rate:float,replies:int}>
      */
@@ -297,13 +306,15 @@ class ReportsRepository
     {
         $params = [];
         $period = self::periodExpr($filters, $params);
+        $eventsPeriod = self::eventsPeriodExpr($filters, $params);
         $scopeClauses = [];
         ScopeFilter::apply($scopeClauses, $params, $scope, 'c');
         ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db, 'c', 'saleshandy_account_owner_id', 'scope_campaign_owner');
         $scopeWhere = $scopeClauses ? (' AND ' . implode(' AND ', $scopeClauses)) : '';
 
         $sql = "SELECT c.name, v.label AS vertical_label,
-                   COUNT(*) AS emails_sent,
+                   COUNT(*) AS contacts,
+                   COALESCE(MAX(ev.emails_sent), COUNT(*)) AS emails_sent,
                    SUM(CASE WHEN a.open_count > 0 THEN 1 ELSE 0 END) AS opens,
                    SUM(CASE WHEN a.delivery_status IN ('" . implode("','", DELIVERY_STATUS_BOUNCE_VALUES) . "') THEN 1 ELSE 0 END) AS bounces,
                    SUM(CASE WHEN a.delivery_status = 'Replied' THEN 1 ELSE 0 END) AS replies
@@ -311,6 +322,12 @@ class ReportsRepository
                  JOIN campaigns c ON c.id = a.campaign_id
                  JOIN leads l ON l.id = a.lead_id
                  LEFT JOIN verticals v ON v.id = c.vertical_id
+                 LEFT JOIN (
+                     SELECT e.campaign_id, COUNT(*) AS emails_sent
+                       FROM saleshandy_send_events e
+                      WHERE {$eventsPeriod}
+                      GROUP BY e.campaign_id
+                 ) ev ON ev.campaign_id = c.id
                  WHERE l.deleted_at IS NULL AND c.saleshandy_sequence_id IS NOT NULL AND {$period}{$scopeWhere}
                  GROUP BY c.id, c.name, v.label
                  ORDER BY emails_sent DESC";
@@ -320,9 +337,10 @@ class ReportsRepository
         $rows = $stmt->fetchAll();
 
         foreach ($rows as &$r) {
+            $contacts = (int) $r['contacts'];
             $emailsSent = (int) $r['emails_sent'];
+            $r['contacts'] = $contacts;
             $r['emails_sent'] = $emailsSent;
-            $r['contacts'] = $emailsSent;
             $r['opens'] = (int) $r['opens'];
             $r['bounces'] = (int) $r['bounces'];
             $r['replies'] = (int) $r['replies'];
