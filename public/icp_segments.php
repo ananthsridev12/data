@@ -114,11 +114,13 @@ $linksByIcp = [];
 $matchingCountByIcp = [];
 foreach ($icps as $icp) {
     $linksByIcp[(int) $icp['id']] = IcpRepository::links(db(), (int) $icp['id'], $scope);
-    // Same filters + "never assigned to any campaign before" scoping the
-    // distribution cron itself uses (IcpRepository::toFilters()) -- so
-    // this is exactly the pool the next cron run would pick up and split,
-    // not "every lead that could ever match this ICP".
-    $matchingCountByIcp[(int) $icp['id']] = LeadRepository::matchingCount(db(), $scope, IcpRepository::toFilters($icp));
+    // Same filters + cooldown-based assignability scoping the distribution
+    // cron itself uses (IcpRepository::toFilters()) -- never-assigned
+    // leads plus previously-assigned ones whose latest assignment is both
+    // resolved and past the company's lead_cooldown_days -- so this is
+    // exactly the pool the next cron run would pick up and split, not
+    // "every lead that could ever match this ICP".
+    $matchingCountByIcp[(int) $icp['id']] = LeadRepository::matchingCount(db(), $scope, IcpRepository::toFilters($icp, $scope));
 }
 
 // Active Role Groups (personas) with zero ICPs referencing them at all
@@ -316,7 +318,7 @@ render_header('ICP Segments');
         <span class="fs-4 fw-bold"><?= number_format($matchingCountByIcp[(int) $icp['id']]) ?></span>
         <span class="text-muted small">
           lead(s) eligible right now
-          <?= info_icon('Leads matching this ICP\'s current criteria that have never been assigned to any campaign before -- exactly the pool the next distribution cron run would pick up and split across the linked campaigns. Leads already assigned here or to any other campaign are intentionally excluded, since the cron never reconsiders them.') ?>
+          <?= info_icon('Leads matching this ICP\'s current criteria that are assignable right now -- either never assigned to any campaign before, or previously assigned but with that assignment resolved (not held, not still pending a delivery outcome) and past your company\'s cooldown period. Leads still held/pending elsewhere, or on a suppressed domain, are excluded. Exactly the pool the next distribution cron run would pick up and split across the linked campaigns.') ?>
         </span>
       </div>
       <div class="d-flex flex-wrap gap-2 mb-4">

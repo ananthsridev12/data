@@ -56,12 +56,16 @@ class LeadRepository
                   -- When this lead becomes eligible again for a different
                   -- campaign / a different owner, per the company's
                   -- lead_cooldown_days -- NULL if never assigned, or if
-                  -- already past (i.e. eligible now). Mirrors
-                  -- WaveAssigner::COOLDOWN_ACTIVE_SQL's window so this
-                  -- display value and that eligibility check never drift
-                  -- apart. All rows in one search() call belong to the
-                  -- same company (see the scope filter below), so a
-                  -- single bound :cooldown_days applies to every row.
+                  -- already past (i.e. eligible now). Uses the same
+                  -- MAX(assigned_at) + lead_cooldown_days window as the
+                  -- 'assignable_after_cooldown_days' filter below (see
+                  -- IcpRepository::toFilters()), though this display value
+                  -- doesn't also check that the latest assignment is
+                  -- resolved -- it's an approximate earliest-possible
+                  -- date, not a live eligibility check. All rows in one
+                  -- search() call belong to the same company (see the
+                  -- scope filter below), so a single bound :cooldown_days
+                  -- applies to every row.
                   (SELECT DATE_ADD(MAX(a4.assigned_at), INTERVAL :cooldown_days DAY)
                      FROM lead_campaign_assignments a4 WHERE a4.lead_id = l.id) AS cooldown_eligible_again_at,
                   -- Which campaign(s) a *different* persona at this lead's domain is
@@ -279,6 +283,40 @@ class LeadRepository
                 $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.campaign_id = :assigned_campaign_id AND a.id = (SELECT MAX(a2.id) FROM lead_campaign_assignments a2 WHERE a2.lead_id = l.id))";
                 $params['assigned_campaign_id'] = (int) $filters['assigned_campaign_id'];
             }
+        }
+        // 'assignable_after_cooldown_days': ICP re-matching filter (see
+        // IcpRepository::toFilters()) -- broader than assigned_campaign_id
+        // = 'none' above, which permanently excludes a lead the instant it
+        // has any assignment history at all. This instead re-admits a
+        // previously-assigned lead once its *latest* assignment is both
+        // resolved and old enough:
+        //   - resolved: not still 'held' (wave-1 safety hold) and not
+        //     still "pending" per WaveAssigner::PENDING_ASSIGNMENT_SQL
+        //     (no confirmed send yet) -- reused verbatim, alias a2, so
+        //     this can never drift from the definition used everywhere
+        //     else "pending" is checked.
+        //   - old enough: its assigned_at is more than the company's
+        //     lead_cooldown_days in the past.
+        // Suppressed-domain leads are excluded already by the
+        // show_suppressed default below -- no extra check needed here.
+        if (($filters['assignable_after_cooldown_days'] ?? '') !== '') {
+            $clauses[] = "(
+                NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id)
+                OR (
+                    EXISTS (
+                        SELECT 1 FROM lead_campaign_assignments a2
+                         WHERE a2.lead_id = l.id
+                           AND a2.id = (SELECT MAX(a5.id) FROM lead_campaign_assignments a5 WHERE a5.lead_id = l.id)
+                           AND a2.wave_status != 'held'
+                           AND NOT " . WaveAssigner::PENDING_ASSIGNMENT_SQL . "
+                    )
+                    AND DATE_ADD(
+                        (SELECT MAX(a6.assigned_at) FROM lead_campaign_assignments a6 WHERE a6.lead_id = l.id),
+                        INTERVAL :assignable_cooldown_days DAY
+                    ) <= NOW()
+                )
+            )";
+            $params['assignable_cooldown_days'] = (int) $filters['assignable_after_cooldown_days'];
         }
         // 'imported'/'email_sent' both check only the lead's *latest*
         // assignment row (highest id), not "any assignment ever" -- a

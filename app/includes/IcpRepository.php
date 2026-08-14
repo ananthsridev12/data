@@ -413,16 +413,21 @@ class IcpRepository
      * Maps an icp_segments row to the exact filter shape
      * LeadRepository::buildWhere()/matchingIds() already accepts --
      * comma-lists parsed the same way RoleGroupClassifier::parseKeywords()
-     * already splits role_groups.keywords, so no new parsing logic. Always
-     * scoped to leads with zero assignment history (assigned_campaign_id
-     * = 'none', LeadRepository.php:236-238) -- the cron only ever wants
-     * genuinely fresh leads, never ones WaveAssigner would just filter
-     * back out anyway.
+     * already splits role_groups.keywords, so no new parsing logic.
+     *
+     * Scoped via 'assignable_after_cooldown_days' (LeadRepository.php,
+     * next to assigned_campaign_id) rather than a flat "never assigned"
+     * check -- a lead is eligible if it's never been assigned to any
+     * campaign, OR its latest assignment is both resolved (not held, not
+     * still pending -- see WaveAssigner::PENDING_ASSIGNMENT_SQL) and older
+     * than $scope's company's lead_cooldown_days. A suppressed-domain
+     * lead is excluded regardless, via buildWhere()'s show_suppressed
+     * default.
      *
      * @param array<string,mixed> $icp a row from icp_segments
      * @return array<string,mixed>
      */
-    public static function toFilters(array $icp): array
+    public static function toFilters(array $icp, Scope $scope): array
     {
         return [
             'company_country' => RoleGroupClassifier::parseKeywords($icp['company_country'] ?? ''),
@@ -437,7 +442,7 @@ class IcpRepository
             'service_id' => $icp['service_id'] ?: '',
             'role_group_id' => $icp['role_group_id'] ?: '',
             'country_group_id' => $icp['country_group_id'] ?: '',
-            'assigned_campaign_id' => 'none',
+            'assignable_after_cooldown_days' => $scope->leadCooldownDays,
         ];
     }
 
@@ -623,7 +628,6 @@ class IcpRepository
 
         try {
             $links = self::links($db, (int) $icp['id']);
-            $filters = self::toFilters($icp);
             // The cron processes ICPs across every company in rotation --
             // icp_segments.company_id (not the cron's own caller identity)
             // is what determines which tenant's leads this particular
@@ -634,6 +638,7 @@ class IcpRepository
                 'role' => ROLE_ADMIN,
                 'team_id' => null,
             ]);
+            $filters = self::toFilters($icp, $scope);
             $matchingIds = LeadRepository::matchingIds($db, $scope, $filters);
 
             $buckets = [];

@@ -1084,12 +1084,16 @@ card, via a new `LeadRepository::matchingCount()` (a `COUNT(*)` query,
 not `matchingIds()` -- no reason to fetch every matching row's id just
 to count them). It runs the exact same filters + scoping the
 distribution cron itself uses (`IcpRepository::toFilters()`, which
-includes `assigned_campaign_id = 'none'`), so this number is precisely
-the pool the next cron run would pick up and split across the linked
-campaigns -- not "every lead that could ever match this ICP" (leads
-already assigned anywhere, including to one of this ICP's own linked
-campaigns from a previous run, are correctly excluded, since the cron
-never reconsiders them).
+includes `assignable_after_cooldown_days` set to the company's
+`lead_cooldown_days`), so this number is precisely the pool the next
+cron run would pick up and split across the linked campaigns -- not
+"every lead that could ever match this ICP". A lead is in this pool if
+it's never been assigned to any campaign, or if it has but its latest
+assignment is both resolved (not held, not still pending a delivery
+outcome -- see `WaveAssigner::PENDING_ASSIGNMENT_SQL`) and older than
+the cooldown window; leads still held/pending elsewhere, or sitting on
+a suppressed domain, stay excluded regardless of how much time has
+passed.
 
 **Percentages are managed automatically, not typed in by hand.**
 Linking a campaign no longer asks for a percentage -- `IcpRepository::
