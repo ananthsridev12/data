@@ -181,13 +181,13 @@ class IcpRepository
     {
         $stmt = $db->prepare(
             'INSERT INTO icp_segments
-                (company_id, name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (company_id, name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, require_sequence_completed, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $companyId, $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
-            !empty($data['auto_push_enabled']) ? 1 : 0, $userId,
+            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, $userId,
         ]);
         return (int) $db->lastInsertId();
     }
@@ -201,13 +201,14 @@ class IcpRepository
         $stmt = $db->prepare(
             'UPDATE icp_segments
                 SET name = ?, role_group_id = ?, vertical_id = ?, service_id = ?, country_group_id = ?,
-                    company_country = ?, industry = ?, seniority = ?, employee_count = ?, auto_push_enabled = ?
+                    company_country = ?, industry = ?, seniority = ?, employee_count = ?, auto_push_enabled = ?,
+                    require_sequence_completed = ?
               WHERE id = ? AND company_id = ?'
         );
         $stmt->execute([
             $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
-            !empty($data['auto_push_enabled']) ? 1 : 0, $id, $scope->companyId,
+            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, $id, $scope->companyId,
         ]);
     }
 
@@ -460,6 +461,16 @@ class IcpRepository
      * lead is excluded regardless, via buildWhere()'s show_suppressed
      * default.
      *
+     * If icp_segments.require_sequence_completed is on (opt-in, see
+     * sql/043_icp_require_sequence_completed.sql), a previously-assigned
+     * lead must ALSO have actually finished its last campaign's sequence
+     * (saleshandy_current_step >= that campaign's saleshandy_step_count,
+     * delivery_status still 'Active' -- see
+     * public/campaign_leads.php's "Sequence completed" filter for the
+     * same rule applied manually) before it re-qualifies -- narrower
+     * than the plain cooldown rule, not a replacement for it, so a lead
+     * still needs the cooldown window to pass too.
+     *
      * @param array<string,mixed> $icp a row from icp_segments
      * @return array<string,mixed>
      */
@@ -479,6 +490,7 @@ class IcpRepository
             'role_group_id' => $icp['role_group_id'] ?: '',
             'country_group_id' => $icp['country_group_id'] ?: '',
             'assignable_after_cooldown_days' => $scope->leadCooldownDays,
+            'require_sequence_completed_if_reassigning' => !empty($icp['require_sequence_completed']),
         ];
     }
 

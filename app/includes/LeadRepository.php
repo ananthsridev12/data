@@ -300,15 +300,35 @@ class LeadRepository
         // Suppressed-domain leads are excluded already by the
         // show_suppressed default below -- no extra check needed here.
         if (($filters['assignable_after_cooldown_days'] ?? '') !== '') {
+            // Opt-in, on top of (not instead of) the resolved+cooldown
+            // rule below -- see IcpRepository::toFilters()'s
+            // require_sequence_completed_if_reassigning. Requires the
+            // SAME latest-assignment row (a2) to have actually finished
+            // its campaign's sequence: current_step reached that
+            // campaign's real total (campaigns.saleshandy_step_count,
+            // NULL until known -- see sql/042_sequence_step_count.sql)
+            // with delivery_status still 'Active' (no reply). Mirrors
+            // campaign_leads.php's own "Sequence completed" filter
+            // exactly, so the two never drift apart.
+            $sequenceCompletedClause = '';
+            $campaignsJoin = '';
+            if (!empty($filters['require_sequence_completed_if_reassigning'])) {
+                $campaignsJoin = 'JOIN campaigns c2 ON c2.id = a2.campaign_id';
+                $sequenceCompletedClause = "
+                           AND a2.delivery_status = 'Active'
+                           AND c2.saleshandy_step_count IS NOT NULL
+                           AND a2.saleshandy_current_step >= c2.saleshandy_step_count";
+            }
             $clauses[] = "(
                 NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id)
                 OR (
                     EXISTS (
                         SELECT 1 FROM lead_campaign_assignments a2
+                        {$campaignsJoin}
                          WHERE a2.lead_id = l.id
                            AND a2.id = (SELECT MAX(a5.id) FROM lead_campaign_assignments a5 WHERE a5.lead_id = l.id)
                            AND a2.wave_status != 'held'
-                           AND NOT " . WaveAssigner::PENDING_ASSIGNMENT_SQL . "
+                           AND NOT " . WaveAssigner::PENDING_ASSIGNMENT_SQL . "{$sequenceCompletedClause}
                     )
                     AND DATE_ADD(
                         (SELECT MAX(a6.assigned_at) FROM lead_campaign_assignments a6 WHERE a6.lead_id = l.id),

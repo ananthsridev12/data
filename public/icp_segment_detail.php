@@ -37,6 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'seniority' => implode(', ', (array) ($_POST['seniority'] ?? [])),
             'employee_count' => implode(', ', (array) ($_POST['employee_count'] ?? [])),
             'auto_push_enabled' => !empty($_POST['auto_push_enabled']),
+            'require_sequence_completed' => !empty($_POST['require_sequence_completed']),
         ];
 
         $hasAnyCriterion = $data['role_group_id'] || $data['vertical_id'] || $data['service_id'] || $data['country_group_id']
@@ -166,7 +167,9 @@ render_header($icp['name'] . ' - ICP Segment');
     </div>
     <div class="text-muted small">
       <span class="fs-5 fw-bold text-body"><?= number_format($matchingCount) ?></span> lead(s) eligible right now
-      <?= info_icon('Leads matching this ICP\'s current criteria that are assignable right now -- either never assigned to any campaign before, or previously assigned but with that assignment resolved (not held, not still pending a delivery outcome) and past your company\'s cooldown period. Leads still held/pending elsewhere, or on a suppressed domain, are excluded. Exactly the pool the next distribution cron run would pick up and split across the linked campaigns.') ?>
+      <?= info_icon('Leads matching this ICP\'s current criteria that are assignable right now -- either never assigned to any campaign before, or previously assigned but with that assignment resolved (not held, not still pending a delivery outcome) and past your company\'s cooldown period.'
+          . ($icp['require_sequence_completed'] ? ' "Only reassign leads whose prior sequence fully completed" is ON for this ICP, so a previously-assigned lead must ALSO have gone through every step of its prior campaign\'s sequence with no reply -- not just resolved+cooled-down.' : '')
+          . ' Leads still held/pending elsewhere, or on a suppressed domain, are excluded. Exactly the pool the next distribution cron run would pick up and split across the linked campaigns.') ?>
     </div>
   </div>
   <div class="d-flex flex-wrap gap-2 flex-shrink-0">
@@ -207,9 +210,13 @@ render_header($icp['name'] . ' - ICP Segment');
             <?php endforeach; ?>
           </select>
         </div>
-        <div class="col-md-4 form-check form-switch pt-2 ps-5">
+        <div class="col-md-2 form-check form-switch pt-2 ps-5">
           <input class="form-check-input" type="checkbox" role="switch" name="auto_push_enabled" value="1" id="autoPushEdit" <?= $icp['auto_push_enabled'] ? 'checked' : '' ?>>
           <label class="form-check-label small" for="autoPushEdit">Auto-push to Saleshandy after assignment</label>
+        </div>
+        <div class="col-md-2 form-check form-switch pt-2 ps-5">
+          <input class="form-check-input" type="checkbox" role="switch" name="require_sequence_completed" value="1" id="requireSeqCompletedEdit" <?= $icp['require_sequence_completed'] ? 'checked' : '' ?>>
+          <label class="form-check-label small" for="requireSeqCompletedEdit">Only reassign leads whose prior sequence fully completed <?= info_icon('When re-matching a previously-assigned lead (after cooldown), also require that its last campaign\'s sequence actually finished -- current step reached the sequence\'s real total, with no reply -- not just that the assignment is resolved and past cooldown. Off by default (broader reassignment); turn this on for an ICP meant specifically to catch "finished with silence" leads for a follow-up push.') ?></label>
         </div>
       </div>
 

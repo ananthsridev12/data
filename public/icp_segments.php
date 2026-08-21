@@ -25,6 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'seniority' => implode(', ', (array) ($_POST['seniority'] ?? [])),
             'employee_count' => implode(', ', (array) ($_POST['employee_count'] ?? [])),
             'auto_push_enabled' => !empty($_POST['auto_push_enabled']),
+            'require_sequence_completed' => !empty($_POST['require_sequence_completed']),
         ];
 
         $hasAnyCriterion = $data['role_group_id'] || $data['vertical_id'] || $data['service_id'] || $data['country_group_id']
@@ -208,9 +209,13 @@ render_header('ICP Segments');
             <?php endforeach; ?>
           </select>
         </div>
-        <div class="col-md-4 form-check form-switch pt-2 ps-5">
+        <div class="col-md-2 form-check form-switch pt-2 ps-5">
           <input class="form-check-input" type="checkbox" role="switch" name="auto_push_enabled" value="1" id="autoPushNew">
           <label class="form-check-label small" for="autoPushNew">Auto-push to Saleshandy after assignment</label>
+        </div>
+        <div class="col-md-2 form-check form-switch pt-2 ps-5">
+          <input class="form-check-input" type="checkbox" role="switch" name="require_sequence_completed" value="1" id="requireSeqCompletedNew">
+          <label class="form-check-label small" for="requireSeqCompletedNew">Only reassign leads whose prior sequence fully completed <?= info_icon('When re-matching a previously-assigned lead (after cooldown), also require that its last campaign\'s sequence actually finished -- current step reached the sequence\'s real total, with no reply -- not just that the assignment is resolved and past cooldown. Off by default (broader reassignment); turn this on for an ICP meant specifically to catch "finished with silence" leads for a follow-up push.') ?></label>
         </div>
       </div>
 
@@ -317,6 +322,7 @@ render_header('ICP Segments');
           <span class="badge rounded-pill bg-<?= $ready ? 'success' : 'warning' ?>-subtle text-<?= $ready ? 'success' : 'warning' ?>-emphasis"><?= $ready ? 'Ready &middot; ' . $total . '%' : 'Not running &middot; ' . $total . '%' ?></span>
         <?php endif; ?>
         <?php if ($icp['auto_push_enabled']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Saleshandy</span>Auto-push on</span><?php endif; ?>
+        <?php if ($icp['require_sequence_completed']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Reassign</span>Sequence completed only</span><?php endif; ?>
       </div>
       <div class="small text-muted">
         <?= e($icp['role_group_label'] ?: 'Any persona') ?>
