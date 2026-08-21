@@ -696,7 +696,7 @@ class IcpRepository
             foreach ($links as $link) {
                 $bucket = $buckets[(int) $link['campaign_id']] ?? [];
                 if ($bucket) {
-                    $stats = WaveAssigner::assign($db, $bucket, (int) $link['campaign_id'], $systemUserId, $titlePriority, (int) $icp['id']);
+                    $stats = WaveAssigner::assign($db, $bucket, (int) $link['campaign_id'], $systemUserId, $titlePriority, $scope->leadCooldownDays, (int) $icp['id']);
                     $assigned += $stats['leaders'] + $stats['held'];
                     $lines[] = "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): {$stats['leaders']} leader(s), {$stats['held']} held, "
                         . "{$stats['suppressed_skipped']} suppressed, {$stats['already_elsewhere_skipped']} already elsewhere, "

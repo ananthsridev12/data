@@ -19,6 +19,20 @@ if (!$campaign) {
     exit;
 }
 
+// Campaigns checked leads could be moved to via the "Move to campaign"
+// bulk action below -- same visibility/mutation rule as
+// CampaignAccess::canMutate() (Admin: any in the company, non-admin:
+// only ones they personally own), excluding this campaign itself.
+$moveTargetClauses = ['company_id = :scope_company_id', 'id != :current_campaign_id'];
+$moveTargetParams = ['scope_company_id' => $scope->companyId, 'current_campaign_id' => $campaignId];
+if (!$scope->isAdmin()) {
+    $moveTargetClauses[] = 'saleshandy_account_owner_id = :scope_user_id';
+    $moveTargetParams['scope_user_id'] = $scope->userId;
+}
+$moveTargetStmt = db()->prepare('SELECT id, name FROM campaigns WHERE ' . implode(' AND ', $moveTargetClauses) . ' ORDER BY name');
+$moveTargetStmt->execute($moveTargetParams);
+$moveTargetCampaigns = $moveTargetStmt->fetchAll();
+
 // Team Lead viewing a teammate's campaign, or eventually anyone viewing
 // a campaign they don't own -- every bulk action button below (mark
 // imported, sync fields, push, remove, delete) is gated on this, not
@@ -42,6 +56,7 @@ $filters = [
     'clicked' => trim((string) ($_GET['clicked'] ?? '')),
     'opened' => trim((string) ($_GET['opened'] ?? '')),
     'country_group_id' => trim((string) ($_GET['country_group_id'] ?? '')),
+    'sequence_completed' => trim((string) ($_GET['sequence_completed'] ?? '')),
 ];
 $countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
 
@@ -107,6 +122,15 @@ if ($filters['country_group_id'] !== '') {
     $baseWhereClauses[] = 'l.country_group_id = :country_group_id';
     $baseWhereParams['country_group_id'] = (int) $filters['country_group_id'];
 }
+// "Sequence completed": current_step reached the sequence's real total
+// step count (campaigns.saleshandy_step_count, see
+// sql/042_sequence_step_count.sql) with no bounce/reply/pause -- i.e.
+// went through the whole sequence with no response. Only offered once
+// the step count is actually known; see the filter form below.
+if ($filters['sequence_completed'] === '1' && $campaign['saleshandy_step_count']) {
+    $baseWhereClauses[] = "a.delivery_status = 'Active' AND a.saleshandy_current_step >= :step_count";
+    $baseWhereParams['step_count'] = (int) $campaign['saleshandy_step_count'];
+}
 
 $fetchAssignments = static function (array $whereClauses, array $whereParams, ?int $limit, int $offset = 0) use ($orderBySql): array {
     $where = 'WHERE ' . implode(' AND ', $whereClauses);
@@ -170,11 +194,12 @@ $statsStmt = db()->prepare(
         SUM(a.status = 'assigned') AS imported_no,
         SUM(a.click_count > 0) AS clicked_yes,
         SUM(a.open_count > 0) AS opened_yes,
+        SUM(CASE WHEN ? IS NOT NULL AND a.delivery_status = 'Active' AND a.saleshandy_current_step >= ? THEN 1 ELSE 0 END) AS sequence_completed,
         COUNT(*) AS all_count
        FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id
       WHERE a.campaign_id = ? AND l.deleted_at IS NULL"
 );
-$statsStmt->execute([$campaignId]);
+$statsStmt->execute([$campaign['saleshandy_step_count'], $campaign['saleshandy_step_count'], $campaignId]);
 $stats = $statsStmt->fetch();
 
 $waveStmt = db()->prepare(
@@ -223,6 +248,10 @@ render_header('Campaign leads');
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&imported=0" class="badge bg-secondary text-decoration-none"><?= (int) $stats['imported_no'] ?> not imported</a>
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&opened=1" class="badge bg-primary text-decoration-none"><?= (int) $stats['opened_yes'] ?> opened an email</a>
     <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&clicked=1" class="badge bg-info text-decoration-none"><?= (int) $stats['clicked_yes'] ?> clicked a link</a>
+    <?php if ($campaign['saleshandy_step_count']): ?>
+      <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>&sequence_completed=1" class="badge bg-info text-decoration-none"><?= (int) $stats['sequence_completed'] ?> sequence completed</a>
+      <?= info_icon('Went through every step of the sequence (' . (int) $campaign['saleshandy_step_count'] . ' total) with no bounce, reply, or pause -- i.e. finished with no response. These are the ones worth reviewing to move into a different follow-up campaign.') ?>
+    <?php endif; ?>
   </div>
 </div>
 
@@ -284,6 +313,14 @@ render_header('Campaign leads');
           <option value="<?= (int) $cg['id'] ?>" <?= (string) $filters['country_group_id'] === (string) $cg['id'] ? 'selected' : '' ?>><?= e($cg['label']) ?></option>
         <?php endforeach; ?>
       </select>
+      <?php if ($campaign['saleshandy_step_count']): ?>
+      <select name="sequence_completed" class="form-select form-select-sm" style="max-width: 200px;">
+        <option value="">Sequence completed (all)</option>
+        <option value="1" <?= $filters['sequence_completed'] === '1' ? 'selected' : '' ?>>Yes -- finished, no response</option>
+      </select>
+      <?php else: ?>
+        <span class="text-muted small" title="Visit Campaign Flow once, or wait for the next sync, to learn this sequence's total step count.">Sequence completed: step count unknown yet</span>
+      <?php endif; ?>
       <button type="submit" class="btn btn-sm btn-primary">Filter</button>
       <?php if (array_filter($filters)): ?>
         <a href="campaign_leads.php?campaign_id=<?= (int) $campaignId ?>" class="btn btn-sm btn-outline-secondary">Clear filters</a>
@@ -422,7 +459,8 @@ render_header('Campaign leads');
   <?php endforeach; ?>
 
   <?php
-  $renderAssignmentCell = static function (string $key, array $a) {
+  $campaignStepCount = $campaign['saleshandy_step_count'] !== null ? (int) $campaign['saleshandy_step_count'] : null;
+  $renderAssignmentCell = static function (string $key, array $a) use ($campaignStepCount) {
       switch ($key) {
           case 'company': ?><td><?= e($a['na_company_name']) ?></td><?php break;
           case 'contact': ?><td><?= e($a['first_name'] . ' ' . $a['last_name']) ?></td><?php break;
@@ -473,7 +511,14 @@ render_header('Campaign leads');
               <td><?= render_verification_badge($a['email_verification_status']) ?></td>
               <?php break;
           case 'saleshandy_step': ?>
-              <td><?= $a['saleshandy_current_step'] !== null ? 'Step ' . (int) $a['saleshandy_current_step'] : '' ?></td>
+              <td>
+                <?php if ($a['saleshandy_current_step'] !== null): ?>
+                  Step <?= (int) $a['saleshandy_current_step'] ?>
+                  <?php if (!empty($campaignStepCount) && $a['delivery_status'] === 'Active' && (int) $a['saleshandy_current_step'] >= $campaignStepCount): ?>
+                    <span class="badge bg-info">Completed</span>
+                  <?php endif; ?>
+                <?php endif; ?>
+              </td>
               <?php break;
           case 'saleshandy_synced': ?>
               <td class="small text-muted"><?= e($a['saleshandy_synced_at'] ?? '') ?></td>
@@ -641,6 +686,20 @@ render_header('Campaign leads');
           </select>
           <button type="submit" name="action" value="set_delivery_status" class="btn btn-sm btn-outline-primary" id="setDeliveryStatusBtn">Apply to checked</button>
           <?= info_icon('Manually sets delivery status on checked leads. A bounced status also suppresses that lead\'s domain everywhere, same as Paste bounced emails.') ?>
+        </div>
+
+        <hr class="my-0">
+
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <span class="text-muted small">Move checked leads to:</span>
+          <select name="target_campaign_id" class="form-select form-select-sm" style="max-width: 240px;" <?= $moveTargetCampaigns ? '' : 'disabled' ?>>
+            <option value="">Pick a campaign&hellip;</option>
+            <?php foreach ($moveTargetCampaigns as $mc): ?>
+              <option value="<?= (int) $mc['id'] ?>"><?= e($mc['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <button type="submit" name="action" value="move_to_campaign" class="btn btn-sm btn-outline-primary" <?= $moveTargetCampaigns ? '' : 'disabled' ?>>Move</button>
+          <?= info_icon('Assigns checked leads to a different campaign, same wave-1 domain-safety gate as Add Leads to Campaign. Only actually moves a lead whose current assignment is resolved (not held, not still awaiting a delivery outcome) and past your company\'s cooldown window -- anything still in flight here stays put and is skipped, not force-moved.') ?>
         </div>
 
         <hr class="my-0">

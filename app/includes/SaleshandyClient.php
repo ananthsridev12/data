@@ -933,6 +933,23 @@ class SaleshandyClient
             return $stats;
         }
 
+        // Lazy, cache-once fetch of the sequence's total step count (see
+        // sql/042_sequence_step_count.sql) -- only when we don't already
+        // have one, so a routine sync never costs an extra API call once
+        // this is populated. Non-fatal on failure: "sequence completed"
+        // detection just stays unavailable for this campaign until a
+        // later sync or a campaign_flow.php visit succeeds in fetching it.
+        if ($campaign['saleshandy_step_count'] === null) {
+            try {
+                $stepCount = count($this->listSequenceSteps($sequenceId));
+                if ($stepCount > 0) {
+                    $db->prepare('UPDATE campaigns SET saleshandy_step_count = ? WHERE id = ?')->execute([$stepCount, $campaign['id']]);
+                }
+            } catch (SaleshandyApiException $ex) {
+                // retried on a future sync
+            }
+        }
+
         $startDate = $campaign['saleshandy_last_synced_at'] ?? $campaign['created_at'];
         $startDate = date('Y-m-d', strtotime((string) $startDate));
         $endDate = date('Y-m-d');

@@ -220,12 +220,14 @@ class LeadImporter
             'INSERT INTO import_row_errors (import_batch_id, row_num, email, reason, raw_row_json) VALUES (?, ?, ?, ?, ?)'
         );
 
-        // A lead may only ever belong to one campaign, and a suppressed
-        // domain's leads may never be added to any -- so before
-        // auto-assigning an imported row to $assignCampaignId, check it
-        // isn't already assigned elsewhere and its domain isn't
-        // suppressed (same rule WaveAssigner::filterEligibleForCampaign()
-        // applies on the campaign-selection screen).
+        // A suppressed domain's leads may never be added to any campaign,
+        // and -- deliberately more conservative than
+        // WaveAssigner::filterEligibleForCampaign()'s cooldown-aware
+        // reassignment rule -- an import's auto-assign never picks up a
+        // lead with ANY existing assignment elsewhere, cooldown or not.
+        // A bulk re-import isn't a deliberate "move this lead" action the
+        // way Campaign Leads' "Move checked leads to" is, so it stays
+        // strict here rather than silently re-targeting old leads.
         $campaignAssignStmt = $assignCampaignId !== null
             ? $db->prepare('INSERT IGNORE INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by) VALUES (?, ?, ?)')
             : null;

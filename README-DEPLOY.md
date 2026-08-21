@@ -65,8 +65,9 @@ and import, in order:
 39. `sql/039_follow_up_tasks.sql`
 40. `sql/040_followup_task_connection_status.sql`
 41. `sql/041_email_smtp_reports.sql`
+42. `sql/042_sequence_step_count.sql`
 
-(If you're setting up a brand-new site, import all forty-one in order. If
+(If you're setting up a brand-new site, import all forty-two in order. If
 you already have a running site from before these were added, just
 import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
@@ -174,7 +175,7 @@ Use cPanel's built-in **Backup Wizard** (or your host's equivalent) to
 schedule regular database + file backups, since this setup has no
 SSH/cron access for scripted backups.
 
-## Campaign assignment rules (one campaign per lead, bounce suppression, one pending send per account)
+## Campaign assignment rules (one campaign per lead at a time, bounce suppression, one pending send per account)
 
 Three rules govern whether a lead can be added to a campaign, enforced
 everywhere a new assignment is created (Add leads to campaign, the
@@ -182,18 +183,30 @@ CSV/history import's auto-assign-to-campaign option, and the domain
 suppression flows below) -- `WaveAssigner::filterEligibleForCampaign()` is
 the shared implementation:
 
-1. **A lead's email can only ever belong to one campaign.** Once a lead is
-   assigned anywhere, it's excluded from being added to a *different*
-   campaign (re-adding it to the campaign it's already in is a harmless
-   no-op). This means once a persona has been pushed to Saleshandy for
-   Campaign A, it cannot later be added to Campaign B -- but a *different*,
+1. **A lead's email can only ever belong to one campaign AT A TIME.** Once
+   a lead is assigned anywhere, it's excluded from being added to a
+   *different* campaign (re-adding it to the campaign it's already in is a
+   harmless no-op) *unless* its latest assignment is both resolved -- not
+   still `held` (wave-1 safety hold), not still "pending" (no confirmed
+   send outcome yet, see `WaveAssigner::PENDING_ASSIGNMENT_SQL`) -- and
+   older than the company's `lead_cooldown_days` (Company Profile). This
+   means once a persona has been pushed to Saleshandy for Campaign A, it
+   cannot be added to Campaign B until its Campaign A send is confirmed one
+   way or another AND the cooldown window has passed -- but a *different*,
    not-yet-assigned persona at the same account remains free to be added to
-   one campaign of its own, as long as the account isn't suppressed (below).
-   This doesn't retroactively touch leads that were already in more than
-   one campaign before this rule existed -- it only guards new assignments
-   going forward. If you need to move a lead to a different campaign, use
-   **Remove checked from this campaign** on the Campaign Leads page first
-   (see below) -- that frees it up for the new assignment.
+   one campaign of its own, as long as the account isn't suppressed
+   (below). Two ways to actually move an eligible lead once it qualifies:
+   - **Move checked leads to** (Campaign Leads page, under "More actions")
+     -- moves checked leads straight into a different campaign; anything
+     still in flight is silently skipped, not force-moved. The
+     **N sequence completed** overview badge/filter (only shown once a
+     campaign's sequence step count is known -- see below) is the fastest
+     way to find candidates worth reviewing: leads that went through every
+     step with no reply, and so are worth trying a different angle on in a
+     follow-up campaign.
+   - **Remove checked from this campaign**, for a lead not yet pushed to
+     Saleshandy (still `assigned`, not `pushed`) -- unconditionally frees
+     it up regardless of cooldown, since nothing was ever actually sent.
 2. **If any persona at a domain bounces, the whole domain is blocked from
    every future campaign** -- not just the one that bounced -- via the
    existing `suppressed_domains` global list. Which bounce types actually

@@ -55,10 +55,19 @@ class WaveAssigner
     )";
 
     /**
-     * A lead may only ever belong to one campaign -- once its email is
-     * assigned anywhere, it's excluded from being assigned to a
+     * A lead may only ever belong to one campaign AT A TIME -- once its
+     * email is assigned anywhere, it's excluded from being assigned to a
      * *different* campaign (re-selecting it into the same campaign it's
-     * already in is unaffected, that's just a no-op INSERT IGNORE).
+     * already in is unaffected, that's just a no-op INSERT IGNORE)
+     * unless its *latest* assignment (across every campaign, not just
+     * $campaignId) is both resolved -- not still 'held' (wave-1 safety
+     * hold), not still "pending" per PENDING_ASSIGNMENT_SQL (no
+     * confirmed send outcome yet) -- and older than $cooldownDays. This
+     * mirrors LeadRepository::buildWhere()'s 'assignable_after_cooldown_days'
+     * filter (see IcpRepository::toFilters()) exactly, so a lead an ICP
+     * finds "eligible" during matching doesn't then get silently
+     * rejected here as "already elsewhere" when the assignment step
+     * actually runs -- the two checks must never drift apart.
      *
      * Combined here with two account-wide checks every assignment entry
      * point needs: if even one persona at a domain bounced (per the
@@ -75,7 +84,7 @@ class WaveAssigner
      * @param int[] $leadIds
      * @return array{eligible:int[], suppressed_count:int, already_elsewhere_count:int, pending_elsewhere_count:int, pending_elsewhere_campaigns:array<string,int>}
      */
-    public static function filterEligibleForCampaign(PDO $db, array $leadIds, int $campaignId): array
+    public static function filterEligibleForCampaign(PDO $db, array $leadIds, int $campaignId, int $cooldownDays): array
     {
         $stats = [
             'eligible' => [], 'suppressed_count' => 0, 'already_elsewhere_count' => 0,
@@ -106,10 +115,16 @@ class WaveAssigner
 
         $rPlaceholders = implode(',', array_fill(0, count($remaining), '?'));
         $elsewhereStmt = $db->prepare(
-            "SELECT DISTINCT a.lead_id FROM lead_campaign_assignments a
-              WHERE a.lead_id IN ({$rPlaceholders}) AND a.campaign_id != ?"
+            "SELECT DISTINCT a2.lead_id FROM lead_campaign_assignments a2
+              WHERE a2.lead_id IN ({$rPlaceholders}) AND a2.campaign_id != ?
+                AND a2.id = (SELECT MAX(a3.id) FROM lead_campaign_assignments a3 WHERE a3.lead_id = a2.lead_id)
+                AND NOT (
+                    a2.wave_status != 'held'
+                    AND NOT " . self::PENDING_ASSIGNMENT_SQL . "
+                    AND DATE_ADD(a2.assigned_at, INTERVAL ? DAY) <= NOW()
+                )"
         );
-        $elsewhereStmt->execute(array_merge($remaining, [$campaignId]));
+        $elsewhereStmt->execute(array_merge($remaining, [$campaignId], [$cooldownDays]));
         $elsewhereIds = array_map('intval', $elsewhereStmt->fetchAll(PDO::FETCH_COLUMN));
         $stats['already_elsewhere_count'] = count($elsewhereIds);
 
@@ -188,9 +203,10 @@ class WaveAssigner
     /**
      * @param int[] $leadIds
      * @param string[] $titlePriority ordered, case-insensitive substring keywords (e.g. ["VP Engineering", "CTO"])
+     * @param int $cooldownDays the acting company's lead_cooldown_days (Scope::$leadCooldownDays) -- see filterEligibleForCampaign()
      * @return array{leaders:int, held:int, suppressed_skipped:int, already_elsewhere_skipped:int, pending_elsewhere_skipped:int, pending_elsewhere_campaigns:array<string,int>, already_in_campaign:int, domains:int}
      */
-    public static function assign(PDO $db, array $leadIds, int $campaignId, int $userId, array $titlePriority, ?int $icpId = null): array
+    public static function assign(PDO $db, array $leadIds, int $campaignId, int $userId, array $titlePriority, int $cooldownDays, ?int $icpId = null): array
     {
         $stats = [
             'leaders' => 0, 'held' => 0, 'suppressed_skipped' => 0,
@@ -201,7 +217,7 @@ class WaveAssigner
             return $stats;
         }
 
-        $filtered = self::filterEligibleForCampaign($db, $leadIds, $campaignId);
+        $filtered = self::filterEligibleForCampaign($db, $leadIds, $campaignId, $cooldownDays);
         $stats['suppressed_skipped'] = $filtered['suppressed_count'];
         $stats['already_elsewhere_skipped'] = $filtered['already_elsewhere_count'];
         $stats['pending_elsewhere_skipped'] = $filtered['pending_elsewhere_count'];

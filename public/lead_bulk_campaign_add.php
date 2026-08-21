@@ -53,7 +53,7 @@ if (!$leadIds) {
 // becomes the wave-1 leader and the other is held pending that outcome.
 // No title-priority list here (this is a hand-picked selection, not a
 // filtered bulk pick), so the leader falls back to seniority ranking.
-$stats = WaveAssigner::assign(db(), $leadIds, $campaignId, $user['id'], []);
+$stats = WaveAssigner::assign(db(), $leadIds, $campaignId, $user['id'], [], $scope->leadCooldownDays);
 
 $message = "{$stats['leaders']} lead(s) added to \"{$campaign['name']}\" across {$stats['domains']} compan(y/ies), "
     . "{$stats['held']} held pending a wave-1 outcome.";
@@ -61,7 +61,7 @@ if ($stats['suppressed_skipped'] > 0) {
     $message .= " {$stats['suppressed_skipped']} skipped (suppressed domain).";
 }
 if ($stats['already_elsewhere_skipped'] > 0) {
-    $message .= " {$stats['already_elsewhere_skipped']} skipped (already assigned to a different campaign -- a lead can only belong to one).";
+    $message .= " {$stats['already_elsewhere_skipped']} skipped (still assigned elsewhere -- unresolved/held/pending, or within the cooldown window).";
 }
 if ($stats['pending_elsewhere_skipped'] > 0) {
     $parts = [];

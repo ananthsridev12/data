@@ -1,0 +1,25 @@
+-- Cached total step count for a campaign's Saleshandy sequence, so "has
+-- this lead gone through every step" (public/campaign_leads.php's
+-- "Sequence completed" filter/badge) can be a simple integer comparison
+-- against lead_campaign_assignments.saleshandy_current_step instead of
+-- an API call per page view. Saleshandy itself exposes no "finished the
+-- sequence" field on the activity feed SaleshandyClient::syncCampaign()
+-- already pulls (see fetchSequenceActivity()) -- current_step there is
+-- just "the highest step number seen so far", not "the last step of the
+-- sequence" -- so this column is what makes the comparison possible at
+-- all.
+--
+-- Populated two ways, both reusing an API call this app already makes
+-- rather than adding a new one on every sync (see the codebase's own
+-- rate-limit awareness elsewhere):
+--   - Lazily, once, by SaleshandyClient::syncCampaign() the first time it
+--     syncs a campaign after this column exists (stays NULL, retried on
+--     a future sync, if that one fetch fails).
+--   - Refreshed for free every time public/campaign_flow.php is visited,
+--     since that page already calls listSequenceSteps() live for its own
+--     step-notes UI.
+-- Not otherwise kept in sync automatically: if a sequence's step count
+-- changes in Saleshandy later, it goes stale until the next sync or
+-- campaign_flow.php visit picks up the new count.
+ALTER TABLE campaigns
+    ADD COLUMN saleshandy_step_count INT UNSIGNED NULL AFTER saleshandy_sequence_id;

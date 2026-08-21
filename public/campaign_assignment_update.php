@@ -34,7 +34,7 @@ if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
 // view. Prefixed filter_* to avoid colliding with this endpoint's own
 // same-named POST fields (e.g. delivery_status, the value to *apply*).
 $filterParams = [];
-foreach (['wave_status', 'email_sent', 'imported', 'delivery_status'] as $fk) {
+foreach (['wave_status', 'email_sent', 'imported', 'delivery_status', 'sequence_completed'] as $fk) {
     $fv = (string) ($_POST['filter_' . $fk] ?? '');
     if ($fv !== '') {
         $filterParams[$fk] = $fv;
@@ -139,6 +139,50 @@ if ($action === 'mark_imported') {
     }
     if ($protectedLeaderIds) {
         $message .= ' ' . count($protectedLeaderIds) . ' skipped (still a wave-1 leader with a pending held group).';
+    }
+    flash_set('success', $message);
+} elseif ($action === 'move_to_campaign') {
+    $targetCampaignId = (int) ($_POST['target_campaign_id'] ?? 0);
+    $targetCampaign = $targetCampaignId ? CampaignAccess::loadVisible(db(), $scope, $targetCampaignId) : null;
+    if (!$targetCampaign || !CampaignAccess::canMutate($scope, $targetCampaign)) {
+        flash_set('danger', 'Pick a valid campaign to move checked leads to.');
+        header('Location: ' . $redirect);
+        exit;
+    }
+    if ($targetCampaignId === $campaignId) {
+        flash_set('danger', 'Pick a different campaign to move to.');
+        header('Location: ' . $redirect);
+        exit;
+    }
+
+    $leadIdsStmt = db()->prepare("SELECT lead_id FROM lead_campaign_assignments WHERE campaign_id = ? AND id IN ({$placeholders})");
+    $leadIdsStmt->execute(array_merge([$campaignId], $ids));
+    $leadIds = array_map('intval', $leadIdsStmt->fetchAll(PDO::FETCH_COLUMN));
+
+    // Same wave-1 domain-safety gate as Add Leads to Campaign
+    // (WaveAssigner::assign()) -- a checked lead only actually moves if
+    // its current assignment here is resolved and past the cooldown
+    // window; anything still in flight is skipped, not force-moved (see
+    // WaveAssigner::filterEligibleForCampaign()). No title-priority list
+    // here (hand-picked selection), leader falls back to seniority.
+    $stats = WaveAssigner::assign(db(), $leadIds, $targetCampaignId, $user['id'], [], $scope->leadCooldownDays);
+    $message = "{$stats['leaders']} lead(s) moved to \"{$targetCampaign['name']}\" across {$stats['domains']} compan(y/ies), "
+        . "{$stats['held']} held pending a wave-1 outcome.";
+    if ($stats['suppressed_skipped'] > 0) {
+        $message .= " {$stats['suppressed_skipped']} skipped (suppressed domain).";
+    }
+    if ($stats['already_elsewhere_skipped'] > 0) {
+        $message .= " {$stats['already_elsewhere_skipped']} not eligible yet (still unresolved/held/pending, or within the cooldown window) -- left in this campaign.";
+    }
+    if ($stats['pending_elsewhere_skipped'] > 0) {
+        $parts = [];
+        foreach ($stats['pending_elsewhere_campaigns'] as $pendingCampaignName => $count) {
+            $parts[] = "{$count} in \"{$pendingCampaignName}\"";
+        }
+        $message .= " {$stats['pending_elsewhere_skipped']} skipped (their account already has a persona pending delivery elsewhere: " . implode(', ', $parts) . ').';
+    }
+    if ($stats['already_in_campaign'] > 0) {
+        $message .= " {$stats['already_in_campaign']} were already in that campaign.";
     }
     flash_set('success', $message);
 } elseif ($action === 'delete_lead') {

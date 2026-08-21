@@ -81,7 +81,7 @@ try {
         $stmt->execute([$companyBId, 'Company B Campaign', $userBId, $userBId]);
         return (int) $db->lastInsertId();
     })();
-    $eligibility = WaveAssigner::filterEligibleForCampaign($db, [$leadBId], $campBId);
+    $eligibility = WaveAssigner::filterEligibleForCampaign($db, [$leadBId], $campBId, 90);
     $assert($eligibility['suppressed_count'] === 0, "Company B's lead at the shared-but-only-A-suppressed domain is NOT flagged suppressed (got {$eligibility['suppressed_count']})");
     $assert(in_array($leadBId, $eligibility['eligible'], true), "Company B's lead remains eligible for its own company's campaign");
 
@@ -92,7 +92,7 @@ try {
         $stmt->execute([$companyAId, 'Company A Campaign', $userAId, $userAId]);
         return (int) $db->lastInsertId();
     })();
-    $eligibilityA = WaveAssigner::filterEligibleForCampaign($db, [$leadAId], $campAId);
+    $eligibilityA = WaveAssigner::filterEligibleForCampaign($db, [$leadAId], $campAId, 90);
     $assert($eligibilityA['suppressed_count'] === 1, "Company A's own lead at its own suppressed domain IS still correctly excluded (got {$eligibilityA['suppressed_count']})");
 
     // --- LeadRepository::search(): default (hide suppressed) view for
