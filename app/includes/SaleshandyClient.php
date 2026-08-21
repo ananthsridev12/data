@@ -846,12 +846,12 @@ class SaleshandyClient
      * @param array<int,array{email:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int,openCount:int,lastOpenedAt:?int,clickCount:int,sentiment:?string}> $activity
      * @return int rows written (inserted or updated)
      */
-    private function persistSendEvents(PDO $db, int $campaignId, array $activity): int
+    private function persistSendEvents(PDO $db, int $campaignId, int $companyId, array $activity): int
     {
         if (!$activity) {
             return 0;
         }
-        $findLead = $db->prepare('SELECT id FROM leads WHERE email = ?');
+        $findLead = $db->prepare('SELECT id FROM leads WHERE email = ? AND company_id = ?');
         $upsert = $db->prepare(
             'INSERT INTO saleshandy_send_events
                 (campaign_id, lead_id, recipient_email, step_number, sent_date, sent_at,
@@ -873,7 +873,7 @@ class SaleshandyClient
             }
             $email = $row['email'];
             if (!array_key_exists($email, $leadIdCache)) {
-                $findLead->execute([$email]);
+                $findLead->execute([$email, $companyId]);
                 $leadIdCache[$email] = $findLead->fetchColumn() ?: null;
             }
             $upsert->execute([
@@ -966,7 +966,7 @@ class SaleshandyClient
         $endDate = date('Y-m-d');
 
         $activity = $this->fetchSequenceActivity($sequenceId, $startDate, $endDate);
-        $stats['events_persisted'] = $this->persistSendEvents($db, (int) $campaign['id'], $activity);
+        $stats['events_persisted'] = $this->persistSendEvents($db, (int) $campaign['id'], (int) $campaign['company_id'], $activity);
         $byEmail = $this->aggregateActivityByEmail($activity);
 
         if ($byEmail) {
@@ -1152,8 +1152,8 @@ class SaleshandyClient
         $byEmail = $this->aggregateActivityByEmail($activity);
         $stats['distinct_prospects_found'] = count($byEmail);
 
-        $findLead = $db->prepare('SELECT id FROM leads WHERE email = ?');
-        $insertLead = $db->prepare('INSERT INTO leads (email, first_name, last_name) VALUES (?, ?, ?)');
+        $findLead = $db->prepare('SELECT id FROM leads WHERE email = ? AND company_id = ?');
+        $insertLead = $db->prepare('INSERT INTO leads (company_id, email, first_name, last_name) VALUES (?, ?, ?, ?)');
         $findAssignment = $db->prepare('SELECT id FROM lead_campaign_assignments WHERE lead_id = ? AND campaign_id = ?');
         $insertAssignment = $db->prepare(
             "INSERT INTO lead_campaign_assignments
@@ -1163,14 +1163,14 @@ class SaleshandyClient
         );
 
         foreach ($byEmail as $email => $row) {
-            $findLead->execute([$email]);
+            $findLead->execute([$email, $campaign['company_id']]);
             $leadId = $findLead->fetchColumn();
 
             if (!$leadId) {
                 $nameParts = preg_split('/\s+/', $row['name'], 2);
                 $firstName = $nameParts[0] ?? '';
                 $lastName = $nameParts[1] ?? '';
-                $insertLead->execute([$email, $firstName, $lastName]);
+                $insertLead->execute([$campaign['company_id'], $email, $firstName, $lastName]);
                 $leadId = (int) $db->lastInsertId();
                 $stats['leads_created']++;
             }
@@ -1363,7 +1363,7 @@ class SaleshandyClient
         $startDate = date('Y-m-d', strtotime('-2 years'));
         $endDate = date('Y-m-d');
         $activity = $this->fetchSequenceActivity($sequenceId, $startDate, $endDate);
-        $stats['events_persisted'] = $this->persistSendEvents($db, (int) $campaign['id'], $activity);
+        $stats['events_persisted'] = $this->persistSendEvents($db, (int) $campaign['id'], (int) $campaign['company_id'], $activity);
         $byEmail = $this->aggregateActivityByEmail($activity);
         if (!$byEmail) {
             return $stats;
