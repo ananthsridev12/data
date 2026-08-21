@@ -91,19 +91,47 @@ $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 $countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
 
+// Vertical/Service filter for the grid below -- narrows which ICPs are
+// shown (and which sections get built, see $icpGroups below) without
+// touching the "Personas without an ICP yet" card above, which is a
+// company-wide gap report independent of this filter.
+$filterVerticalId = trim((string) ($_GET['vertical_id'] ?? ''));
+$filterServiceId = trim((string) ($_GET['service_id'] ?? ''));
+if ($filterVerticalId !== '') {
+    $icps = array_values(array_filter($icps, static fn (array $i): bool => (int) $i['vertical_id'] === (int) $filterVerticalId));
+}
+if ($filterServiceId !== '') {
+    $icps = array_values(array_filter($icps, static fn (array $i): bool => (int) $i['service_id'] === (int) $filterServiceId));
+}
+
 // The "link a campaign" picker only ever offers campaigns this scope is
 // actually allowed to link (see IcpRepository::addLink()) -- Admin sees
 // every linkable campaign in the company, a Team Lead/Member sees only
 // their own, so nothing shown here can ever be rejected on submit.
-$campaignsClauses = ['company_id = :scope_company_id', 'saleshandy_sequence_id IS NOT NULL'];
+$campaignsClauses = ['c.company_id = :scope_company_id', 'c.saleshandy_sequence_id IS NOT NULL'];
 $campaignsParams = ['scope_company_id' => $scope->companyId];
 if (!$scope->isAdmin()) {
-    $campaignsClauses[] = 'saleshandy_account_owner_id = :scope_user_id';
+    $campaignsClauses[] = 'c.saleshandy_account_owner_id = :scope_user_id';
     $campaignsParams['scope_user_id'] = $scope->userId;
 }
-$campaignsStmt = db()->prepare('SELECT id, name FROM campaigns WHERE ' . implode(' AND ', $campaignsClauses) . ' ORDER BY name');
+// Grouped by the campaign's own Service (campaigns.service_id, see
+// sql/018_campaign_vertical_service.sql) so the "Link a campaign" picker
+// below reads as categorized <optgroup>s instead of one flat A-Z list --
+// campaigns with no service set land in a trailing "No service set" group
+// (the "(s.label IS NULL)" ORDER BY term pushes them after every real
+// group, since MySQL sorts NULL first by default).
+$campaignsStmt = db()->prepare(
+    'SELECT c.id, c.name, s.label AS service_label
+       FROM campaigns c
+       LEFT JOIN services s ON s.id = c.service_id
+      WHERE ' . implode(' AND ', $campaignsClauses) . '
+      ORDER BY (s.label IS NULL), s.label, c.name'
+);
 $campaignsStmt->execute($campaignsParams);
-$campaigns = $campaignsStmt->fetchAll();
+$campaignsByService = [];
+foreach ($campaignsStmt->fetchAll() as $c) {
+    $campaignsByService[$c['service_label'] ?: 'No service set'][] = $c;
+}
 
 $companyCountries = LeadRepository::distinctValues(db(), $scope, 'company_country');
 $industries = LeadRepository::distinctValues(db(), $scope, 'industry');
@@ -139,6 +167,33 @@ $unmappedPersonasStmt->execute([$scope->companyId, $scope->companyId, $scope->co
 $unmappedPersonas = $unmappedPersonasStmt->fetchAll();
 
 $activeIcpCount = count(array_filter($icps, static fn (array $i): bool => (bool) $i['is_active']));
+
+// Sections the grid below into "Vertical - Service" groups (e.g. "DT -
+// CPQ"), using each lookup's short code (not its full label) so headers
+// stay compact -- falls back to whichever single one is set, or
+// "Uncategorized" if an ICP has neither (kept last, everything else
+// alphabetical) -- an ICP with no Vertical/Service is still valid (it
+// can target purely by Role Group/country/size, see the match-criteria
+// validation above), so it still needs a home in the grid.
+$icpGroups = [];
+foreach ($icps as $icp) {
+    $v = $icp['vertical_code'] ?: $icp['vertical_label'];
+    $s = $icp['service_code'] ?: $icp['service_label'];
+    if ($v && $s) {
+        $groupLabel = $v . ' - ' . $s;
+    } elseif ($v || $s) {
+        $groupLabel = $v ?: $s;
+    } else {
+        $groupLabel = 'Uncategorized';
+    }
+    $icpGroups[$groupLabel][] = $icp;
+}
+$uncategorizedGroup = $icpGroups['Uncategorized'] ?? null;
+unset($icpGroups['Uncategorized']);
+ksort($icpGroups, SORT_NATURAL | SORT_FLAG_CASE);
+if ($uncategorizedGroup !== null) {
+    $icpGroups['Uncategorized'] = $uncategorizedGroup;
+}
 
 // Cycled per linked-campaign row so the split preview bar and its rows
 // below share a color, in a fixed order (not randomized/hashed) so a
@@ -281,8 +336,43 @@ render_header('ICP Segments');
   </div>
 </div>
 
+<div class="card icp-card mb-4">
+  <div class="card-body">
+    <form method="get" action="icp_segments.php" class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Vertical</label>
+        <select name="vertical_id" class="form-select form-select-sm">
+          <option value="">Vertical (all)</option>
+          <?php foreach ($verticals as $v): ?>
+            <option value="<?= (int) $v['id'] ?>" <?= $filterVerticalId === (string) $v['id'] ? 'selected' : '' ?>><?= e($v['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Service</label>
+        <select name="service_id" class="form-select form-select-sm">
+          <option value="">Service (all)</option>
+          <?php foreach ($services as $s): ?>
+            <option value="<?= (int) $s['id'] ?>" <?= $filterServiceId === (string) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-auto">
+        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      </div>
+      <?php if ($filterVerticalId !== '' || $filterServiceId !== ''): ?>
+      <div class="col-md-auto">
+        <a href="icp_segments.php" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+      <?php endif; ?>
+    </form>
+  </div>
+</div>
+
+<?php foreach ($icpGroups as $groupLabel => $groupIcps): ?>
+<h2 class="h6 text-uppercase text-muted mb-3 mt-4"><?= e($groupLabel) ?> <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis"><?= count($groupIcps) ?></span></h2>
 <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 mb-4">
-<?php foreach ($icps as $icp):
+<?php foreach ($groupIcps as $icp):
     $links = $linksByIcp[(int) $icp['id']];
     $total = $icp['percentage_total'];
     $ready = $total === 100;
@@ -388,8 +478,12 @@ render_header('ICP Segments');
         <input type="hidden" name="icp_id" value="<?= (int) $icp['id'] ?>">
         <select name="campaign_id" class="form-select form-select-sm" required>
           <option value="">Link a campaign&hellip;</option>
-          <?php foreach ($campaigns as $c): ?>
-            <option value="<?= (int) $c['id'] ?>"><?= e($c['name']) ?></option>
+          <?php foreach ($campaignsByService as $serviceLabel => $group): ?>
+            <optgroup label="<?= e($serviceLabel) ?>">
+              <?php foreach ($group as $c): ?>
+                <option value="<?= (int) $c['id'] ?>"><?= e($c['name']) ?></option>
+              <?php endforeach; ?>
+            </optgroup>
           <?php endforeach; ?>
         </select>
         <button type="submit" class="btn btn-outline-primary btn-sm rounded-pill px-3 text-nowrap">Add link</button>
@@ -485,7 +579,15 @@ render_header('ICP Segments');
 <?php endforeach; ?>
 </div>
 <!-- /.row -->
-<?php if (!$icps): ?>
+<?php endforeach; ?>
+<!-- /.icpGroups -->
+<?php if (!$icps && ($filterVerticalId !== '' || $filterServiceId !== '')): ?>
+  <div class="card icp-card">
+    <div class="card-body text-center py-5">
+      <p class="text-muted mb-0">No ICP segments match this filter. <a href="icp_segments.php">Reset the filter</a> to see everything.</p>
+    </div>
+  </div>
+<?php elseif (!$icps): ?>
   <div class="card icp-card">
     <div class="card-body text-center py-5">
       <p class="text-muted mb-0">No ICP segments yet -- create one above to start auto-distributing leads across campaigns.</p>
