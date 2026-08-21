@@ -714,6 +714,22 @@ class IcpRepository
                         . "{$stats['reassigned_sent']} sent directly (previously proven), "
                         . "{$stats['suppressed_skipped']} suppressed, {$stats['already_elsewhere_skipped']} already elsewhere, "
                         . "{$stats['pending_elsewhere_skipped']} pending elsewhere";
+                    if ($stats['pending_elsewhere_skipped'] > 0) {
+                        // Which OTHER campaign(s) each blocked account's
+                        // pending, unconfirmed persona is currently sitting
+                        // in -- same detail lead_bulk_campaign_add.php/
+                        // campaign_select_leads.php already show, so it's
+                        // not just a bare count here either. These leads
+                        // aren't lost: WaveAssigner re-checks this fresh
+                        // every run, so once that other campaign's send
+                        // resolves (delivered/bounced/replied), the next
+                        // distribution attempt picks them up automatically.
+                        $parts = [];
+                        foreach ($stats['pending_elsewhere_campaigns'] as $blockingCampaignName => $count) {
+                            $parts[] = "{$count} in \"{$blockingCampaignName}\"";
+                        }
+                        $lines[] = '    (pending elsewhere: ' . implode(', ', $parts) . ')';
+                    }
                 } elseif ($matchingIds) {
                     $lines[] = "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): 0 lead(s)";
                 }
