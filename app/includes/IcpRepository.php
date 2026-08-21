@@ -30,6 +30,45 @@ class IcpRepository
      */
     public static function list(PDO $db, Scope $scope): array
     {
+        [$clauses, $params] = self::visibilityClause($scope);
+        $rows = self::selectWhere($db, implode(' AND ', $clauses), $params);
+
+        foreach ($rows as &$r) {
+            $r['link_count'] = (int) $r['link_count'];
+            $r['percentage_total'] = (int) $r['percentage_total'];
+        }
+        unset($r);
+
+        return $rows;
+    }
+
+    /**
+     * Single ICP by id, subject to the exact same visibility rule as
+     * list() (see its docblock) -- for the per-ICP detail page
+     * (icp_segment_detail.php), so a Team Lead/Member typing another
+     * team's ICP id into the URL gets a clean "not found" instead of a
+     * page full of a segment they were never shown on the list.
+     *
+     * @return array<string,mixed>|null
+     */
+    public static function findVisible(PDO $db, Scope $scope, int $id): ?array
+    {
+        [$clauses, $params] = self::visibilityClause($scope);
+        $clauses[] = 'icp.id = :id';
+        $params['id'] = $id;
+        $rows = self::selectWhere($db, implode(' AND ', $clauses), $params);
+        if (!$rows) {
+            return null;
+        }
+        $row = $rows[0];
+        $row['link_count'] = (int) $row['link_count'];
+        $row['percentage_total'] = (int) $row['percentage_total'];
+        return $row;
+    }
+
+    /** @return array{0:array<int,string>,1:array<string,mixed>} */
+    private static function visibilityClause(Scope $scope): array
+    {
         $clauses = ['icp.company_id = :company_id'];
         $params = ['company_id' => $scope->companyId];
         if (!$scope->isAdmin()) {
@@ -40,7 +79,12 @@ class IcpRepository
             $params['user_id'] = $scope->userId;
             $params['user_id2'] = $scope->userId;
         }
+        return [$clauses, $params];
+    }
 
+    /** @return array<int,array<string,mixed>> */
+    private static function selectWhere(PDO $db, string $where, array $params): array
+    {
         $stmt = $db->prepare(
             "SELECT icp.*, rg.label AS role_group_label, v.code AS vertical_code, v.label AS vertical_label,
                     s.code AS service_code, s.label AS service_label, cg.label AS country_group_label,
@@ -51,19 +95,11 @@ class IcpRepository
                LEFT JOIN verticals v ON v.id = icp.vertical_id
                LEFT JOIN services s ON s.id = icp.service_id
                LEFT JOIN country_groups cg ON cg.id = icp.country_group_id
-              WHERE " . implode(' AND ', $clauses) . '
-              ORDER BY icp.name'
+              WHERE {$where}
+              ORDER BY icp.name"
         );
         $stmt->execute($params);
-        $rows = $stmt->fetchAll();
-
-        foreach ($rows as &$r) {
-            $r['link_count'] = (int) $r['link_count'];
-            $r['percentage_total'] = (int) $r['percentage_total'];
-        }
-        unset($r);
-
-        return $rows;
+        return $stmt->fetchAll();
     }
 
     /**
