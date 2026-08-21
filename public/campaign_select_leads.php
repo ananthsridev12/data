@@ -128,6 +128,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         $stats = WaveAssigner::assign(db(), $leadIds, $campaignId, $user['id'], $titlePriority, $scope->leadCooldownDays);
         $message = "{$stats['leaders']} wave-1 contact(s) selected across {$stats['domains']} companies, "
             . "{$stats['held']} held pending that outcome.";
+        if ($stats['reassigned_sent'] > 0) {
+            $message .= " {$stats['reassigned_sent']} sent directly, no wave-1 hold (already proven deliverable in a prior campaign).";
+        }
         if ($stats['suppressed_skipped'] > 0) {
             $message .= " {$stats['suppressed_skipped']} skipped (suppressed domain).";
         }

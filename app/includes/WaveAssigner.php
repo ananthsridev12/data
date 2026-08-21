@@ -7,6 +7,12 @@
  * against that leader so they're reserved but not exportable/emailable
  * until the leader's outcome is known (see WaveAssigner::release() /
  * ::suppress(), called from campaign_wave_update.php and bounce_import.php).
+ *
+ * That grouping only applies to a lead with NO prior assignment history --
+ * one already reassigned from an earlier, resolved campaign (see
+ * filterEligibleForCampaign()'s cooldown rule) skips it entirely and goes
+ * straight to active: its email already proved deliverable, so there's
+ * nothing left for a leader/held hold to protect against for that lead.
  */
 class WaveAssigner
 {
@@ -82,12 +88,12 @@ class WaveAssigner
      * suppresses the domain instead), this lead becomes assignable again.
      *
      * @param int[] $leadIds
-     * @return array{eligible:int[], suppressed_count:int, already_elsewhere_count:int, pending_elsewhere_count:int, pending_elsewhere_campaigns:array<string,int>}
+     * @return array{eligible:int[], reassigned_ids:int[], suppressed_count:int, already_elsewhere_count:int, pending_elsewhere_count:int, pending_elsewhere_campaigns:array<string,int>}
      */
     public static function filterEligibleForCampaign(PDO $db, array $leadIds, int $campaignId, int $cooldownDays): array
     {
         $stats = [
-            'eligible' => [], 'suppressed_count' => 0, 'already_elsewhere_count' => 0,
+            'eligible' => [], 'reassigned_ids' => [], 'suppressed_count' => 0, 'already_elsewhere_count' => 0,
             'pending_elsewhere_count' => 0, 'pending_elsewhere_campaigns' => [],
         ];
         if (!$leadIds) {
@@ -142,6 +148,22 @@ class WaveAssigner
         }
 
         $stats['eligible'] = array_values(array_diff($remaining2, array_keys($pending)));
+
+        // Which of the eligible leads have ANY prior assignment history at
+        // all (across any campaign) -- i.e. already went through a
+        // campaign before and only just cleared the resolved+cooldown
+        // check above, as opposed to being assigned for the very first
+        // time. assign() uses this to skip wave-1 domain pacing for a
+        // reassigned lead entirely: its email already proved deliverable
+        // in an earlier campaign, so there's nothing left for a leader/
+        // held hold to protect against for that lead specifically.
+        if ($stats['eligible']) {
+            $ePlaceholders = implode(',', array_fill(0, count($stats['eligible']), '?'));
+            $priorStmt = $db->prepare("SELECT DISTINCT lead_id FROM lead_campaign_assignments WHERE lead_id IN ({$ePlaceholders})");
+            $priorStmt->execute($stats['eligible']);
+            $stats['reassigned_ids'] = array_map('intval', $priorStmt->fetchAll(PDO::FETCH_COLUMN));
+        }
+
         return $stats;
     }
 
@@ -204,12 +226,12 @@ class WaveAssigner
      * @param int[] $leadIds
      * @param string[] $titlePriority ordered, case-insensitive substring keywords (e.g. ["VP Engineering", "CTO"])
      * @param int $cooldownDays the acting company's lead_cooldown_days (Scope::$leadCooldownDays) -- see filterEligibleForCampaign()
-     * @return array{leaders:int, held:int, suppressed_skipped:int, already_elsewhere_skipped:int, pending_elsewhere_skipped:int, pending_elsewhere_campaigns:array<string,int>, already_in_campaign:int, domains:int}
+     * @return array{leaders:int, held:int, reassigned_sent:int, suppressed_skipped:int, already_elsewhere_skipped:int, pending_elsewhere_skipped:int, pending_elsewhere_campaigns:array<string,int>, already_in_campaign:int, domains:int}
      */
     public static function assign(PDO $db, array $leadIds, int $campaignId, int $userId, array $titlePriority, int $cooldownDays, ?int $icpId = null): array
     {
         $stats = [
-            'leaders' => 0, 'held' => 0, 'suppressed_skipped' => 0,
+            'leaders' => 0, 'held' => 0, 'reassigned_sent' => 0, 'suppressed_skipped' => 0,
             'already_elsewhere_skipped' => 0, 'pending_elsewhere_skipped' => 0, 'pending_elsewhere_campaigns' => [],
             'already_in_campaign' => 0, 'domains' => 0,
         ];
@@ -231,17 +253,43 @@ class WaveAssigner
         $stmt->execute($filtered['eligible']);
         $eligible = $stmt->fetchAll();
 
-        $byDomain = [];
-        foreach ($eligible as $lead) {
-            $domain = strtolower(substr(strrchr($lead['email'], '@'), 1));
-            $byDomain[$domain][] = $lead;
-        }
-        $stats['domains'] = count($byDomain);
-
         $insertStmt = $db->prepare(
             'INSERT IGNORE INTO lead_campaign_assignments (lead_id, campaign_id, assigned_by, icp_id, wave_status, wave_leader_id) VALUES (?, ?, ?, ?, ?, ?)'
         );
         $findStmt = $db->prepare('SELECT id FROM lead_campaign_assignments WHERE lead_id = ? AND campaign_id = ?');
+
+        // A lead with ANY prior assignment history already proved its
+        // email deliverable in an earlier campaign -- wave-1's leader/
+        // held pacing exists to protect an *unproven* address from
+        // looking like a blast to a company, which no longer applies
+        // here, so these skip domain grouping entirely and go straight
+        // to active. This is independent per lead: two reassigned leads
+        // at the same domain both go active immediately; a genuinely
+        // fresh (never-before-assigned) lead at that same domain, in the
+        // same batch, still goes through normal wave-1 grouping below --
+        // reassignment status doesn't change the SAFETY of a lead that
+        // has never been sent before.
+        $reassignedLookup = array_flip($filtered['reassigned_ids']);
+        $freshLeads = [];
+        foreach ($eligible as $lead) {
+            if (isset($reassignedLookup[(int) $lead['id']])) {
+                $insertStmt->execute([$lead['id'], $campaignId, $userId, $icpId, 'active', null]);
+                if ($insertStmt->rowCount() === 1) {
+                    $stats['reassigned_sent']++;
+                } else {
+                    $stats['already_in_campaign']++;
+                }
+            } else {
+                $freshLeads[] = $lead;
+            }
+        }
+
+        $byDomain = [];
+        foreach ($freshLeads as $lead) {
+            $domain = strtolower(substr(strrchr($lead['email'], '@'), 1));
+            $byDomain[$domain][] = $lead;
+        }
+        $stats['domains'] = count($byDomain);
 
         foreach ($byDomain as $domainLeads) {
             $leader = self::pickLeader($domainLeads, $titlePriority);

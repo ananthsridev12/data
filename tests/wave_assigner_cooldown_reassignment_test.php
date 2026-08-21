@@ -116,6 +116,54 @@ try {
     $blockedNewAssignmentStmt->execute([$leadStillHeld, $campaignB]);
     $assert(!$blockedNewAssignmentStmt->fetchColumn(), 'The still-held lead did NOT get moved to campaign B');
 
+    $assert($stats['reassigned_sent'] === 1, 'assign() counted exactly the resolved+cooled-down lead as reassigned_sent (got ' . $stats['reassigned_sent'] . ')');
+    $assert($stats['leaders'] === 1, 'The never-assigned lead still went through normal wave-1 as a leader (got ' . $stats['leaders'] . ' leaders)');
+
+    $reassignedRowStmt = $db->prepare('SELECT wave_status, wave_leader_id FROM lead_campaign_assignments WHERE lead_id = ? AND campaign_id = ?');
+    $reassignedRowStmt->execute([$leadResolvedPastCooldown, $campaignB]);
+    $reassignedRow = $reassignedRowStmt->fetch();
+    $assert($reassignedRow && $reassignedRow['wave_status'] === 'active' && $reassignedRow['wave_leader_id'] === null, 'The reassigned lead\'s new row is active with no wave_leader_id -- bypassed wave-1, not silently made a "leader" of a group of one');
+
+    // --- Two reassigned leads sharing the SAME domain: per the user's
+    // explicit direction, wave-1 pacing doesn't apply between them either
+    // -- both go active immediately, no held pairing, since each already
+    // individually proved deliverable in campaign A. Mixed in the same
+    // call with two genuinely fresh leads at a DIFFERENT shared domain,
+    // to prove reassigned-bypass and normal wave-1 grouping coexist
+    // correctly within one assign() call.
+    $campStmt->execute([$companyId, 'Campaign C', $adminId, $adminId]);
+    $campaignC = (int) $db->lastInsertId();
+
+    $leadReassignedSharedA = $mkLead('teamA@shared-reassigned.test');
+    $leadReassignedSharedB = $mkLead('teamB@shared-reassigned.test');
+    $leadFreshSharedA = $mkLead('teamA@shared-fresh.test');
+    $leadFreshSharedB = $mkLead('teamB@shared-fresh.test');
+
+    $insertAssignment->execute([$leadReassignedSharedA, $campaignA, $adminId, 'active', 'delivered', 'Active', $daysAgo(40)]);
+    $insertAssignment->execute([$leadReassignedSharedB, $campaignA, $adminId, 'active', 'delivered', 'Active', $daysAgo(40)]);
+
+    $mixedStats = WaveAssigner::assign(
+        $db,
+        [$leadReassignedSharedA, $leadReassignedSharedB, $leadFreshSharedA, $leadFreshSharedB],
+        $campaignC,
+        $adminId,
+        [],
+        30
+    );
+    $assert($mixedStats['reassigned_sent'] === 2, 'Both reassigned leads at the shared domain went straight to active, no wave-1 pairing between them (got ' . $mixedStats['reassigned_sent'] . ')');
+    $assert($mixedStats['leaders'] === 1 && $mixedStats['held'] === 1, 'The two FRESH leads at their own shared domain still get normal wave-1 leader/held pairing (got ' . $mixedStats['leaders'] . ' leaders, ' . $mixedStats['held'] . ' held)');
+    $assert($mixedStats['domains'] === 1, 'domains count only reflects the fresh-lead domain group, not the bypassed reassigned pair (got ' . $mixedStats['domains'] . ')');
+
+    $sharedReassignedStmt = $db->prepare('SELECT wave_status, wave_leader_id FROM lead_campaign_assignments WHERE lead_id IN (?, ?) AND campaign_id = ?');
+    $sharedReassignedStmt->execute([$leadReassignedSharedA, $leadReassignedSharedB, $campaignC]);
+    $bothActiveNoLeader = true;
+    foreach ($sharedReassignedStmt->fetchAll() as $row) {
+        if ($row['wave_status'] !== 'active' || $row['wave_leader_id'] !== null) {
+            $bothActiveNoLeader = false;
+        }
+    }
+    $assert($bothActiveNoLeader, 'Both reassigned leads at the shared domain are active with no wave_leader_id -- neither is held under the other');
+
     if ($failures) {
         echo "\n" . count($failures) . " FAILURE(S):\n";
         foreach ($failures as $f) {

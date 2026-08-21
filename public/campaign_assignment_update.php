@@ -159,15 +159,25 @@ if ($action === 'mark_imported') {
     $leadIdsStmt->execute(array_merge([$campaignId], $ids));
     $leadIds = array_map('intval', $leadIdsStmt->fetchAll(PDO::FETCH_COLUMN));
 
-    // Same wave-1 domain-safety gate as Add Leads to Campaign
-    // (WaveAssigner::assign()) -- a checked lead only actually moves if
-    // its current assignment here is resolved and past the cooldown
-    // window; anything still in flight is skipped, not force-moved (see
-    // WaveAssigner::filterEligibleForCampaign()). No title-priority list
-    // here (hand-picked selection), leader falls back to seniority.
+    // A checked lead only actually moves if its current assignment here
+    // is resolved and past the cooldown window; anything still in flight
+    // is skipped, not force-moved (see
+    // WaveAssigner::filterEligibleForCampaign()). Every lead that DOES
+    // move already has assignment history (it's coming from this
+    // campaign) -- WaveAssigner::assign() skips wave-1 domain grouping
+    // for it entirely and sends it straight to active, since its email
+    // already proved deliverable here. No title-priority list needed
+    // (hand-picked selection, and reassigned leads don't use it anyway).
     $stats = WaveAssigner::assign(db(), $leadIds, $targetCampaignId, $user['id'], [], $scope->leadCooldownDays);
-    $message = "{$stats['leaders']} lead(s) moved to \"{$targetCampaign['name']}\" across {$stats['domains']} compan(y/ies), "
-        . "{$stats['held']} held pending a wave-1 outcome.";
+    $message = "{$stats['reassigned_sent']} lead(s) moved to \"{$targetCampaign['name']}\" and sent directly, no wave-1 hold (already proven deliverable in this campaign).";
+    if ($stats['leaders'] > 0 || $stats['held'] > 0) {
+        // Rare here (move_to_campaign only targets leads with prior
+        // history, so almost everything takes the reassigned_sent path
+        // above) -- but a lead somehow moved with zero assignment history
+        // would still go through normal wave-1 domain grouping like any
+        // other never-before-assigned lead.
+        $message .= " {$stats['leaders']} additional lead(s) went through normal wave-1 grouping across {$stats['domains']} compan(y/ies) ({$stats['held']} held pending that outcome).";
+    }
     if ($stats['suppressed_skipped'] > 0) {
         $message .= " {$stats['suppressed_skipped']} skipped (suppressed domain).";
     }

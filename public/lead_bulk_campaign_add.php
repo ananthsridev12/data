@@ -49,14 +49,21 @@ if (!$leadIds) {
 }
 
 // Same wave-1 domain-safety gate as the main Add Leads to Campaign flow
-// (WaveAssigner::assign()) -- if two checked leads share a company, one
-// becomes the wave-1 leader and the other is held pending that outcome.
-// No title-priority list here (this is a hand-picked selection, not a
-// filtered bulk pick), so the leader falls back to seniority ranking.
+// (WaveAssigner::assign()) -- if two never-before-assigned checked leads
+// share a company, one becomes the wave-1 leader and the other is held
+// pending that outcome. A checked lead being *reassigned* (already has
+// prior assignment history elsewhere, cleared the resolved+cooldown
+// check) skips that grouping entirely and goes straight to active --
+// its email already proved deliverable. No title-priority list here
+// (this is a hand-picked selection, not a filtered bulk pick), so a
+// fresh lead's leader falls back to seniority ranking.
 $stats = WaveAssigner::assign(db(), $leadIds, $campaignId, $user['id'], [], $scope->leadCooldownDays);
 
 $message = "{$stats['leaders']} lead(s) added to \"{$campaign['name']}\" across {$stats['domains']} compan(y/ies), "
     . "{$stats['held']} held pending a wave-1 outcome.";
+if ($stats['reassigned_sent'] > 0) {
+    $message .= " {$stats['reassigned_sent']} sent directly, no wave-1 hold (already proven deliverable in a prior campaign).";
+}
 if ($stats['suppressed_skipped'] > 0) {
     $message .= " {$stats['suppressed_skipped']} skipped (suppressed domain).";
 }

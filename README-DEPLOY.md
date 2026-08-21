@@ -212,6 +212,19 @@ the shared implementation:
    - **Remove checked from this campaign**, for a lead not yet pushed to
      Saleshandy (still `assigned`, not `pushed`) -- unconditionally frees
      it up regardless of cooldown, since nothing was ever actually sent.
+
+   **A reassigned lead skips wave-1 domain pacing entirely** once it
+   actually moves -- it goes straight to `active` with no leader/held
+   grouping, even if another reassigned lead at the same domain is moving
+   in the same batch. Wave-1's leader/held hold exists to protect an
+   *unproven* address from looking like a simultaneous blast to a
+   company; a lead with prior assignment history already proved its
+   email deliverable in an earlier campaign, so that protection no
+   longer applies to it specifically. This is independent per lead: a
+   genuinely fresh (never-before-assigned) lead in the same batch, even
+   at the same domain as a reassigned one, still goes through normal
+   wave-1 grouping. See `WaveAssigner::assign()`'s `reassigned_sent` stat
+   (reported separately from `leaders`/`held` in every flash message).
 2. **If any persona at a domain bounces, the whole domain is blocked from
    every future campaign** -- not just the one that bounced -- via the
    existing `suppressed_domains` global list. Which bounce types actually
