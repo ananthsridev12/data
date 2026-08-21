@@ -64,10 +64,18 @@ if ($campaign['saleshandy_sequence_id']) {
         // an admin adding/removing a step in Saleshandy and then
         // checking Campaign Flow is enough to un-stale the "Sequence
         // completed" filter on Campaign Leads without waiting for the
-        // next regular sync or a Capacity Planner refresh.
-        if (count($steps) !== (int) $campaign['saleshandy_step_count']) {
-            db()->prepare('UPDATE campaigns SET saleshandy_step_count = ? WHERE id = ?')->execute([count($steps), $campaignId]);
-            $campaign['saleshandy_step_count'] = count($steps);
+        // next regular sync or a Capacity Planner refresh. Its own
+        // try/catch, separate from the API fetch above -- a DB hiccup
+        // caching this count must never stop the page from rendering the
+        // steps it already successfully fetched, and must never overwrite
+        // $apiError with something that isn't actually an API problem.
+        try {
+            if (count($steps) !== (int) ($campaign['saleshandy_step_count'] ?? -1)) {
+                db()->prepare('UPDATE campaigns SET saleshandy_step_count = ? WHERE id = ?')->execute([count($steps), $campaignId]);
+                $campaign['saleshandy_step_count'] = count($steps);
+            }
+        } catch (Throwable $ex) {
+            // Non-fatal -- retried next visit.
         }
     } catch (SaleshandyApiException $ex) {
         $apiError = $ex->getMessage();

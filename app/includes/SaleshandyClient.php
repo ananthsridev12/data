@@ -944,14 +944,20 @@ class SaleshandyClient
         // "sequence completed" detection just stays unavailable for this
         // campaign until a later sync, a campaign_flow.php visit, or a
         // Capacity Planner refresh succeeds in fetching it.
-        if ($campaign['saleshandy_step_count'] === null) {
+        if (($campaign['saleshandy_step_count'] ?? null) === null) {
             try {
                 $stepCount = count($this->listSequenceSteps($sequenceId));
                 if ($stepCount > 0) {
                     $db->prepare('UPDATE campaigns SET saleshandy_step_count = ? WHERE id = ?')->execute([$stepCount, $campaign['id']]);
                 }
-            } catch (SaleshandyApiException $ex) {
-                // retried on a future sync
+            } catch (Throwable $ex) {
+                // Non-fatal by design -- this is a cache-population nicety
+                // for the "Sequence completed" feature, not core sync
+                // behavior, so nothing here (a Saleshandy API error, an
+                // unexpected DB error, anything) should ever be able to
+                // take down the actual sync/pull that follows. Retried on
+                // a future sync, a campaign_flow.php visit, or a Capacity
+                // Planner refresh.
             }
         }
 
