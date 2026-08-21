@@ -67,11 +67,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+// Vertical/Service filter for the list below -- narrows which campaigns
+// are shown (and which sections get built, see $campaignGroups below).
+$filterVerticalId = trim((string) ($_GET['vertical_id'] ?? ''));
+$filterServiceId = trim((string) ($_GET['service_id'] ?? ''));
+
 $campaignClauses = ['c.company_id = :scope_company_id'];
 $campaignParams = ['scope_company_id' => $scope->companyId];
 ScopeFilter::applyOwnerScope($campaignClauses, $campaignParams, $scope, db(), 'c', 'saleshandy_account_owner_id');
+if ($filterVerticalId !== '') {
+    $campaignClauses[] = 'c.vertical_id = :filter_vertical_id';
+    $campaignParams['filter_vertical_id'] = (int) $filterVerticalId;
+}
+if ($filterServiceId !== '') {
+    $campaignClauses[] = 'c.service_id = :filter_service_id';
+    $campaignParams['filter_service_id'] = (int) $filterServiceId;
+}
 $campaignsStmt = db()->prepare(
-    "SELECT c.*, u.name AS created_by_name, v.label AS vertical_label, s.label AS service_label,
+    "SELECT c.*, u.name AS created_by_name, v.code AS vertical_code, v.label AS vertical_label,
+       s.code AS service_code, s.label AS service_label,
        owner.name AS owner_name,
        (SELECT COUNT(*) FROM lead_campaign_assignments a WHERE a.campaign_id = c.id) AS lead_count,
        (SELECT COUNT(*) FROM lead_campaign_assignments a WHERE a.campaign_id = c.id AND a.status = 'exported') AS exported_count
@@ -87,6 +101,31 @@ $campaignsStmt->execute($campaignParams);
 $campaigns = $campaignsStmt->fetchAll();
 $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
+
+// Sections the table below into "Vertical - Service" groups (e.g. "DT -
+// CPQ"), using each lookup's short code -- same convention as ICP
+// Segments' own grouping (see icp_segments.php). Falls back to whichever
+// single one is set, or "Uncategorized" (kept last, everything else
+// alphabetical) if a campaign has neither.
+$campaignGroups = [];
+foreach ($campaigns as $c) {
+    $v = $c['vertical_code'] ?: $c['vertical_label'];
+    $s = $c['service_code'] ?: $c['service_label'];
+    if ($v && $s) {
+        $groupLabel = $v . ' - ' . $s;
+    } elseif ($v || $s) {
+        $groupLabel = $v ?: $s;
+    } else {
+        $groupLabel = 'Uncategorized';
+    }
+    $campaignGroups[$groupLabel][] = $c;
+}
+$uncategorizedCampaignGroup = $campaignGroups['Uncategorized'] ?? null;
+unset($campaignGroups['Uncategorized']);
+ksort($campaignGroups, SORT_NATURAL | SORT_FLAG_CASE);
+if ($uncategorizedCampaignGroup !== null) {
+    $campaignGroups['Uncategorized'] = $uncategorizedCampaignGroup;
+}
 
 // Touch/step notes already saved via Campaign Flow (campaign_flow.php) --
 // shown inline as an accordion below, straight from our own DB, so
@@ -152,12 +191,47 @@ render_header('Campaigns');
   </div>
 </div>
 
+<div class="card mb-4">
+  <div class="card-body">
+    <form method="get" action="campaigns.php" class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Vertical</label>
+        <select name="vertical_id" class="form-select form-select-sm">
+          <option value="">Vertical (all)</option>
+          <?php foreach ($verticals as $v): ?>
+            <option value="<?= (int) $v['id'] ?>" <?= $filterVerticalId === (string) $v['id'] ? 'selected' : '' ?>><?= e($v['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Service</label>
+        <select name="service_id" class="form-select form-select-sm">
+          <option value="">Service (all)</option>
+          <?php foreach ($services as $s): ?>
+            <option value="<?= (int) $s['id'] ?>" <?= $filterServiceId === (string) $s['id'] ? 'selected' : '' ?>><?= e($s['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-auto">
+        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      </div>
+      <?php if ($filterVerticalId !== '' || $filterServiceId !== ''): ?>
+      <div class="col-md-auto">
+        <a href="campaigns.php" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+      <?php endif; ?>
+    </form>
+  </div>
+</div>
+
+<?php foreach ($campaignGroups as $groupLabel => $groupCampaigns): ?>
+<h2 class="h6 text-uppercase text-muted mb-2 mt-4"><?= e($groupLabel) ?> <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis"><?= count($groupCampaigns) ?></span></h2>
 <table class="table table-striped bg-white">
   <thead>
     <tr><th>Name</th><th>Owner</th><th>Service</th><th>Leads</th><th>Exported</th><th>Status</th><th>Saleshandy</th><th style="width: 220px;"></th></tr>
   </thead>
   <tbody>
-  <?php foreach ($campaigns as $c): $canMutate = CampaignAccess::canMutate($scope, $c); ?>
+  <?php foreach ($groupCampaigns as $c): $canMutate = CampaignAccess::canMutate($scope, $c); ?>
     <tr>
       <td>
         <span title="Created by <?= e($c['created_by_name']) ?>"><?= e($c['name']) ?></span>
@@ -281,9 +355,21 @@ render_header('Campaigns');
     </tr>
     <?php endif; ?>
   <?php endforeach; ?>
-  <?php if (!$campaigns): ?>
-    <tr><td colspan="8" class="text-center text-muted py-4">No campaigns yet.</td></tr>
-  <?php endif; ?>
   </tbody>
 </table>
+<?php endforeach; ?>
+<!-- /.campaignGroups -->
+<?php if (!$campaigns && ($filterVerticalId !== '' || $filterServiceId !== '')): ?>
+  <div class="card">
+    <div class="card-body text-center py-5">
+      <p class="text-muted mb-0">No campaigns match this filter. <a href="campaigns.php">Reset the filter</a> to see everything.</p>
+    </div>
+  </div>
+<?php elseif (!$campaigns): ?>
+  <div class="card">
+    <div class="card-body text-center py-5">
+      <p class="text-muted mb-0">No campaigns yet.</p>
+    </div>
+  </div>
+<?php endif; ?>
 <?php render_footer(); ?>
