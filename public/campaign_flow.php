@@ -58,12 +58,13 @@ if ($campaign['saleshandy_sequence_id']) {
         usort($steps, static fn(array $a, array $b) => ($a['number'] ?? 0) <=> ($b['number'] ?? 0));
 
         // Piggyback on this page's already-live fetch to keep
-        // campaigns.saleshandy_step_count fresh (see
-        // sql/042_sequence_step_count.sql) -- no extra API call, just
-        // persisting a count we already have, so an admin adding/removing
-        // a step in Saleshandy and then checking Campaign Flow is enough
-        // to un-stale the "Sequence completed" filter on Campaign Leads
-        // without waiting for the next regular sync.
+        // campaigns.saleshandy_step_count fresh (the same column
+        // CapacityPlanner populates, sql/036_capacity_planner.sql) --
+        // no extra API call, just persisting a count we already have, so
+        // an admin adding/removing a step in Saleshandy and then
+        // checking Campaign Flow is enough to un-stale the "Sequence
+        // completed" filter on Campaign Leads without waiting for the
+        // next regular sync or a Capacity Planner refresh.
         if (count($steps) !== (int) $campaign['saleshandy_step_count']) {
             db()->prepare('UPDATE campaigns SET saleshandy_step_count = ? WHERE id = ?')->execute([count($steps), $campaignId]);
             $campaign['saleshandy_step_count'] = count($steps);

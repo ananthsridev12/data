@@ -122,11 +122,12 @@ if ($filters['country_group_id'] !== '') {
     $baseWhereClauses[] = 'l.country_group_id = :country_group_id';
     $baseWhereParams['country_group_id'] = (int) $filters['country_group_id'];
 }
-// "Sequence completed": current_step reached the sequence's real total
-// step count (campaigns.saleshandy_step_count, see
-// sql/042_sequence_step_count.sql) with no bounce/reply/pause -- i.e.
-// went through the whole sequence with no response. Only offered once
-// the step count is actually known; see the filter form below.
+/// "Sequence completed": current_step reached the sequence's real total
+// step count (campaigns.saleshandy_step_count -- the same column
+// CapacityPlanner populates, sql/036_capacity_planner.sql) with no
+// bounce/reply/pause -- i.e. went through the whole sequence with no
+// response. Only offered once the step count is actually known; see the
+// filter form below.
 if ($filters['sequence_completed'] === '1' && $campaign['saleshandy_step_count']) {
     $baseWhereClauses[] = "a.delivery_status = 'Active' AND a.saleshandy_current_step >= :step_count";
     $baseWhereParams['step_count'] = (int) $campaign['saleshandy_step_count'];

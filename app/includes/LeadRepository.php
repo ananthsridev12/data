@@ -305,9 +305,10 @@ class LeadRepository
             // require_sequence_completed_if_reassigning. Requires the
             // SAME latest-assignment row (a2) to have actually finished
             // its campaign's sequence: current_step reached that
-            // campaign's real total (campaigns.saleshandy_step_count,
-            // NULL until known -- see sql/042_sequence_step_count.sql)
-            // with delivery_status still 'Active' (no reply). Mirrors
+            // campaign's real total (campaigns.saleshandy_step_count --
+            // the pre-existing CapacityPlanner column,
+            // sql/036_capacity_planner.sql -- NULL until known) with
+            // delivery_status still 'Active' (no reply). Mirrors
             // campaign_leads.php's own "Sequence completed" filter
             // exactly, so the two never drift apart.
             $sequenceCompletedClause = '';

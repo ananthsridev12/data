@@ -65,11 +65,16 @@ and import, in order:
 39. `sql/039_follow_up_tasks.sql`
 40. `sql/040_followup_task_connection_status.sql`
 41. `sql/041_email_smtp_reports.sql`
-42. `sql/042_sequence_step_count.sql`
+42. `sql/043_icp_require_sequence_completed.sql` (there's no 042 -- an
+    earlier attempt at this number duplicated a column
+    `sql/036_capacity_planner.sql` already added, so it was retracted;
+    043 was left as-is rather than renumbered, to avoid confusion for
+    anyone who'd already run it under that name)
 
-(If you're setting up a brand-new site, import all forty-two in order. If
-you already have a running site from before these were added, just
-import whichever numbered files you're missing -- they're additive, so
+(If you're setting up a brand-new site, import every file listed above,
+in order -- 42 files total (001 through 041, then 043; there's no 042,
+see above). If you already have a running site from before these were
+added, just import whichever numbered files you're missing -- they're additive, so
 re-running 001/002 against an existing database will error on already-
 existing tables/rows. **A 500 error right after deploying new code is
 usually this** -- the code expects tables/columns from a migration that

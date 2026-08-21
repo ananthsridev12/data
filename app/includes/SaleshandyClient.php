@@ -933,12 +933,17 @@ class SaleshandyClient
             return $stats;
         }
 
-        // Lazy, cache-once fetch of the sequence's total step count (see
-        // sql/042_sequence_step_count.sql) -- only when we don't already
-        // have one, so a routine sync never costs an extra API call once
-        // this is populated. Non-fatal on failure: "sequence completed"
-        // detection just stays unavailable for this campaign until a
-        // later sync or a campaign_flow.php visit succeeds in fetching it.
+        // Lazy, cache-once fetch of the sequence's total step count into
+        // campaigns.saleshandy_step_count -- the same column
+        // CapacityPlanner already populates via its own "Refresh from
+        // Saleshandy" button (sql/036_capacity_planner.sql), reused here
+        // rather than adding a second column, so both features share one
+        // source of truth. Only fetched when we don't already have a
+        // value (from either source), so a routine sync never costs an
+        // extra API call once this is populated. Non-fatal on failure:
+        // "sequence completed" detection just stays unavailable for this
+        // campaign until a later sync, a campaign_flow.php visit, or a
+        // Capacity Planner refresh succeeds in fetching it.
         if ($campaign['saleshandy_step_count'] === null) {
             try {
                 $stepCount = count($this->listSequenceSteps($sequenceId));
