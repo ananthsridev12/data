@@ -23,7 +23,16 @@ $redirect = ($_POST['redirect_to'] ?? '') === 'icp_segments' ? 'icp_segments.php
 
 $result = IcpRepository::runDistributionForIcp(db(), $scope, $icpId);
 CronRunLog::record(db(), 'icp_distribution', 'manual', $result['summary']);
-flash_set($result['ok'] ? 'success' : 'danger', 'ICP distribution: ' . $result['summary']);
+// $result['lines'] carries the per-campaign breakdown AND any auto-push
+// errors (e.g. Saleshandy rate-limit failures, stale field mappings) --
+// previously computed here and then silently discarded, leaving no way
+// to tell "assigned but not pushed" apart from "actually pushed
+// everything eligible" without digging through server logs.
+$flashMessage = 'ICP distribution: ' . $result['summary'];
+if ($result['lines']) {
+    $flashMessage .= ' -- ' . implode(' ', array_map('trim', $result['lines']));
+}
+flash_set($result['ok'] ? 'success' : 'danger', $flashMessage);
 
 header('Location: ' . $redirect);
 exit;

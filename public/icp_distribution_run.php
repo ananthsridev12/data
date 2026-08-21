@@ -23,7 +23,14 @@ csrf_verify();
 
 $result = IcpRepository::runDistributionForNext(db(), $user['id'], $scope->companyId, $scope->isAdmin() ? null : $scope->userId);
 CronRunLog::record(db(), 'icp_distribution', 'manual', $result['summary']);
-flash_set('success', 'ICP distribution: ' . $result['summary']);
+// $result['lines'] carries the per-campaign breakdown AND any auto-push
+// errors (e.g. Saleshandy rate-limit failures, stale field mappings) --
+// previously computed here and then silently discarded.
+$flashMessage = 'ICP distribution: ' . $result['summary'];
+if ($result['lines']) {
+    $flashMessage .= ' -- ' . implode(' ', array_map('trim', $result['lines']));
+}
+flash_set('success', $flashMessage);
 
 header('Location: icp_segments.php');
 exit;
