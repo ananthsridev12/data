@@ -352,6 +352,132 @@ class WaveAssigner
     }
 
     /**
+     * bounce_settings.php only governs FUTURE bounce events -- unchecking
+     * a bounce type there doesn't retroactively touch a domain/held group
+     * already suppressed under the old setting. This finds exactly what
+     * a "release now" click would affect for the company's CURRENT
+     * settings, without changing anything: every suppressed_domains row
+     * whose recorded bounce_type is no longer configured to suppress, and
+     * every currently-held (wave_status = 'suppressed') group whose
+     * wave-1 leader's own bounce is that same now-not-suppressing type.
+     * A domain/held group suppressed for a bounce type still checked
+     * (e.g. Hard Bounce), or with no recognized bounce_type at all (e.g.
+     * manually suppressed), is never included.
+     *
+     * @return array{domains:array<int,string>,leader_assignment_ids:array<int,int>}
+     */
+    private static function findReleasableByCurrentBounceSettings(PDO $db, int $companyId): array
+    {
+        $notSuppressingStmt = $db->prepare(
+            'SELECT bounce_type FROM bounce_type_suppression_settings WHERE company_id = ? AND suppresses = 0'
+        );
+        $notSuppressingStmt->execute([$companyId]);
+        $notSuppressingTypes = $notSuppressingStmt->fetchAll(PDO::FETCH_COLUMN);
+
+        if (!$notSuppressingTypes) {
+            return ['domains' => [], 'leader_assignment_ids' => []];
+        }
+        $placeholders = implode(',', array_fill(0, count($notSuppressingTypes), '?'));
+
+        $domainsStmt = $db->prepare(
+            "SELECT domain FROM suppressed_domains WHERE company_id = ? AND bounce_type IN ({$placeholders})"
+        );
+        $domainsStmt->execute(array_merge([$companyId], $notSuppressingTypes));
+        $domains = $domainsStmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $leadersStmt = $db->prepare(
+            "SELECT a.id FROM lead_campaign_assignments a
+               JOIN leads l ON l.id = a.lead_id
+              WHERE l.company_id = ? AND a.wave_leader_id IS NULL
+                AND a.bounce_status = 'bounced' AND a.bounce_type IN ({$placeholders})
+                AND EXISTS (SELECT 1 FROM lead_campaign_assignments h WHERE h.wave_leader_id = a.id AND h.wave_status = 'suppressed')"
+        );
+        $leadersStmt->execute(array_merge([$companyId], $notSuppressingTypes));
+        $leaderIds = array_map('intval', $leadersStmt->fetchAll(PDO::FETCH_COLUMN));
+
+        return ['domains' => $domains, 'leader_assignment_ids' => $leaderIds];
+    }
+
+    /**
+     * Read-only preview of releaseByCurrentBounceSettings() -- exactly
+     * what a "Release now" click would affect, without touching anything,
+     * so bounce_settings.php can show real counts before the admin
+     * commits to running it.
+     *
+     * @return array{domains_count:int,held_count:int,domains:array<int,string>}
+     */
+    public static function previewReleaseByCurrentBounceSettings(PDO $db, int $companyId): array
+    {
+        $found = self::findReleasableByCurrentBounceSettings($db, $companyId);
+
+        $heldCount = 0;
+        if ($found['leader_assignment_ids']) {
+            $placeholders = implode(',', array_fill(0, count($found['leader_assignment_ids']), '?'));
+            $countStmt = $db->prepare(
+                "SELECT COUNT(*) FROM lead_campaign_assignments WHERE wave_leader_id IN ({$placeholders}) AND wave_status = 'suppressed'"
+            );
+            $countStmt->execute($found['leader_assignment_ids']);
+            $heldCount = (int) $countStmt->fetchColumn();
+        }
+
+        return [
+            'domains_count' => count($found['domains']),
+            'held_count' => $heldCount,
+            'domains' => $found['domains'],
+        ];
+    }
+
+    /**
+     * Bulk "settings changed" cleanup, for the "Release now" button on
+     * bounce_settings.php: releases every domain/held group
+     * previewReleaseByCurrentBounceSettings() found. Two independent
+     * effects, exactly reversing what suppress()'s cascade did for that
+     * bounce type:
+     *   - suppressed_domains rows are deleted outright -- every persona
+     *     at that domain becomes assignable to new campaigns again.
+     *   - each matching leader's held group (wave_status = 'suppressed')
+     *     goes back to 'active', so those specific prospects become
+     *     exportable/pushable in their own campaign again.
+     * Deliberately does NOT touch the leader's own bounce_status (stays
+     * 'bounced') or wave_status -- that lead genuinely did bounce; only
+     * *other* prospects blocked as a side effect of that bounce type
+     * being configured to suppress are released. Unlike release(), which
+     * is for "this bounce report was wrong, treat as delivered" and
+     * overwrites bounce_status to 'delivered' -- not appropriate here,
+     * since the bounce itself isn't in question, only whether it should
+     * have cascaded this broadly.
+     *
+     * @return array{domains_released:int,held_reactivated:int,released_domains:array<int,string>}
+     */
+    public static function releaseByCurrentBounceSettings(PDO $db, int $companyId): array
+    {
+        $found = self::findReleasableByCurrentBounceSettings($db, $companyId);
+
+        if ($found['domains']) {
+            $placeholders = implode(',', array_fill(0, count($found['domains']), '?'));
+            $db->prepare("DELETE FROM suppressed_domains WHERE company_id = ? AND domain IN ({$placeholders})")
+                ->execute(array_merge([$companyId], $found['domains']));
+        }
+
+        $heldReactivated = 0;
+        if ($found['leader_assignment_ids']) {
+            $reactivateStmt = $db->prepare(
+                "UPDATE lead_campaign_assignments SET wave_status = 'active' WHERE wave_leader_id = ? AND wave_status = 'suppressed'"
+            );
+            foreach ($found['leader_assignment_ids'] as $leaderId) {
+                $reactivateStmt->execute([$leaderId]);
+                $heldReactivated += $reactivateStmt->rowCount();
+            }
+        }
+
+        return [
+            'domains_released' => count($found['domains']),
+            'held_reactivated' => $heldReactivated,
+            'released_domains' => $found['domains'],
+        ];
+    }
+
+    /**
      * Wave-1 bounced: suppress the held leads under this leader for this
      * campaign, and -- if this bounce type is configured to (see
      * bounceTypeSuppresses()) -- add the whole domain to the global
