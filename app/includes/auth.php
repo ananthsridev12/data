@@ -104,6 +104,38 @@ function complete_signup(int $userId, string $password): void
     db()->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?')->execute([$userId]);
 }
 
+/**
+ * @return ?array{id:int,name:string,email:string} the user, or null if the token is unknown/expired/already used.
+ *   Unlike find_user_by_invite_token(), not restricted to password_hash
+ *   IS NULL -- this is for an EXISTING user (admin-triggered reset from
+ *   users.php), not a brand-new signup.
+ */
+function find_user_by_reset_token(string $token): ?array
+{
+    if ($token === '') {
+        return null;
+    }
+    $stmt = db()->prepare(
+        'SELECT id, name, email FROM users
+          WHERE reset_token = ? AND reset_expires_at > NOW() LIMIT 1'
+    );
+    $stmt->execute([$token]);
+    $user = $stmt->fetch();
+    return $user ?: null;
+}
+
+/**
+ * Sets an existing user's password, consumes the reset token, and logs
+ * them in -- same shape as complete_signup(), for password_reset.php.
+ */
+function complete_password_reset(int $userId, string $password): void
+{
+    db()->prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires_at = NULL WHERE id = ?')
+        ->execute([password_hash($password, PASSWORD_DEFAULT), $userId]);
+    session_login($userId);
+    db()->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?')->execute([$userId]);
+}
+
 function logout(): void
 {
     auth_boot();

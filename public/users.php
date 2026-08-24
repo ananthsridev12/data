@@ -40,6 +40,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         db()->prepare('UPDATE users SET invite_token = ?, invite_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY) WHERE id = ? AND company_id = ? AND password_hash IS NULL')
             ->execute([$token, $id, $scope->companyId]);
         flash_set('success', 'New signup link generated below.');
+    } elseif ($action === 'reset_password') {
+        // For a user who already HAS a password (invite_token is
+        // deliberately restricted to password_hash IS NULL, i.e. brand-
+        // new signups only -- see find_user_by_invite_token()). Same
+        // copy-a-link-and-share-it pattern, just the separate
+        // reset_token/reset_expires_at pair (sql/046_password_reset.sql)
+        // so this can never be confused with -- or accidentally clear --
+        // a still-pending signup invite.
+        $id = (int) ($_POST['id'] ?? 0);
+        $token = bin2hex(random_bytes(32));
+        db()->prepare('UPDATE users SET reset_token = ?, reset_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY) WHERE id = ? AND company_id = ?')
+            ->execute([$token, $id, $scope->companyId]);
+        flash_set('success', 'Password reset link generated below -- copy and share it with them (valid 7 days).');
     } elseif ($action === 'toggle_active') {
         $id = (int) ($_POST['id'] ?? 0);
         if ($id === (int) $admin['id']) {
@@ -77,7 +90,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $users = db()->prepare(
     'SELECT u.id, u.name, u.email, u.role, u.is_active, u.last_login_at, u.created_at, u.team_id,
-            u.password_hash IS NULL AS is_pending, u.invite_token, u.invite_expires_at
+            u.password_hash IS NULL AS is_pending, u.invite_token, u.invite_expires_at,
+            u.reset_token, u.reset_expires_at
        FROM users u WHERE u.company_id = ? ORDER BY u.created_at'
 );
 $users->execute([$scope->companyId]);
@@ -190,6 +204,13 @@ render_header('Users');
           <input type="hidden" name="id" value="<?= (int) $u['id'] ?>">
           <button type="submit" class="btn btn-sm btn-outline-secondary">New link</button>
         </form>
+        <?php else: ?>
+        <form method="post" action="users.php" class="d-inline" onsubmit="return confirm('Generate a password reset link for <?= e($u['name']) ?>? Their current password keeps working until they actually use the link to set a new one.');">
+          <?= csrf_field() ?>
+          <input type="hidden" name="action" value="reset_password">
+          <input type="hidden" name="id" value="<?= (int) $u['id'] ?>">
+          <button type="submit" class="btn btn-sm btn-outline-secondary">Reset password</button>
+        </form>
         <?php endif; ?>
       </td>
     </tr>
@@ -198,6 +219,14 @@ render_header('Users');
       <td colspan="7" class="small">
         Signup link (expires <?= e($u['invite_expires_at']) ?>):
         <input type="text" class="form-control form-control-sm d-inline-block" style="max-width: 480px;" readonly onclick="this.select()" value="<?= e($appUrl . '/signup.php?token=' . $u['invite_token']) ?>">
+      </td>
+    </tr>
+    <?php endif; ?>
+    <?php if ($u['reset_token']): ?>
+    <tr>
+      <td colspan="7" class="small">
+        Password reset link (expires <?= e($u['reset_expires_at']) ?>):
+        <input type="text" class="form-control form-control-sm d-inline-block" style="max-width: 480px;" readonly onclick="this.select()" value="<?= e($appUrl . '/password_reset.php?token=' . $u['reset_token']) ?>">
       </td>
     </tr>
     <?php endif; ?>
