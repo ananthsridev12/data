@@ -42,6 +42,12 @@ $filters = [
     'imported' => trim((string) ($_GET['imported'] ?? '')),
     'email_sent' => trim((string) ($_GET['email_sent'] ?? '')),
     'sequence_completed' => trim((string) ($_GET['sequence_completed'] ?? '')),
+    // Also drill-through only -- these are ICP Segments' own eligibility
+    // rule (IcpRepository::toFilters()), so "View eligible leads" from
+    // icp_segments.php/icp_segment_detail.php reproduces exactly the pool
+    // its own "N lead(s) eligible now" count is showing.
+    'assignable_after_cooldown_days' => trim((string) ($_GET['assignable_after_cooldown_days'] ?? '')),
+    'require_sequence_completed_if_reassigning' => !empty($_GET['require_sequence_completed_if_reassigning']),
 ];
 $page = max(1, (int) ($_GET['page'] ?? 1));
 

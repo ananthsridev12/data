@@ -196,6 +196,9 @@ render_header($icp['name'] . ' - ICP Segment');
       <?= info_icon('Leads matching this ICP\'s current criteria that are assignable right now -- either never assigned to any campaign before, or previously assigned but with that assignment resolved (not held, not still pending a delivery outcome) and past your company\'s cooldown period.'
           . ($icp['require_sequence_completed'] ? ' "Only reassign leads whose prior sequence fully completed" is ON for this ICP, so a previously-assigned lead must ALSO have gone through every step of its prior campaign\'s sequence with no reply -- not just resolved+cooled-down.' : '')
           . ' Leads still held/pending elsewhere, or on a suppressed domain, are excluded. Exactly the pool the next distribution cron run would pick up and split across the linked campaigns.') ?>
+      <?php if ($matchingCount > 0): ?>
+        &middot; <a href="dashboard.php?<?= e(http_build_query(IcpRepository::toDashboardQueryParams($icp, $scope))) ?>">View these leads</a>
+      <?php endif; ?>
     </div>
   </div>
   <div class="d-flex flex-wrap gap-2 flex-shrink-0">

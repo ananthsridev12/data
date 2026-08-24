@@ -338,6 +338,9 @@ render_header('ICP Segments');
         <?= e($icp['role_group_label'] ?: 'Any persona') ?>
         &middot; <?= (int) $icp['link_count'] ?> campaign(s) linked
         &middot; <?= number_format($matchingCountByIcp[(int) $icp['id']]) ?> lead(s) eligible now
+        <?php if ($matchingCountByIcp[(int) $icp['id']] > 0): ?>
+          (<a href="dashboard.php?<?= e(http_build_query(IcpRepository::toDashboardQueryParams($icp, $scope))) ?>">view</a>)
+        <?php endif; ?>
       </div>
     </div>
     <div class="d-flex flex-wrap gap-2 flex-shrink-0">

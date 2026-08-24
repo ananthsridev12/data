@@ -498,6 +498,40 @@ class IcpRepository
     }
 
     /**
+     * "View eligible leads" link target for icp_segments.php /
+     * icp_segment_detail.php -- the exact same toFilters() this ICP's own
+     * "N lead(s) eligible now" count (LeadRepository::matchingCount()) is
+     * computed from, reshaped into dashboard.php's GET param names/shapes
+     * so the drill-through link lands on precisely that pool. Blank/unset
+     * criteria are simply omitted, matching what hand-typing the URL
+     * would look like.
+     *
+     * @return array<string,mixed> ready for http_build_query()
+     */
+    public static function toDashboardQueryParams(array $icp, Scope $scope): array
+    {
+        $filters = self::toFilters($icp, $scope);
+        $params = [];
+        foreach (['company_country', 'industry', 'seniority', 'employee_count_range'] as $key) {
+            if ($filters[$key]) {
+                $params[$key] = $filters[$key];
+            }
+        }
+        foreach (['vertical_id', 'service_id', 'role_group_id', 'country_group_id'] as $key) {
+            if ($filters[$key] !== '') {
+                $params[$key] = $filters[$key];
+            }
+        }
+        // Not gated on truthiness -- 0 is a meaningful cooldown ("no
+        // wait") and buildWhere() checks for the empty STRING specifically.
+        $params['assignable_after_cooldown_days'] = $filters['assignable_after_cooldown_days'];
+        if ($filters['require_sequence_completed_if_reassigning']) {
+            $params['require_sequence_completed_if_reassigning'] = '1';
+        }
+        return $params;
+    }
+
+    /**
      * Pure function: splits a shuffled lead-ID pool into one bucket per
      * link, proportional to each link's percentage. The last link (by
      * the order given) absorbs any rounding remainder, so every ID lands
