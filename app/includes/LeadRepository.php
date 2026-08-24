@@ -23,7 +23,8 @@ class LeadRepository
      *   departments, industry, country, employee_count, vertical_id, service_id,
      *   imported_by (user id), campaign_id, hide_used_in_campaign (bool),
      *   show_suppressed (bool -- by default, leads on a suppressed domain
-     *   are excluded entirely)
+     *   are excluded entirely), sequence_completed ('1' -- the lead's
+     *   latest assignment finished its campaign's sequence)
      * @return array{rows: array<int,array>, total: int, page: int, perPage: int, totalPages: int}
      */
     public static function search(PDO $db, Scope $scope, array $filters, int $page = 1): array
@@ -51,6 +52,20 @@ class LeadRepository
                      FROM lead_campaign_assignments a
                      JOIN campaigns c ON c.id = a.campaign_id
                     WHERE a.lead_id = l.id) AS used_in_campaigns,
+                  -- Which service this lead was pitched, in order, across
+                  -- every campaign it's ever been assigned to (e.g. 'CPQ ->
+                  -- Digital Consulting' for a lead pitched CPQ first, then
+                  -- reassigned into a Digital Consulting campaign) --
+                  -- chronological by assigned_at, one entry per assignment
+                  -- (not deduped, so a repeat pitch of the same service
+                  -- still shows). A campaign with no service_id set shows
+                  -- as '(no service)' rather than silently shortening the
+                  -- sequence.
+                  (SELECT GROUP_CONCAT(COALESCE(s7.label, '(no service)') ORDER BY a7.assigned_at, a7.id SEPARATOR ' -> ')
+                     FROM lead_campaign_assignments a7
+                     JOIN campaigns c7 ON c7.id = a7.campaign_id
+                     LEFT JOIN services s7 ON s7.id = c7.service_id
+                    WHERE a7.lead_id = l.id) AS service_pitch_sequence,
                   (SELECT sd.reason FROM suppressed_domains sd
                     WHERE sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id) AS suppressed_reason,
                   -- When this lead becomes eligible again for a different
@@ -370,6 +385,21 @@ class LeadRepository
             $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.email_sent = 1 AND a.id = {$latestAssignment})";
         } elseif (($filters['email_sent'] ?? '') === '0') {
             $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.email_sent = 1 AND a.id = {$latestAssignment})";
+        }
+        // 'sequence_completed': the lead's *latest* assignment finished its
+        // campaign's sequence -- current_step reached that campaign's real
+        // total (campaigns.saleshandy_step_count) with delivery_status
+        // still 'Active' (no reply/bounce/pause). Same formula as
+        // campaign_leads.php's own "Sequence completed" stat/filter and
+        // the require_sequence_completed_if_reassigning clause above, just
+        // evaluated globally instead of scoped to one campaign, so
+        // Analytics' "Sequence completed" column and this drill-through
+        // filter can never disagree with either of those.
+        if (($filters['sequence_completed'] ?? '') === '1') {
+            $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a JOIN campaigns c9 ON c9.id = a.campaign_id
+                WHERE a.lead_id = l.id AND a.id = {$latestAssignment}
+                  AND a.delivery_status = 'Active' AND c9.saleshandy_step_count IS NOT NULL
+                  AND a.saleshandy_current_step >= c9.saleshandy_step_count)";
         }
 
         if (empty($filters['show_suppressed'])) {

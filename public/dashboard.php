@@ -32,14 +32,16 @@ $filters = [
     'campaign_id' => trim((string) ($_GET['campaign_id'] ?? '')),
     'hide_used_in_campaign' => !empty($_GET['hide_used_in_campaign']),
     'show_suppressed' => !empty($_GET['show_suppressed']),
-    // assigned_campaign_id/imported/email_sent aren't exposed on this
-    // page's own filter form -- they exist so an Analytics drill-through
-    // link (see analytics.php) can land here with the exact slice it
-    // showed a number for. Still fully valid to type into the URL by hand.
+    // assigned_campaign_id/imported/email_sent/sequence_completed aren't
+    // exposed on this page's own filter form -- they exist so an
+    // Analytics drill-through link (see analytics.php) can land here with
+    // the exact slice it showed a number for. Still fully valid to type
+    // into the URL by hand.
     'company_country' => $multiParam('company_country'),
     'assigned_campaign_id' => trim((string) ($_GET['assigned_campaign_id'] ?? '')),
     'imported' => trim((string) ($_GET['imported'] ?? '')),
     'email_sent' => trim((string) ($_GET['email_sent'] ?? '')),
+    'sequence_completed' => trim((string) ($_GET['sequence_completed'] ?? '')),
 ];
 $page = max(1, (int) ($_GET['page'] ?? 1));
 
@@ -57,7 +59,7 @@ $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters[
     || $filters['industry'] || $filters['country'] || $filters['employee_count_range']
     || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== '' || $filters['country_group_id'] !== '' || $filters['imported_by'] !== ''
     || $filters['campaign_id'] !== '' || $filters['company_country']
-    || $filters['assigned_campaign_id'] !== '' || $filters['imported'] !== '' || $filters['email_sent'] !== '';
+    || $filters['assigned_campaign_id'] !== '' || $filters['imported'] !== '' || $filters['email_sent'] !== '' || $filters['sequence_completed'] !== '';
 
 if ($hasRealFilter) {
     $result = LeadRepository::search(db(), $scope, $filters, $page);
@@ -251,6 +253,9 @@ $renderCell = static function (string $key, array $lead) {
             <?php break;
         case 'email_verification': ?>
             <td><?= render_verification_badge($lead['email_verification_status']) ?></td>
+            <?php break;
+        case 'service_pitch_sequence': ?>
+            <td class="small"><?= $lead['service_pitch_sequence'] ? e($lead['service_pitch_sequence']) : '' ?></td>
             <?php break;
     }
 };

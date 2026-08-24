@@ -174,6 +174,7 @@ $renderSection = function (string $key, array $section) use ($drillLink, $notImp
                 <th class="text-end">Not imported</th>
                 <th class="text-end">Email sent</th>
                 <th class="text-end">Email not sent</th>
+                <th class="text-end">Sequence completed</th>
               </tr>
             </thead>
             <tbody>
@@ -189,10 +190,11 @@ $renderSection = function (string $key, array $section) use ($drillLink, $notImp
                   </td>
                   <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'email_sent', '1')) ?>"><?= number_format($row['email_sent']) ?></a></td>
                   <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'email_sent', '0')) ?>"><?= number_format($row['email_not_sent']) ?></a></td>
+                  <td class="text-end"><a href="<?= e($drillLink($key, $row['grp'], 'sequence_completed', '1')) ?>"><?= number_format($row['sequence_completed']) ?></a></td>
                 </tr>
               <?php endforeach; ?>
               <?php if (!$pivot['rows']): ?>
-                <tr><td colspan="7" class="text-center text-muted py-3">No leads match this filter.</td></tr>
+                <tr><td colspan="8" class="text-center text-muted py-3">No leads match this filter.</td></tr>
               <?php endif; ?>
             </tbody>
             <?php if ($pivot['rows']): ?>
@@ -208,6 +210,7 @@ $renderSection = function (string $key, array $section) use ($drillLink, $notImp
                 </td>
                 <td class="text-end"><a href="<?= e($drillLink($key, null, 'email_sent', '1')) ?>"><?= number_format($pivot['total']['email_sent']) ?></a></td>
                 <td class="text-end"><a href="<?= e($drillLink($key, null, 'email_sent', '0')) ?>"><?= number_format($pivot['total']['email_not_sent']) ?></a></td>
+                <td class="text-end"><a href="<?= e($drillLink($key, null, 'sequence_completed', '1')) ?>"><?= number_format($pivot['total']['sequence_completed']) ?></a></td>
               </tr>
             </tfoot>
             <?php endif; ?>
@@ -230,7 +233,16 @@ $renderSection = function (string $key, array $section) use ($drillLink, $notImp
 
 render_header('Analytics');
 ?>
-<h1 class="h4 mb-3">Analytics</h1>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <h1 class="h4 mb-0">Analytics</h1>
+  <?php if ($overallTotal['prospects'] > 0): ?>
+    <a href="<?= e($drillLink('company_country', null, 'sequence_completed', '1')) ?>"
+       class="badge rounded-pill bg-success-subtle text-success-emphasis px-3 py-2 text-decoration-none"
+       title="Prospects whose latest campaign assignment finished its sequence (reached the campaign's real step total) with no reply/bounce/pause.">
+      <?= number_format($overallTotal['sequence_completed']) ?> total completed prospects
+    </a>
+  <?php endif; ?>
+</div>
 
 <form method="get" action="analytics.php" class="card filter-card mb-4">
   <div class="card-body row g-2 align-items-end">

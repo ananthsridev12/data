@@ -35,13 +35,18 @@ if (!$lead) {
     exit;
 }
 
+// Chronological (oldest first, not newest-first) so this reads as the
+// lead's actual pitch order -- 1st campaign/service pitched, then 2nd,
+// etc. (e.g. "1st: CPQ", "2nd: Digital Consulting" for a lead pitched
+// CPQ first and later reassigned into a Digital Consulting campaign).
 $assignStmt = db()->prepare(
-    "SELECT a.*, c.name AS campaign_name, u.name AS assigned_by_name
+    "SELECT a.*, c.name AS campaign_name, c.saleshandy_step_count, s.label AS service_label, u.name AS assigned_by_name
        FROM lead_campaign_assignments a
        JOIN campaigns c ON c.id = a.campaign_id
+       LEFT JOIN services s ON s.id = c.service_id
        JOIN users u ON u.id = a.assigned_by
       WHERE a.lead_id = ?
-      ORDER BY a.assigned_at DESC"
+      ORDER BY a.assigned_at ASC, a.id ASC"
 );
 $assignStmt->execute([$leadId]);
 $assignments = $assignStmt->fetchAll();
@@ -199,24 +204,37 @@ $field = static function (string $label, ?string $value) {
 </div>
 
 <div class="card mb-4">
-  <div class="card-header">Campaign history</div>
+  <div class="card-header">
+    Campaign history
+    <?php if (count($assignments) > 1): ?>
+      <span class="small text-muted fw-normal">
+        -- pitch order: <?= implode(' &rarr; ', array_map(static fn(array $a): string => e($a['service_label'] ?: '(no service)'), $assignments)) ?>
+      </span>
+    <?php endif; ?>
+  </div>
   <div class="table-responsive">
     <table class="table table-sm mb-0">
-      <thead><tr><th>Campaign</th><th>Wave</th><th>Assigned</th><th>Imported to Saleshandy</th><th>Email Sent</th><th>Bounce</th></tr></thead>
+      <thead><tr><th>#</th><th>Campaign</th><th>Service pitched</th><th>Wave</th><th>Assigned</th><th>Imported to Saleshandy</th><th>Email Sent</th><th>Bounce</th><th>Sequence</th></tr></thead>
       <tbody>
-      <?php foreach ($assignments as $a): ?>
+      <?php foreach ($assignments as $i => $a):
+        $sequenceCompleted = $a['delivery_status'] === 'Active' && $a['saleshandy_step_count'] !== null
+            && (int) $a['saleshandy_current_step'] >= (int) $a['saleshandy_step_count'];
+      ?>
         <tr>
+          <td class="text-muted">Pitch #<?= $i + 1 ?></td>
           <td><a href="campaign_leads.php?campaign_id=<?= (int) $a['campaign_id'] ?>"><?= e($a['campaign_name']) ?></a></td>
+          <td><?= e($a['service_label'] ?: '(no service)') ?></td>
           <td><?php $waveBadge = ['active' => 'success', 'held' => 'warning', 'suppressed' => 'danger']; ?>
             <span class="badge bg-<?= $waveBadge[$a['wave_status']] ?>"><?= e($a['wave_status']) ?></span></td>
           <td class="small text-muted"><?= e($a['assigned_at']) ?> by <?= e($a['assigned_by_name']) ?></td>
           <td><?= in_array($a['status'], ['exported', 'pushed'], true) ? 'Yes (' . e($a['exported_at'] ?? '') . ')' : 'No' ?></td>
           <td><?= $a['email_sent'] ? 'Yes (' . e($a['email_sent_at'] ?? '') . ')' : 'No' ?></td>
           <td><?= e($a['bounce_status']) ?><?= $a['bounce_type'] ? ' -- ' . e($a['bounce_type']) : '' ?></td>
+          <td><?php if ($sequenceCompleted): ?><span class="badge bg-success">Completed</span><?php endif; ?></td>
         </tr>
       <?php endforeach; ?>
       <?php if (!$assignments): ?>
-        <tr><td colspan="6" class="text-center text-muted py-3">Not assigned to any campaign yet.</td></tr>
+        <tr><td colspan="9" class="text-center text-muted py-3">Not assigned to any campaign yet.</td></tr>
       <?php endif; ?>
       </tbody>
     </table>

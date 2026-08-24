@@ -65,8 +65,8 @@ class AnalyticsRepository
      *   created_from, created_to (leads.created_at date range, Y-m-d),
      *   email_sent_from, email_sent_to (assignment email_sent_at date range, Y-m-d)
      * @return array{
-     *   rows: array<int,array{grp:string,prospects:int,linked_to_campaign:int,imported:int,not_imported:int,not_imported_no_campaign:int,not_imported_suppressed:int,not_imported_held:int,not_imported_no_sequence:int,not_imported_queued:int,email_sent:int,email_not_sent:int}>,
-     *   total: array{prospects:int,linked_to_campaign:int,imported:int,not_imported:int,not_imported_no_campaign:int,not_imported_suppressed:int,not_imported_held:int,not_imported_no_sequence:int,not_imported_queued:int,email_sent:int,email_not_sent:int}
+     *   rows: array<int,array{grp:string,prospects:int,linked_to_campaign:int,imported:int,not_imported:int,not_imported_no_campaign:int,not_imported_suppressed:int,not_imported_held:int,not_imported_no_sequence:int,not_imported_queued:int,email_sent:int,email_not_sent:int,sequence_completed:int}>,
+     *   total: array{prospects:int,linked_to_campaign:int,imported:int,not_imported:int,not_imported_no_campaign:int,not_imported_suppressed:int,not_imported_held:int,not_imported_no_sequence:int,not_imported_queued:int,email_sent:int,email_not_sent:int,sequence_completed:int}
      * }
      */
     public static function pivotByDimension(PDO $db, Scope $scope, string $groupBy, array $filters): array
@@ -93,7 +93,14 @@ class AnalyticsRepository
                    SUM(CASE WHEN a.campaign_id IS NOT NULL AND a.status NOT IN ('exported', 'pushed') AND a.wave_status = 'active' AND c.saleshandy_sequence_id IS NULL THEN 1 ELSE 0 END) AS not_imported_no_sequence,
                    SUM(CASE WHEN a.campaign_id IS NOT NULL AND a.status NOT IN ('exported', 'pushed') AND a.wave_status = 'active' AND c.saleshandy_sequence_id IS NOT NULL THEN 1 ELSE 0 END) AS not_imported_queued,
                    SUM(CASE WHEN a.email_sent = 1 THEN 1 ELSE 0 END) AS email_sent,
-                   SUM(CASE WHEN a.email_sent IS NULL OR a.email_sent = 0 THEN 1 ELSE 0 END) AS email_not_sent
+                   SUM(CASE WHEN a.email_sent IS NULL OR a.email_sent = 0 THEN 1 ELSE 0 END) AS email_not_sent,
+                   -- Same formula as campaign_leads.php's own 'Sequence
+                   -- completed' stat and LeadRepository::buildWhere()'s
+                   -- 'sequence_completed' filter -- current_step reached
+                   -- the (latest) campaign's real step total, still
+                   -- 'Active' (no reply/bounce/pause). Never disagrees
+                   -- with either.
+                   SUM(CASE WHEN a.delivery_status = 'Active' AND c.saleshandy_step_count IS NOT NULL AND a.saleshandy_current_step >= c.saleshandy_step_count THEN 1 ELSE 0 END) AS sequence_completed
                  FROM leads l "
                 . self::ASSIGNMENT_JOIN .
                 " {$where}
@@ -108,7 +115,7 @@ class AnalyticsRepository
             'prospects' => 0, 'linked_to_campaign' => 0, 'imported' => 0, 'not_imported' => 0,
             'not_imported_no_campaign' => 0, 'not_imported_suppressed' => 0, 'not_imported_held' => 0,
             'not_imported_no_sequence' => 0, 'not_imported_queued' => 0,
-            'email_sent' => 0, 'email_not_sent' => 0,
+            'email_sent' => 0, 'email_not_sent' => 0, 'sequence_completed' => 0,
         ];
         foreach ($rows as &$r) {
             foreach ($total as $key => $_) {

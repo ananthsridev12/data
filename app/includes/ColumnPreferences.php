@@ -26,6 +26,7 @@ class ColumnPreferences
             'country_group' => 'Country Group',
             'imported_by' => 'Imported by',
             'used_in' => 'Used in',
+            'service_pitch_sequence' => 'Service Pitch Sequence',
             'email_verification' => 'Email Verification',
         ],
         'campaign_leads' => [
