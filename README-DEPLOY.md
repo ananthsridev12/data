@@ -70,6 +70,7 @@ and import, in order:
     `sql/036_capacity_planner.sql` already added, so it was retracted;
     043 was left as-is rather than renumbered, to avoid confusion for
     anyone who'd already run it under that name)
+43. `sql/044_campaign_country_group.sql`
 
 (If you're setting up a brand-new site, import every file listed above,
 in order -- 42 files total (001 through 041, then 043; there's no 042,

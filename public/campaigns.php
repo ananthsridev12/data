@@ -15,6 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $description = trim((string) ($_POST['description'] ?? ''));
         $verticalId = (int) ($_POST['vertical_id'] ?? 0) ?: null;
         $serviceId = (int) ($_POST['service_id'] ?? 0) ?: null;
+        $countryGroupId = (int) ($_POST['country_group_id'] ?? 0) ?: null;
 
         if ($name === '') {
             flash_set('danger', 'Campaign name is required.');
@@ -24,8 +25,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // (saleshandy_account_owner_id) -- every member can create
                 // and own their own campaigns; an Admin can reassign
                 // ownership later from this page's edit modal.
-                db()->prepare('INSERT INTO campaigns (company_id, name, description, vertical_id, service_id, created_by, saleshandy_account_owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
-                    ->execute([$scope->companyId, $name, $description ?: null, $verticalId, $serviceId, $user['id'], $user['id']]);
+                db()->prepare('INSERT INTO campaigns (company_id, name, description, vertical_id, service_id, country_group_id, created_by, saleshandy_account_owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+                    ->execute([$scope->companyId, $name, $description ?: null, $verticalId, $serviceId, $countryGroupId, $user['id'], $user['id']]);
                 flash_set('success', "Campaign \"{$name}\" created.");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'A campaign with that name already exists.' : 'Could not create campaign.');
@@ -47,6 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $description = trim((string) ($_POST['description'] ?? ''));
         $verticalId = (int) ($_POST['vertical_id'] ?? 0) ?: null;
         $serviceId = (int) ($_POST['service_id'] ?? 0) ?: null;
+        $countryGroupId = (int) ($_POST['country_group_id'] ?? 0) ?: null;
 
         if (!$campaign || !CampaignAccess::canMutate($scope, $campaign)) {
             flash_set('danger', 'Campaign not found.');
@@ -54,8 +56,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('danger', 'Campaign name is required.');
         } else {
             try {
-                db()->prepare('UPDATE campaigns SET name = ?, description = ?, vertical_id = ?, service_id = ? WHERE id = ?')
-                    ->execute([$name, $description ?: null, $verticalId, $serviceId, $id]);
+                db()->prepare('UPDATE campaigns SET name = ?, description = ?, vertical_id = ?, service_id = ?, country_group_id = ? WHERE id = ?')
+                    ->execute([$name, $description ?: null, $verticalId, $serviceId, $countryGroupId, $id]);
                 flash_set('success', "Campaign renamed to \"{$name}\".");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'A campaign with that name already exists.' : 'Could not rename campaign.');
@@ -67,10 +69,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-// Vertical/Service filter for the list below -- narrows which campaigns
-// are shown (and which sections get built, see $campaignGroups below).
+// Vertical/Service/Country Group filter for the list below -- narrows
+// which campaigns are shown (and which sections get built, see
+// $campaignGroups below).
 $filterVerticalId = trim((string) ($_GET['vertical_id'] ?? ''));
 $filterServiceId = trim((string) ($_GET['service_id'] ?? ''));
+$filterCountryGroupId = trim((string) ($_GET['country_group_id'] ?? ''));
 
 $campaignClauses = ['c.company_id = :scope_company_id'];
 $campaignParams = ['scope_company_id' => $scope->companyId];
@@ -83,9 +87,14 @@ if ($filterServiceId !== '') {
     $campaignClauses[] = 'c.service_id = :filter_service_id';
     $campaignParams['filter_service_id'] = (int) $filterServiceId;
 }
+if ($filterCountryGroupId !== '') {
+    $campaignClauses[] = 'c.country_group_id = :filter_country_group_id';
+    $campaignParams['filter_country_group_id'] = (int) $filterCountryGroupId;
+}
 $campaignsStmt = db()->prepare(
     "SELECT c.*, u.name AS created_by_name, v.code AS vertical_code, v.label AS vertical_label,
        s.code AS service_code, s.label AS service_label,
+       cg.code AS country_group_code, cg.label AS country_group_label,
        owner.name AS owner_name,
        (SELECT COUNT(*) FROM lead_campaign_assignments a WHERE a.campaign_id = c.id) AS lead_count,
        (SELECT COUNT(*) FROM lead_campaign_assignments a WHERE a.campaign_id = c.id AND a.status = 'exported') AS exported_count
@@ -94,6 +103,7 @@ $campaignsStmt = db()->prepare(
      LEFT JOIN users owner ON owner.id = c.saleshandy_account_owner_id
      LEFT JOIN verticals v ON v.id = c.vertical_id
      LEFT JOIN services s ON s.id = c.service_id
+     LEFT JOIN country_groups cg ON cg.id = c.country_group_id
      WHERE " . implode(' AND ', $campaignClauses) . '
      ORDER BY c.created_at DESC'
 );
@@ -101,23 +111,20 @@ $campaignsStmt->execute($campaignParams);
 $campaigns = $campaignsStmt->fetchAll();
 $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
+$countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
 
-// Sections the table below into "Vertical - Service" groups (e.g. "DT -
-// CPQ"), using each lookup's short code -- same convention as ICP
-// Segments' own grouping (see icp_segments.php). Falls back to whichever
-// single one is set, or "Uncategorized" (kept last, everything else
-// alphabetical) if a campaign has neither.
+// Sections the table below into "Country Group - Vertical - Service"
+// groups (e.g. "AMERICAS - DT - CPQ"), using each lookup's short code --
+// same convention as ICP Segments' own grouping (see icp_segments.php).
+// Falls back to whichever of the three are set, or "Uncategorized" (kept
+// last, everything else alphabetical) if a campaign has none.
 $campaignGroups = [];
 foreach ($campaigns as $c) {
+    $cg = $c['country_group_code'] ?: $c['country_group_label'];
     $v = $c['vertical_code'] ?: $c['vertical_label'];
     $s = $c['service_code'] ?: $c['service_label'];
-    if ($v && $s) {
-        $groupLabel = $v . ' - ' . $s;
-    } elseif ($v || $s) {
-        $groupLabel = $v ?: $s;
-    } else {
-        $groupLabel = 'Uncategorized';
-    }
+    $parts = array_filter([$cg, $v && $s ? $v . ' - ' . $s : ($v ?: $s)]);
+    $groupLabel = $parts ? implode(' - ', $parts) : 'Uncategorized';
     $campaignGroups[$groupLabel][] = $c;
 }
 $uncategorizedCampaignGroup = $campaignGroups['Uncategorized'] ?? null;
@@ -185,6 +192,14 @@ render_header('Campaigns');
         </select>
       </div>
       <div class="col-md-2">
+        <select name="country_group_id" class="form-select form-select-sm">
+          <option value="">Country group...</option>
+          <?php foreach ($countryGroups as $cg): ?>
+            <option value="<?= (int) $cg['id'] ?>"><?= e($cg['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-2">
         <button type="submit" class="btn btn-primary btn-sm w-100">Create</button>
       </div>
     </form>
@@ -212,10 +227,19 @@ render_header('Campaigns');
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Country Group</label>
+        <select name="country_group_id" class="form-select form-select-sm">
+          <option value="">Country group (all)</option>
+          <?php foreach ($countryGroups as $cg): ?>
+            <option value="<?= (int) $cg['id'] ?>" <?= $filterCountryGroupId === (string) $cg['id'] ? 'selected' : '' ?>><?= e($cg['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
       <div class="col-md-auto">
         <button type="submit" class="btn btn-primary btn-sm">Filter</button>
       </div>
-      <?php if ($filterVerticalId !== '' || $filterServiceId !== ''): ?>
+      <?php if ($filterVerticalId !== '' || $filterServiceId !== '' || $filterCountryGroupId !== ''): ?>
       <div class="col-md-auto">
         <a href="campaigns.php" class="btn btn-outline-secondary btn-sm">Reset</a>
       </div>
@@ -325,6 +349,15 @@ render_header('Campaigns');
                       <?php endforeach; ?>
                     </select>
                   </div>
+                  <div class="mb-3">
+                    <label class="form-label">Country group</label>
+                    <select name="country_group_id" class="form-select form-select-sm">
+                      <option value="">--</option>
+                      <?php foreach ($countryGroups as $cg): ?>
+                        <option value="<?= (int) $cg['id'] ?>" <?= (int) $c['country_group_id'] === (int) $cg['id'] ? 'selected' : '' ?>><?= e($cg['label']) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
                   <?php if ($c['saleshandy_sequence_id']): ?>
                     <p class="text-muted small mb-0">This only renames the campaign here -- it doesn't rename the linked Saleshandy sequence.</p>
                   <?php endif; ?>
@@ -359,7 +392,7 @@ render_header('Campaigns');
 </table>
 <?php endforeach; ?>
 <!-- /.campaignGroups -->
-<?php if (!$campaigns && ($filterVerticalId !== '' || $filterServiceId !== '')): ?>
+<?php if (!$campaigns && ($filterVerticalId !== '' || $filterServiceId !== '' || $filterCountryGroupId !== '')): ?>
   <div class="card">
     <div class="card-body text-center py-5">
       <p class="text-muted mb-0">No campaigns match this filter. <a href="campaigns.php">Reset the filter</a> to see everything.</p>

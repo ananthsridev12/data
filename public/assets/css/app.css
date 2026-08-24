@@ -256,7 +256,3 @@ html.sidebar-collapsed .sidebar-open-btn {
 .icp-split-rows > div + div {
     border-top: 1px solid var(--bs-border-color);
 }
-
-.icp-add-link-form select {
-    flex: 1 1 auto;
-}

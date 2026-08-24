@@ -58,19 +58,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'toggle_active') {
         IcpRepository::toggleActive(db(), (int) ($_POST['id'] ?? 0), $scope);
         flash_set('success', 'Status updated.');
-    } elseif ($action === 'add_link') {
+    } elseif ($action === 'add_links') {
         $icpId = (int) ($_POST['icp_id'] ?? 0);
-        $campaignId = (int) ($_POST['campaign_id'] ?? 0);
-        if (!$campaignId) {
-            flash_set('danger', 'Pick a campaign to link.');
+        $campaignIds = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['campaign_ids'] ?? [])))));
+        if (!$campaignIds) {
+            flash_set('danger', 'Pick at least one campaign to link.');
         } else {
-            try {
-                IcpRepository::addLink(db(), $icpId, $campaignId, $scope);
-                flash_set('success', 'Campaign linked -- percentages auto-split evenly across all linked campaigns.');
-            } catch (PDOException $ex) {
-                flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'That campaign is already linked to this ICP.' : 'Could not link campaign.');
-            } catch (InvalidArgumentException $ex) {
-                flash_set('danger', $ex->getMessage());
+            $linkedCount = 0;
+            $errors = [];
+            foreach ($campaignIds as $campaignId) {
+                try {
+                    IcpRepository::addLink(db(), $icpId, $campaignId, $scope);
+                    $linkedCount++;
+                } catch (PDOException $ex) {
+                    $errors[] = str_contains($ex->getMessage(), 'Duplicate') ? 'That campaign is already linked to this ICP.' : 'Could not link campaign.';
+                } catch (InvalidArgumentException $ex) {
+                    $errors[] = $ex->getMessage();
+                }
+            }
+            if ($linkedCount > 0) {
+                flash_set('success', $linkedCount === 1 ? '1 campaign linked -- percentages auto-split evenly across all linked campaigns.' : "{$linkedCount} campaigns linked -- percentages auto-split evenly across all linked campaigns.");
+            }
+            if ($errors) {
+                flash_set('danger', implode(' ', array_unique($errors)));
             }
         }
     } elseif ($action === 'remove_link') {
@@ -123,28 +133,44 @@ $employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
 // actually allowed to link (see IcpRepository::addLink()) -- Admin sees
 // every linkable campaign in the company, a Team Lead/Member sees only
 // their own, so nothing shown here can ever be rejected on submit.
-// Grouped by the campaign's own Service (campaigns.service_id, see
-// sql/018_campaign_vertical_service.sql) into <optgroup>s, with a
-// trailing "No service set" group for uncategorized campaigns (the
-// "(s.label IS NULL)" ORDER BY term pushes them after every real group,
-// since MySQL sorts NULL first by default).
+// Already-linked campaigns are excluded outright (checking them again
+// would just surface a "That campaign is already linked" error per
+// selection). Grouped by the campaign's own Country Group and Service
+// (campaigns.country_group_id/service_id, see
+// sql/044_campaign_country_group.sql / sql/018_campaign_vertical_service.sql)
+// into checkbox sections, with a trailing "Uncategorized" section for
+// campaigns with neither set.
+$alreadyLinkedCampaignIds = array_map('intval', array_column($links, 'campaign_id'));
 $campaignsClauses = ['c.company_id = :scope_company_id', 'c.saleshandy_sequence_id IS NOT NULL'];
 $campaignsParams = ['scope_company_id' => $scope->companyId];
 if (!$scope->isAdmin()) {
     $campaignsClauses[] = 'c.saleshandy_account_owner_id = :scope_user_id';
     $campaignsParams['scope_user_id'] = $scope->userId;
 }
+if ($alreadyLinkedCampaignIds) {
+    $excludeNames = [];
+    foreach ($alreadyLinkedCampaignIds as $i => $excludeId) {
+        $excludeNames[] = ":exclude_linked_{$i}";
+        $campaignsParams["exclude_linked_{$i}"] = $excludeId;
+    }
+    $campaignsClauses[] = 'c.id NOT IN (' . implode(',', $excludeNames) . ')';
+}
 $campaignsStmt = db()->prepare(
-    'SELECT c.id, c.name, s.label AS service_label
+    'SELECT c.id, c.name, cg.code AS country_group_code, cg.label AS country_group_label, s.label AS service_label
        FROM campaigns c
+       LEFT JOIN country_groups cg ON cg.id = c.country_group_id
        LEFT JOIN services s ON s.id = c.service_id
       WHERE ' . implode(' AND ', $campaignsClauses) . '
-      ORDER BY (s.label IS NULL), s.label, c.name'
+      ORDER BY (cg.label IS NULL), cg.label, (s.label IS NULL), s.label, c.name'
 );
 $campaignsStmt->execute($campaignsParams);
-$campaignsByService = [];
+$campaignsByGroup = [];
 foreach ($campaignsStmt->fetchAll() as $c) {
-    $campaignsByService[$c['service_label'] ?: 'No service set'][] = $c;
+    $cg = $c['country_group_code'] ?: $c['country_group_label'];
+    $s = $c['service_label'];
+    $parts = array_filter([$cg, $s]);
+    $groupLabel = $parts ? implode(' - ', $parts) : 'Uncategorized';
+    $campaignsByGroup[$groupLabel][] = $c;
 }
 
 // Cycled per linked-campaign row so the split preview bar and its rows
@@ -329,22 +355,30 @@ render_header($icp['name'] . ' - ICP Segment');
       linked campaign instantly re-splits evenly (50/50, then 34/33/33). Want an uneven weighting instead (e.g. 70/30)?
       Edit the percentages above and click "Save split" once you have 2+ linked.</p>
     <?php endif; ?>
-    <form method="post" action="icp_segment_detail.php" class="d-flex gap-2 align-items-end icp-add-link-form">
+    <?php if ($campaignsByGroup): ?>
+    <form method="post" action="icp_segment_detail.php" class="icp-add-links-form">
       <?= csrf_field() ?>
-      <input type="hidden" name="action" value="add_link">
+      <input type="hidden" name="action" value="add_links">
       <input type="hidden" name="icp_id" value="<?= (int) $icp['id'] ?>">
-      <select name="campaign_id" class="form-select form-select-sm" required>
-        <option value="">Link a campaign&hellip;</option>
-        <?php foreach ($campaignsByService as $serviceLabel => $group): ?>
-          <optgroup label="<?= e($serviceLabel) ?>">
+      <div class="small text-muted mb-2">Link one or more campaigns -- check as many as you want, then click "Link selected".</div>
+      <div class="row g-3 mb-2" style="max-height: 320px; overflow-y: auto;">
+        <?php foreach ($campaignsByGroup as $groupLabel => $group): ?>
+          <div class="col-md-4">
+            <div class="fw-semibold small text-uppercase text-muted mb-1"><?= e($groupLabel) ?></div>
             <?php foreach ($group as $c): ?>
-              <option value="<?= (int) $c['id'] ?>"><?= e($c['name']) ?></option>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="campaign_ids[]" value="<?= (int) $c['id'] ?>" id="linkCampaign<?= (int) $icp['id'] ?>_<?= (int) $c['id'] ?>">
+                <label class="form-check-label small" for="linkCampaign<?= (int) $icp['id'] ?>_<?= (int) $c['id'] ?>"><?= e($c['name']) ?></label>
+              </div>
             <?php endforeach; ?>
-          </optgroup>
+          </div>
         <?php endforeach; ?>
-      </select>
-      <button type="submit" class="btn btn-outline-primary btn-sm rounded-pill px-3 text-nowrap">Add link</button>
+      </div>
+      <button type="submit" class="btn btn-outline-primary btn-sm rounded-pill px-3">Link selected campaigns</button>
     </form>
+    <?php else: ?>
+    <p class="text-muted small mb-0">No more campaigns available to link<?= $links ? ' -- every eligible campaign is already linked to this ICP.' : '.' ?></p>
+    <?php endif; ?>
   </div>
 </div>
 

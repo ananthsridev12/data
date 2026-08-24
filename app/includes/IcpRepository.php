@@ -87,7 +87,7 @@ class IcpRepository
     {
         $stmt = $db->prepare(
             "SELECT icp.*, rg.label AS role_group_label, v.code AS vertical_code, v.label AS vertical_label,
-                    s.code AS service_code, s.label AS service_label, cg.label AS country_group_label,
+                    s.code AS service_code, s.label AS service_label, cg.code AS country_group_code, cg.label AS country_group_label,
                     (SELECT COUNT(*) FROM icp_campaign_links l WHERE l.icp_id = icp.id) AS link_count,
                     (SELECT COALESCE(SUM(l.percentage), 0) FROM icp_campaign_links l WHERE l.icp_id = icp.id) AS percentage_total
                FROM icp_segments icp

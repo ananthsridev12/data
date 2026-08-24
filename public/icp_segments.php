@@ -60,17 +60,21 @@ $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 $countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
 
-// Vertical/Service filter for the list below -- narrows which ICPs are
-// shown (and which sections get built, see $icpGroups below) without
-// touching the "Personas without an ICP yet" card above, which is a
-// company-wide gap report independent of this filter.
+// Vertical/Service/Country Group filter for the list below -- narrows
+// which ICPs are shown (and which sections get built, see $icpGroups
+// below) without touching the "Personas without an ICP yet" card above,
+// which is a company-wide gap report independent of this filter.
 $filterVerticalId = trim((string) ($_GET['vertical_id'] ?? ''));
 $filterServiceId = trim((string) ($_GET['service_id'] ?? ''));
+$filterCountryGroupId = trim((string) ($_GET['country_group_id'] ?? ''));
 if ($filterVerticalId !== '') {
     $icps = array_values(array_filter($icps, static fn (array $i): bool => (int) $i['vertical_id'] === (int) $filterVerticalId));
 }
 if ($filterServiceId !== '') {
     $icps = array_values(array_filter($icps, static fn (array $i): bool => (int) $i['service_id'] === (int) $filterServiceId));
+}
+if ($filterCountryGroupId !== '') {
+    $icps = array_values(array_filter($icps, static fn (array $i): bool => (int) $i['country_group_id'] === (int) $filterCountryGroupId));
 }
 
 $companyCountries = LeadRepository::distinctValues(db(), $scope, 'company_country');
@@ -111,24 +115,21 @@ $unmappedPersonas = $unmappedPersonasStmt->fetchAll();
 
 $activeIcpCount = count(array_filter($icps, static fn (array $i): bool => (bool) $i['is_active']));
 
-// Sections the list below into "Vertical - Service" groups (e.g. "DT -
-// CPQ"), using each lookup's short code (not its full label) so headers
-// stay compact -- falls back to whichever single one is set, or
-// "Uncategorized" if an ICP has neither (kept last, everything else
-// alphabetical) -- an ICP with no Vertical/Service is still valid (it
-// can target purely by Role Group/country/size, see the match-criteria
-// validation above), so it still needs a home in the list.
+// Sections the list below into "Country Group - Vertical - Service"
+// groups (e.g. "AMERICAS - DT - CPQ"), using each lookup's short code
+// (not its full label) so headers stay compact -- falls back to
+// whichever of the three are set, or "Uncategorized" if an ICP has none
+// (kept last, everything else alphabetical) -- an ICP with no Vertical/
+// Service/Country Group is still valid (it can target purely by Role
+// Group/country/size, see the match-criteria validation above), so it
+// still needs a home in the list.
 $icpGroups = [];
 foreach ($icps as $icp) {
+    $cg = $icp['country_group_code'] ?: $icp['country_group_label'];
     $v = $icp['vertical_code'] ?: $icp['vertical_label'];
     $s = $icp['service_code'] ?: $icp['service_label'];
-    if ($v && $s) {
-        $groupLabel = $v . ' - ' . $s;
-    } elseif ($v || $s) {
-        $groupLabel = $v ?: $s;
-    } else {
-        $groupLabel = 'Uncategorized';
-    }
+    $parts = array_filter([$cg, $v && $s ? $v . ' - ' . $s : ($v ?: $s)]);
+    $groupLabel = $parts ? implode(' - ', $parts) : 'Uncategorized';
     $icpGroups[$groupLabel][] = $icp;
 }
 $uncategorizedGroup = $icpGroups['Uncategorized'] ?? null;
@@ -294,10 +295,19 @@ render_header('ICP Segments');
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Country Group</label>
+        <select name="country_group_id" class="form-select form-select-sm">
+          <option value="">Country group (all)</option>
+          <?php foreach ($countryGroups as $cg): ?>
+            <option value="<?= (int) $cg['id'] ?>" <?= $filterCountryGroupId === (string) $cg['id'] ? 'selected' : '' ?>><?= e($cg['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
       <div class="col-md-auto">
         <button type="submit" class="btn btn-primary btn-sm">Filter</button>
       </div>
-      <?php if ($filterVerticalId !== '' || $filterServiceId !== ''): ?>
+      <?php if ($filterVerticalId !== '' || $filterServiceId !== '' || $filterCountryGroupId !== ''): ?>
       <div class="col-md-auto">
         <a href="icp_segments.php" class="btn btn-outline-secondary btn-sm">Reset</a>
       </div>
@@ -350,7 +360,7 @@ render_header('ICP Segments');
 </div>
 <?php endforeach; ?>
 <!-- /.icpGroups -->
-<?php if (!$icps && ($filterVerticalId !== '' || $filterServiceId !== '')): ?>
+<?php if (!$icps && ($filterVerticalId !== '' || $filterServiceId !== '' || $filterCountryGroupId !== '')): ?>
   <div class="card icp-card">
     <div class="card-body text-center py-5">
       <p class="text-muted mb-0">No ICP segments match this filter. <a href="icp_segments.php">Reset the filter</a> to see everything.</p>
