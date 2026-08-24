@@ -237,13 +237,16 @@ class IcpRepository
     public static function addLink(PDO $db, int $icpId, int $campaignId, Scope $scope): void
     {
         $matchStmt = $db->prepare(
-            'SELECT icp.company_id = ? AND c.company_id = ? AS same_company, c.saleshandy_account_owner_id AS campaign_owner_id
+            'SELECT icp.company_id = ? AND c.company_id = ? AS same_company, c.saleshandy_account_owner_id AS campaign_owner_id, c.deleted_at
                FROM icp_segments icp, campaigns c WHERE icp.id = ? AND c.id = ?'
         );
         $matchStmt->execute([$scope->companyId, $scope->companyId, $icpId, $campaignId]);
         $row = $matchStmt->fetch();
         if (!$row || !$row['same_company']) {
             throw new InvalidArgumentException('That campaign belongs to a different company than this ICP segment.');
+        }
+        if ($row['deleted_at'] !== null) {
+            throw new InvalidArgumentException('That campaign has been deleted.');
         }
         if (!$scope->isAdmin()) {
             if ((int) $row['campaign_owner_id'] !== $scope->userId) {

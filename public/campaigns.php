@@ -76,7 +76,7 @@ $filterVerticalId = trim((string) ($_GET['vertical_id'] ?? ''));
 $filterServiceId = trim((string) ($_GET['service_id'] ?? ''));
 $filterCountryGroupId = trim((string) ($_GET['country_group_id'] ?? ''));
 
-$campaignClauses = ['c.company_id = :scope_company_id'];
+$campaignClauses = ['c.company_id = :scope_company_id', 'c.deleted_at IS NULL'];
 $campaignParams = ['scope_company_id' => $scope->companyId];
 ScopeFilter::applyOwnerScope($campaignClauses, $campaignParams, $scope, db(), 'c', 'saleshandy_account_owner_id');
 if ($filterVerticalId !== '') {
@@ -160,7 +160,10 @@ render_header('Campaigns');
 ?>
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
   <h1 class="h4 mb-0">Campaigns</h1>
-  <a href="campaign_saleshandy_fetch.php" class="btn btn-outline-secondary btn-sm">Fetch from Saleshandy</a>
+  <div class="d-flex gap-2">
+    <a href="deleted_campaigns.php" class="btn btn-outline-secondary btn-sm">Deleted campaigns</a>
+    <a href="campaign_saleshandy_fetch.php" class="btn btn-outline-secondary btn-sm">Fetch from Saleshandy</a>
+  </div>
 </div>
 
 <div class="card mb-4">
@@ -248,15 +251,70 @@ render_header('Campaigns');
   </div>
 </div>
 
+<div class="card mb-4">
+  <div class="card-header fw-semibold">Bulk actions</div>
+  <div class="card-body">
+    <p class="text-muted small mb-2">
+      Check campaigns in the table(s) below (or use each table's header checkbox to select every campaign in that
+      section), pick what to change, then apply.
+      <?= info_icon('Each of Vertical/Service/Country Group is independent: leave one on "Don\'t change" to skip it, or pick "Clear" to blank it out for every selected campaign. Only campaigns you can edit are selectable.') ?>
+    </p>
+    <form method="post" action="campaign_bulk_update.php" id="campaignBulkForm" class="row g-2 align-items-end">
+      <?= csrf_field() ?>
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Vertical</label>
+        <select name="vertical_id" class="form-select form-select-sm">
+          <option value="">Don't change</option>
+          <option value="clear">Clear</option>
+          <?php foreach ($verticals as $v): ?>
+            <option value="<?= (int) $v['id'] ?>"><?= e($v['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Service</label>
+        <select name="service_id" class="form-select form-select-sm">
+          <option value="">Don't change</option>
+          <option value="clear">Clear</option>
+          <?php foreach ($services as $s): ?>
+            <option value="<?= (int) $s['id'] ?>"><?= e($s['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Country Group</label>
+        <select name="country_group_id" class="form-select form-select-sm">
+          <option value="">Don't change</option>
+          <option value="clear">Clear</option>
+          <?php foreach ($countryGroups as $cg): ?>
+            <option value="<?= (int) $cg['id'] ?>"><?= e($cg['label']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-md-auto">
+        <button type="submit" class="btn btn-primary btn-sm">Apply to selected</button>
+      </div>
+      <div class="col-md-auto">
+        <button type="submit" formaction="campaign_delete.php" name="action" value="bulk_delete" class="btn btn-outline-danger btn-sm" onclick="return confirm('Delete the selected campaign(s)? They\'ll be hidden but restorable from Deleted Campaigns.');">Delete selected</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <?php foreach ($campaignGroups as $groupLabel => $groupCampaigns): ?>
 <h2 class="h6 text-uppercase text-muted mb-2 mt-4"><?= e($groupLabel) ?> <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis"><?= count($groupCampaigns) ?></span></h2>
 <table class="table table-striped bg-white">
   <thead>
-    <tr><th>Name</th><th>Owner</th><th>Service</th><th>Leads</th><th>Exported</th><th>Status</th><th>Saleshandy</th><th style="width: 220px;"></th></tr>
+    <tr><th style="width: 32px;"><input type="checkbox" class="selectAllInTable"></th><th>Name</th><th>Owner</th><th>Service</th><th>Leads</th><th>Exported</th><th>Status</th><th>Saleshandy</th><th style="width: 220px;"></th></tr>
   </thead>
   <tbody>
   <?php foreach ($groupCampaigns as $c): $canMutate = CampaignAccess::canMutate($scope, $c); ?>
     <tr>
+      <td>
+        <?php if ($canMutate): ?>
+          <input type="checkbox" name="campaign_ids[]" value="<?= (int) $c['id'] ?>" class="lead-checkbox" form="campaignBulkForm">
+        <?php endif; ?>
+      </td>
       <td>
         <span title="Created by <?= e($c['created_by_name']) ?>"><?= e($c['name']) ?></span>
         <?php if ($c['description']): ?><div class="small text-muted"><?= e($c['description']) ?></div><?php endif; ?>
@@ -304,6 +362,14 @@ render_header('Campaigns');
                   <input type="hidden" name="action" value="toggle_active">
                   <input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
                   <button type="submit" class="dropdown-item"><?= $c['is_active'] ? 'Deactivate' : 'Activate' ?></button>
+                </form>
+              </li>
+              <li>
+                <form method="post" action="campaign_delete.php" onsubmit="return confirm('Delete \'<?= e($c['name']) ?>\'? It will be hidden but restorable from Deleted Campaigns.');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="campaign_id" value="<?= (int) $c['id'] ?>">
+                  <button type="submit" class="dropdown-item text-danger">Delete</button>
                 </form>
               </li>
             </ul>
@@ -375,7 +441,7 @@ render_header('Campaigns');
     </tr>
     <?php if (!empty($stepNotesByCampaign[$c['id']])): ?>
     <tr class="collapse" id="flowRow<?= (int) $c['id'] ?>">
-      <td colspan="8" class="bg-light">
+      <td colspan="9" class="bg-light">
         <div class="d-flex flex-wrap align-items-center gap-2 py-1">
           <?php foreach ($stepNotesByCampaign[$c['id']] as $i => $note): ?>
             <?php if ($i > 0): ?><span class="text-muted">&rarr;</span><?php endif; ?>

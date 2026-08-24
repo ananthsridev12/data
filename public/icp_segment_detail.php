@@ -141,7 +141,7 @@ $employeeCountRanges = EmployeeCountRangeClassifier::allLabels();
 // into checkbox sections, with a trailing "Uncategorized" section for
 // campaigns with neither set.
 $alreadyLinkedCampaignIds = array_map('intval', array_column($links, 'campaign_id'));
-$campaignsClauses = ['c.company_id = :scope_company_id', 'c.saleshandy_sequence_id IS NOT NULL'];
+$campaignsClauses = ['c.company_id = :scope_company_id', 'c.deleted_at IS NULL', 'c.saleshandy_sequence_id IS NOT NULL'];
 $campaignsParams = ['scope_company_id' => $scope->companyId];
 if (!$scope->isAdmin()) {
     $campaignsClauses[] = 'c.saleshandy_account_owner_id = :scope_user_id';

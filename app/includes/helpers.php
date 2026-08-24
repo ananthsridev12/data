@@ -80,6 +80,7 @@ function nav_links(array $user): array
         ['href' => 'bounce_import.php', 'label' => 'Bounces'],
         ['href' => 'bounce_settings.php', 'label' => 'Bounce Settings'],
         ['href' => 'deleted_leads.php', 'label' => 'Deleted Leads'],
+        ['href' => 'deleted_campaigns.php', 'label' => 'Deleted Campaigns'],
         ['href' => 'saleshandy_connect.php', 'label' => 'Connect Saleshandy'],
         ['href' => 'capacity_planner.php', 'label' => 'Capacity Planner'],
         ['href' => 'sync_center.php', 'label' => 'Sync Center'],

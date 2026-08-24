@@ -76,7 +76,14 @@ $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 $roleGroups = LeadRepository::activeLookupOptions(db(), $scope, 'role_groups');
 $countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
-$campaigns = db()->query('SELECT id, name FROM campaigns WHERE is_active = 1 ORDER BY name')->fetchAll();
+// Pre-existing bug fixed in passing: this used to have no company_id
+// scoping at all (a cross-tenant leak, showing every company's active
+// campaign names in this dropdown) -- scoped now, and also excludes
+// soft-deleted campaigns (sql/045_campaign_soft_delete.sql) so a deleted
+// one can't be picked as a filter here either.
+$campaignsFilterStmt = db()->prepare('SELECT id, name FROM campaigns WHERE company_id = ? AND is_active = 1 AND deleted_at IS NULL ORDER BY name');
+$campaignsFilterStmt->execute([$scope->companyId]);
+$campaigns = $campaignsFilterStmt->fetchAll();
 $importers = db()->query(
     "SELECT DISTINCT u.id, u.name FROM users u JOIN import_batches ib ON ib.uploaded_by = u.id ORDER BY u.name"
 )->fetchAll();
