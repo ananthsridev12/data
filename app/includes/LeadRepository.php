@@ -354,15 +354,20 @@ class LeadRepository
             )";
             $params['assignable_cooldown_days'] = (int) $filters['assignable_after_cooldown_days'];
         }
-        // 'imported'/'email_sent' both check only the lead's *latest*
-        // assignment row (highest id), not "any assignment ever" -- a
-        // lead can have more than one historical row (e.g. re-assigned
-        // after being removed from an earlier campaign), and checking
-        // "any" would wrongly count a lead as imported/emailed off a
-        // stale row even though its current assignment says otherwise.
-        // Mirrors AnalyticsRepository::ASSIGNMENT_JOIN's same "latest
-        // assignment per lead" dedup, so drill-through links from
-        // Analytics reproduce its counts exactly.
+        // 'imported' checks only the lead's *latest* assignment row
+        // (highest id), not "any assignment ever" -- a lead can have more
+        // than one historical row (e.g. reassigned after its earlier
+        // campaign resolved, see WaveAssigner's cooldown-based
+        // reassignment), and "imported" describes CURRENT standing (has
+        // this lead's current campaign assignment actually been pushed),
+        // so checking "any" would wrongly count a lead as currently
+        // imported off a stale row even though its current assignment
+        // hasn't been pushed at all. Mirrors AnalyticsRepository::
+        // ASSIGNMENT_JOIN's same "latest assignment per lead" dedup, so
+        // drill-through links from Analytics reproduce its counts
+        // exactly. ('email_sent'/'sequence_completed' are handled
+        // differently below -- they're permanent facts, not current
+        // standing, so they check ANY assignment.)
         // 'imported' means status IN ('exported', 'pushed') -- a lead
         // counts as imported whether it left the system via a live
         // Saleshandy API push (campaign_saleshandy_push.php, status =
@@ -381,23 +386,29 @@ class LeadRepository
         } elseif (($filters['imported'] ?? '') === '0') {
             $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.status IN ('exported', 'pushed') AND a.id = {$latestAssignment})";
         }
+        // 'email_sent'/'sequence_completed' check EVERY assignment the
+        // lead has ever had, not just the latest -- unlike 'imported'
+        // above, these are permanent facts once true, not current
+        // standing. Cooldown-based reassignment (WaveAssigner) lets a
+        // lead move to a NEW campaign once its prior one resolves, which
+        // correctly starts that new assignment at email_sent=0 until its
+        // own send is confirmed -- but scoping this to "latest assignment
+        // only" made a lead genuinely emailed (or who fully completed a
+        // sequence) in an EARLIER campaign look never-contacted the
+        // moment they got reassigned, a real account-wide undercount
+        // (confirmed against Saleshandy's own "Total Contacted" number,
+        // which has no such per-campaign blind spot). Must stay in sync
+        // with AnalyticsRepository::pivotByDimension()'s matching "any
+        // assignment" EXISTS checks so a drill-through link reproduces
+        // the exact count it was clicked from.
         if (($filters['email_sent'] ?? '') === '1') {
-            $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.email_sent = 1 AND a.id = {$latestAssignment})";
+            $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.email_sent = 1)";
         } elseif (($filters['email_sent'] ?? '') === '0') {
-            $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.email_sent = 1 AND a.id = {$latestAssignment})";
+            $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.email_sent = 1)";
         }
-        // 'sequence_completed': the lead's *latest* assignment finished its
-        // campaign's sequence -- current_step reached that campaign's real
-        // total (campaigns.saleshandy_step_count) with delivery_status
-        // still 'Active' (no reply/bounce/pause). Same formula as
-        // campaign_leads.php's own "Sequence completed" stat/filter and
-        // the require_sequence_completed_if_reassigning clause above, just
-        // evaluated globally instead of scoped to one campaign, so
-        // Analytics' "Sequence completed" column and this drill-through
-        // filter can never disagree with either of those.
         if (($filters['sequence_completed'] ?? '') === '1') {
             $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a JOIN campaigns c9 ON c9.id = a.campaign_id
-                WHERE a.lead_id = l.id AND a.id = {$latestAssignment}
+                WHERE a.lead_id = l.id
                   AND a.delivery_status = 'Active' AND c9.saleshandy_step_count IS NOT NULL
                   AND a.saleshandy_current_step >= c9.saleshandy_step_count)";
         }

@@ -77,11 +77,33 @@ class AnalyticsRepository
         ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db);
         $where = 'WHERE ' . implode(' AND ', $clauses);
 
-        // 'imported' = status IN ('exported', 'pushed') -- must match
-        // LeadRepository::buildWhere()'s 'imported' filter exactly (see
-        // its comment) so a Dashboard drill-through link reproduces the
-        // exact count it was clicked from, and so this matches
-        // campaign_leads.php's own "Imported" column definition.
+        // 'imported'/'linked_to_campaign'/not_imported_* describe CURRENT
+        // standing -- whether this lead's latest (i.e. current) campaign
+        // assignment has been pushed -- so they stay scoped to the
+        // "latest assignment" join (`a`/`c`) below. 'imported' = status
+        // IN ('exported', 'pushed') -- must match LeadRepository::
+        // buildWhere()'s 'imported' filter exactly (see its comment) so a
+        // Dashboard drill-through link reproduces the exact count it was
+        // clicked from, and so this matches campaign_leads.php's own
+        // "Imported" column definition.
+        //
+        // 'email_sent'/'sequence_completed' are different in kind: once
+        // true, they're permanently true FACTS about a lead, not current
+        // standing -- so unlike the above, these check EVERY assignment
+        // the lead has ever had, not just the latest one. This matters a
+        // lot now that cooldown-based reassignment (WaveAssigner) lets a
+        // lead move to a NEW campaign once its prior one resolves: that
+        // new assignment correctly starts at email_sent=0 until its own
+        // send is confirmed, but scoping this to "latest assignment only"
+        // made a lead who was genuinely emailed (and even completed a
+        // full sequence) in an EARLIER campaign look like they'd never
+        // been contacted at all the moment they got reassigned -- a real
+        // account-wide undercount discovered by comparing this page's
+        // totals against Saleshandy's own "Total Contacted" number, which
+        // has no such per-campaign blind spot. Must stay in sync with
+        // LeadRepository::buildWhere()'s 'email_sent'/'sequence_completed'
+        // filters (same "any assignment" EXISTS checks) so a drill-through
+        // link reproduces the exact count it was clicked from.
         $sql = "SELECT {$groupExpr} AS grp,
                    COUNT(*) AS prospects,
                    SUM(CASE WHEN a.campaign_id IS NOT NULL THEN 1 ELSE 0 END) AS linked_to_campaign,
@@ -92,15 +114,15 @@ class AnalyticsRepository
                    SUM(CASE WHEN a.campaign_id IS NOT NULL AND a.status NOT IN ('exported', 'pushed') AND a.wave_status = 'held' THEN 1 ELSE 0 END) AS not_imported_held,
                    SUM(CASE WHEN a.campaign_id IS NOT NULL AND a.status NOT IN ('exported', 'pushed') AND a.wave_status = 'active' AND c.saleshandy_sequence_id IS NULL THEN 1 ELSE 0 END) AS not_imported_no_sequence,
                    SUM(CASE WHEN a.campaign_id IS NOT NULL AND a.status NOT IN ('exported', 'pushed') AND a.wave_status = 'active' AND c.saleshandy_sequence_id IS NOT NULL THEN 1 ELSE 0 END) AS not_imported_queued,
-                   SUM(CASE WHEN a.email_sent = 1 THEN 1 ELSE 0 END) AS email_sent,
-                   SUM(CASE WHEN a.email_sent IS NULL OR a.email_sent = 0 THEN 1 ELSE 0 END) AS email_not_sent,
-                   -- Same formula as campaign_leads.php's own 'Sequence
-                   -- completed' stat and LeadRepository::buildWhere()'s
-                   -- 'sequence_completed' filter -- current_step reached
-                   -- the (latest) campaign's real step total, still
-                   -- 'Active' (no reply/bounce/pause). Never disagrees
-                   -- with either.
-                   SUM(CASE WHEN a.delivery_status = 'Active' AND c.saleshandy_step_count IS NOT NULL AND a.saleshandy_current_step >= c.saleshandy_step_count THEN 1 ELSE 0 END) AS sequence_completed
+                   SUM(CASE WHEN EXISTS (SELECT 1 FROM lead_campaign_assignments ae WHERE ae.lead_id = l.id AND ae.email_sent = 1) THEN 1 ELSE 0 END) AS email_sent,
+                   SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM lead_campaign_assignments ae WHERE ae.lead_id = l.id AND ae.email_sent = 1) THEN 1 ELSE 0 END) AS email_not_sent,
+                   SUM(CASE WHEN EXISTS (
+                         SELECT 1 FROM lead_campaign_assignments asq
+                         JOIN campaigns csq ON csq.id = asq.campaign_id
+                        WHERE asq.lead_id = l.id AND asq.delivery_status = 'Active'
+                          AND csq.saleshandy_step_count IS NOT NULL
+                          AND asq.saleshandy_current_step >= csq.saleshandy_step_count
+                       ) THEN 1 ELSE 0 END) AS sequence_completed
                  FROM leads l "
                 . self::ASSIGNMENT_JOIN .
                 " {$where}
