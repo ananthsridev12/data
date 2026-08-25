@@ -1432,10 +1432,22 @@ class SaleshandyClient
             }
 
             if ($newStatus !== $assignment['delivery_status'] || $row['currentStep'] !== $assignment['saleshandy_current_step']) {
-                $emailSentAt = date('Y-m-d', $row['sentAt']);
-                $updateDeliveryStatus->execute([$newStatus, $row['currentStep'], 1, $emailSentAt, $assignment['id']]);
                 $stats['delivery_status_fixed']++;
             }
+            // Unconditional (not just when delivery_status/step actually
+            // changed) -- $row['sentAt'] !== null here (guaranteed by the
+            // continue above) means Saleshandy DID confirm this send, so
+            // email_sent must end up 1 regardless of whether delivery_status
+            // and saleshandy_current_step already happened to already match
+            // (e.g. already correct from an earlier pullNewProspects()/sync).
+            // Previously this whole update -- including the email_sent OR
+            // -- only ran when status/step changed, so a row that was
+            // already otherwise correct but had somehow never gotten
+            // email_sent flipped to 1 stayed stuck at 0 forever. Same
+            // email_sent = email_sent OR ? merge as syncCampaign()'s own
+            // per-row update, so the two can never disagree.
+            $emailSentAt = date('Y-m-d', $row['sentAt']);
+            $updateDeliveryStatus->execute([$newStatus, $row['currentStep'], 1, $emailSentAt, $assignment['id']]);
         }
 
         $stats['released'] += $this->releaseResolvedWaveLeaders($db, (int) $campaign['id']);
