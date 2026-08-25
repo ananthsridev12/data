@@ -91,7 +91,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $users = db()->prepare(
     'SELECT u.id, u.name, u.email, u.role, u.is_active, u.last_login_at, u.created_at, u.team_id,
             u.password_hash IS NULL AS is_pending, u.invite_token, u.invite_expires_at,
-            u.reset_token, u.reset_expires_at
+            u.reset_token, u.reset_expires_at, u.saleshandy_api_key IS NOT NULL AS saleshandy_connected,
+            (SELECT COUNT(*) FROM campaigns c WHERE c.saleshandy_account_owner_id = u.id AND c.deleted_at IS NULL) AS owned_campaign_count
        FROM users u WHERE u.company_id = ? ORDER BY u.created_at'
 );
 $users->execute([$scope->companyId]);
@@ -151,7 +152,7 @@ render_header('Users');
 
 <table class="table table-striped bg-white">
   <thead>
-    <tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Status</th><th>Last login</th><th></th></tr>
+    <tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Status</th><th>Saleshandy</th><th>Last login</th><th></th></tr>
   </thead>
   <tbody>
   <?php foreach ($users as $u): ?>
@@ -189,6 +190,16 @@ render_header('Users');
           <span class="badge bg-warning">Pending signup</span>
         <?php endif; ?>
       </td>
+      <td>
+        <?php if ($u['saleshandy_connected']): ?>
+          <span class="badge bg-success">Connected</span>
+        <?php else: ?>
+          <span class="badge bg-danger">Not connected</span>
+        <?php endif; ?>
+        <?php if ((int) $u['owned_campaign_count'] > 0): ?>
+          <div class="small text-muted"><?= (int) $u['owned_campaign_count'] ?> campaign(s) owned<?= !$u['saleshandy_connected'] ? ' -- none of these will sync/push until connected' : '' ?></div>
+        <?php endif; ?>
+      </td>
       <td><?= e($u['last_login_at'] ?? 'Never') ?></td>
       <td>
         <form method="post" action="users.php" onsubmit="return confirm('Toggle active status for <?= e($u['name']) ?>?');" class="d-inline">
@@ -216,7 +227,7 @@ render_header('Users');
     </tr>
     <?php if ($u['is_pending'] && $u['invite_token']): ?>
     <tr>
-      <td colspan="7" class="small">
+      <td colspan="8" class="small">
         Signup link (expires <?= e($u['invite_expires_at']) ?>):
         <input type="text" class="form-control form-control-sm d-inline-block" style="max-width: 480px;" readonly onclick="this.select()" value="<?= e($appUrl . '/signup.php?token=' . $u['invite_token']) ?>">
       </td>
@@ -224,7 +235,7 @@ render_header('Users');
     <?php endif; ?>
     <?php if ($u['reset_token']): ?>
     <tr>
-      <td colspan="7" class="small">
+      <td colspan="8" class="small">
         Password reset link (expires <?= e($u['reset_expires_at']) ?>):
         <input type="text" class="form-control form-control-sm d-inline-block" style="max-width: 480px;" readonly onclick="this.select()" value="<?= e($appUrl . '/password_reset.php?token=' . $u['reset_token']) ?>">
       </td>
