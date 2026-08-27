@@ -115,6 +115,27 @@ $links = IcpRepository::links(db(), $icpId, $scope);
 $total = (int) $icp['percentage_total'];
 $ready = $total === 100;
 
+// How many leads a distribution run has actually assigned via this ICP
+// so far (lead_campaign_assignments.icp_id, sql/028) -- history, not the
+// upcoming pool $matchingCount below reports. Admin-unrestricted count;
+// a non-admin's own campaign-ownership scoping is applied the same way
+// icp_assigned_leads.php itself applies it, so this number always
+// matches what clicking through to it shows.
+$assignedCountClauses = ['a.icp_id = :icp_id', 'l.deleted_at IS NULL'];
+$assignedCountParams = ['icp_id' => $icpId];
+if (!$scope->isAdmin()) {
+    $assignedCountClauses[] = 'c.saleshandy_account_owner_id = :owner_id';
+    $assignedCountParams['owner_id'] = $scope->userId;
+}
+$assignedCountStmt = db()->prepare(
+    'SELECT COUNT(*) FROM lead_campaign_assignments a
+     JOIN leads l ON l.id = a.lead_id
+     JOIN campaigns c ON c.id = a.campaign_id
+    WHERE ' . implode(' AND ', $assignedCountClauses)
+);
+$assignedCountStmt->execute($assignedCountParams);
+$assignedCount = (int) $assignedCountStmt->fetchColumn();
+
 // Same filters + cooldown-based assignability scoping the distribution
 // cron itself uses (IcpRepository::toFilters()) -- see icp_segments.php
 // for the full explanation.
@@ -198,6 +219,13 @@ render_header($icp['name'] . ' - ICP Segment');
           . ' Leads still held/pending elsewhere, or on a suppressed domain, are excluded. Exactly the pool the next distribution cron run would pick up and split across the linked campaigns.') ?>
       <?php if ($matchingCount > 0): ?>
         &middot; <a href="dashboard.php?<?= e(http_build_query(IcpRepository::toDashboardQueryParams($icp, $scope))) ?>">View these leads</a>
+      <?php endif; ?>
+    </div>
+    <div class="text-muted small">
+      <span class="fs-5 fw-bold text-body"><?= number_format($assignedCount) ?></span> lead(s) assigned via this ICP so far
+      <?= info_icon('Cumulative history -- every lead a distribution cron run has actually assigned via this ICP (lead_campaign_assignments.icp_id), regardless of their current status. Different from "eligible right now" above, which is the upcoming pool, not what\'s already happened. Assignments made before this tracking existed don\'t show here even though they exist in the campaign.') ?>
+      <?php if ($assignedCount > 0): ?>
+        &middot; <a href="icp_assigned_leads.php?icp_id=<?= (int) $icpId ?>">View these leads</a>
       <?php endif; ?>
     </div>
   </div>

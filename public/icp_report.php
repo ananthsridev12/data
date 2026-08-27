@@ -67,7 +67,13 @@ render_header('ICP Report');
         </td>
         <td class="small text-muted"><?= e($icp['campaign_names'] ?? '') ?: '<span class="text-muted">None linked</span>' ?></td>
         <td><?= $icp['auto_push_enabled'] ? '<span class="badge bg-info text-dark">On</span>' : '<span class="text-muted small">Off</span>' ?></td>
-        <td class="text-end"><?= number_format($icp['leads_assigned']) ?></td>
+        <td class="text-end">
+          <?php if ($icp['leads_assigned'] > 0): ?>
+            <a href="icp_assigned_leads.php?icp_id=<?= (int) $icp['id'] ?>"><?= number_format($icp['leads_assigned']) ?></a>
+          <?php else: ?>
+            0
+          <?php endif; ?>
+        </td>
         <td class="text-end"><?= $icp['pending_push'] > 0 ? '<strong>' . number_format($icp['pending_push']) . '</strong>' : '0' ?></td>
         <td class="text-end"><?= number_format($icp['pushed']) ?></td>
         <td class="text-end"><?= number_format($icp['emails_sent']) ?></td>
