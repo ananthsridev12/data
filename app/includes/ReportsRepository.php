@@ -33,47 +33,114 @@ require_once __DIR__ . '/ScopeFilter.php';
  *    assignment-based (one-per-lead) count for any campaign with no rows
  *    there yet, rather than showing zero -- dateBounds() returns nulls
  *    project-wide until the first backfill runs.
+ *
+ * summary()/accountsSummary()/coverageByVertical()/repliesByOutcome()
+ * check ANY of a lead's assignments, not just their current/latest one
+ * (see stageExpr()) -- these are lifetime/cumulative funnels ("has this
+ * lead ever been contacted/delivered/opened/replied"), so a lead
+ * reassigned to a new campaign (WaveAssigner's cooldown-based
+ * reassignment) whose fresh assignment hasn't sent yet must never make
+ * an earlier real contact look like it never happened. Fixed alongside
+ * the same undercount in AnalyticsRepository -- this class keeps its
+ * own separate query logic, so it needed the identical fix applied
+ * separately. sequences() is unaffected: it already reads the raw,
+ * unambiguous per-campaign row directly (a lead has at most one row per
+ * campaign), so "which assignment" was never a question there.
  */
 class ReportsRepository
 {
-    private const ASSIGNMENT_JOIN = "
-        LEFT JOIN (
-            SELECT a1.* FROM lead_campaign_assignments a1
-            INNER JOIN (SELECT lead_id, MAX(id) AS max_id FROM lead_campaign_assignments GROUP BY lead_id) latest
-              ON latest.lead_id = a1.lead_id AND latest.max_id = a1.id
-        ) a ON a.lead_id = l.id
-    ";
-
     /**
-     * SQL fragment (no leading AND), true when this assignment counts as
-     * "in period" for the given filters. $suffix must be unique per call
-     * within a single query -- PDO's real (non-emulated) prepared
-     * statements reject the same named placeholder appearing twice in one
-     * statement, which bit coverageByVertical() (uses this twice in one
-     * query) the first time any filter was actually active: it worked
-     * with no filters (the whole "in period" clause was just the
-     * unparameterized "a.email_sent = 1", no placeholders to collide) but
-     * threw "SQLSTATE[HY093]: Invalid parameter number" the moment
-     * date_from/date_to/campaign_id added real :placeholders, since the
-     * same name showed up twice in that one statement. Every caller of
-     * this method now passes a distinct $suffix per call.
+     * SQL fragment (no leading AND), true when THIS row counts as "in
+     * period" for the given filters -- for sequences(), the only
+     * remaining caller: it already joins the raw, unambiguous per-
+     * campaign lead_campaign_assignments row directly (a lead has at
+     * most one row per campaign, so there's no "which assignment"
+     * ambiguity to resolve there the way stageExpr() below has to for
+     * the account-wide/lead-centric methods). $suffix must be unique per
+     * call within a single query -- PDO's real (non-emulated) prepared
+     * statements reject the same named placeholder appearing twice in
+     * one statement.
      */
     private static function periodExpr(array $filters, array &$params, string $suffix = ''): string
     {
         $clauses = ['a.email_sent = 1'];
+        foreach (self::periodClauses($filters, $params, 'a', $suffix) as $c) {
+            $clauses[] = $c;
+        }
+        return implode(' AND ', $clauses);
+    }
+
+    /**
+     * date_from/date_to/campaign_id clauses (no leading AND) scoping
+     * WHICH of a lead's assignments count as "in period" for a report --
+     * shared building block for stageExpr() (an EXISTS check) and
+     * repliesByOutcome() (a correlated subquery that also needs to read
+     * a column off the matching row, not just check existence). $suffix
+     * must be unique per call within a single query -- PDO's real
+     * (non-emulated) prepared statements reject the same named
+     * placeholder appearing twice in one statement.
+     */
+    private static function periodClauses(array $filters, array &$params, string $alias, string $suffix): array
+    {
+        $clauses = [];
         if (!empty($filters['date_from'])) {
-            $clauses[] = "a.email_sent_at >= :date_from{$suffix}";
+            $clauses[] = "{$alias}.email_sent_at >= :date_from{$suffix}";
             $params["date_from{$suffix}"] = $filters['date_from'];
         }
         if (!empty($filters['date_to'])) {
-            $clauses[] = "a.email_sent_at <= :date_to{$suffix}";
+            $clauses[] = "{$alias}.email_sent_at <= :date_to{$suffix}";
             $params["date_to{$suffix}"] = $filters['date_to'];
         }
         if (!empty($filters['campaign_id'])) {
-            $clauses[] = "a.campaign_id = :campaign_id{$suffix}";
+            $clauses[] = "{$alias}.campaign_id = :campaign_id{$suffix}";
             $params["campaign_id{$suffix}"] = (int) $filters['campaign_id'];
         }
-        return implode(' AND ', $clauses);
+        return $clauses;
+    }
+
+    /**
+     * EXISTS check: true when ANY of this lead's assignments (not just
+     * their current/latest one) satisfies a report stage's condition,
+     * scoped by the same date_from/date_to/campaign_id filters as
+     * everywhere else in this class. $extraCondition (referencing the
+     * same alias) is ANDed in so the whole "is this a hit" check runs
+     * against the SAME matching row, not mixed across different
+     * assignments (e.g. "delivered" needs the row that was actually
+     * sent, not any row with a non-bounce status regardless of whether
+     * it was ever sent).
+     *
+     * Checking ANY assignment instead of only the latest matters once a
+     * lead can be reassigned to a new campaign (WaveAssigner's cooldown-
+     * based reassignment): this funnel is a lifetime/cumulative report
+     * ("has this lead ever been contacted/delivered/opened/replied"),
+     * not a snapshot of current standing, so a fresh not-yet-sent
+     * reassignment must never make an earlier real contact look like it
+     * never happened -- the same undercount found and fixed in
+     * AnalyticsRepository, duplicated here since this class keeps its
+     * own separate query logic. This also fixes a second, related bug:
+     * filtering by campaign_id used to mean "is this campaign the
+     * lead's LATEST assignment AND does it match" -- so a lead contacted
+     * via campaign X who'd since moved on to campaign Y would show as 0
+     * for campaign X's own report, even though X's send genuinely
+     * happened. Now it correctly means "does this lead's assignment TO
+     * that specific campaign match", regardless of what their latest
+     * assignment happens to be.
+     */
+    private static function stageExpr(array $filters, array &$params, string $alias, string $suffix, string $extraCondition = ''): string
+    {
+        $clauses = ["{$alias}.lead_id = l.id", "{$alias}.email_sent = 1"];
+        if ($extraCondition !== '') {
+            // Parenthesized -- $extraCondition can itself contain an OR
+            // (e.g. "delivery_status IS NULL OR delivery_status NOT IN
+            // (...)" for the "delivered" stage), and AND binds tighter
+            // than OR in SQL: appended unparenthesized, that OR's right
+            // side would apply to the WHOLE WHERE clause instead of just
+            // this condition, dropping the "{$alias}.lead_id = l.id"
+            // correlation entirely and matching almost every lead.
+            $clauses[] = "({$extraCondition})";
+        }
+        $clauses = array_merge($clauses, self::periodClauses($filters, $params, $alias, $suffix));
+        return "EXISTS (SELECT 1 FROM lead_campaign_assignments {$alias} WHERE " . implode(' AND ', $clauses) . ')';
     }
 
     /**
@@ -91,7 +158,6 @@ class ReportsRepository
     public static function summary(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
-        $period = self::periodExpr($filters, $params);
 
         $inDbClauses = ['l.deleted_at IS NULL'];
         $inDbParams = [];
@@ -102,29 +168,51 @@ class ReportsRepository
         $inDbStmt->execute($inDbParams);
         $inDatabase = (int) $inDbStmt->fetchColumn();
 
-        $scopeClauses = [];
+        $scopeClauses = ['l.deleted_at IS NULL'];
         ScopeFilter::apply($scopeClauses, $params, $scope);
         ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db);
         $scopeWhere = implode(' AND ', $scopeClauses);
 
+        $contactedExpr = self::stageExpr($filters, $params, 'ac', '_contacted');
+        $deliveredExpr = self::stageExpr($filters, $params, 'ad', '_delivered', "ad.delivery_status IS NULL OR ad.delivery_status NOT IN ('" . implode("','", DELIVERY_STATUS_BOUNCE_VALUES) . "')");
+        $openedExpr = self::stageExpr($filters, $params, 'ao', '_opened', 'ao.open_count > 0');
+        $repliedExpr = self::stageExpr($filters, $params, 'ar', '_replied', "ar.delivery_status = 'Replied'");
+
         $sql = "SELECT
-                   COUNT(*) AS contacted,
-                   SUM(CASE WHEN a.delivery_status IS NULL OR a.delivery_status NOT IN ('" . implode("','", DELIVERY_STATUS_BOUNCE_VALUES) . "') THEN 1 ELSE 0 END) AS delivered,
-                   SUM(CASE WHEN a.open_count > 0 THEN 1 ELSE 0 END) AS opened,
-                   SUM(CASE WHEN a.delivery_status = 'Replied' THEN 1 ELSE 0 END) AS replied,
-                   COUNT(DISTINCT a.email_sent_at) AS active_days
+                   SUM(CASE WHEN {$contactedExpr} THEN 1 ELSE 0 END) AS contacted,
+                   SUM(CASE WHEN {$deliveredExpr} THEN 1 ELSE 0 END) AS delivered,
+                   SUM(CASE WHEN {$openedExpr} THEN 1 ELSE 0 END) AS opened,
+                   SUM(CASE WHEN {$repliedExpr} THEN 1 ELSE 0 END) AS replied
                  FROM leads l
-                 " . self::ASSIGNMENT_JOIN . "
-                 WHERE l.deleted_at IS NULL AND {$period} AND {$scopeWhere}";
+                 WHERE {$scopeWhere}";
 
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
-        $row = $stmt->fetch() ?: ['contacted' => 0, 'delivered' => 0, 'opened' => 0, 'replied' => 0, 'active_days' => 0];
+        $row = $stmt->fetch() ?: ['contacted' => 0, 'delivered' => 0, 'opened' => 0, 'replied' => 0];
 
         $contacted = (int) $row['contacted'];
         $delivered = (int) $row['delivered'];
         $opened = (int) $row['opened'];
         $replied = (int) $row['replied'];
+
+        // Active sending days: distinct dates across every qualifying
+        // assignment row DIRECTLY, not deduped to one row per lead like
+        // the stage counts above -- a date something was sent on is a
+        // fact about that send event, independent of whether the lead
+        // later got reassigned to a different campaign.
+        $daysClauses = ['a.email_sent = 1', 'l.deleted_at IS NULL'];
+        $daysParams = [];
+        foreach (self::periodClauses($filters, $daysParams, 'a', '_days') as $c) {
+            $daysClauses[] = $c;
+        }
+        ScopeFilter::apply($daysClauses, $daysParams, $scope, 'l', 'scope_company_id_days');
+        ScopeFilter::applyOwnerScope($daysClauses, $daysParams, $scope, $db, 'l', 'owner_id', 'scope_owner_days');
+        $daysStmt = $db->prepare(
+            'SELECT COUNT(DISTINCT a.email_sent_at) FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id WHERE '
+            . implode(' AND ', $daysClauses)
+        );
+        $daysStmt->execute($daysParams);
+        $activeDays = (int) $daysStmt->fetchColumn();
 
         $pct = static fn (int $count, int $base): float => $base > 0 ? $count / $base : 0.0;
 
@@ -142,7 +230,7 @@ class ReportsRepository
                 'contacts_reached' => $contacted,
                 'unique_opens' => $opened,
                 'replies' => $replied,
-                'active_sending_days' => (int) $row['active_days'],
+                'active_sending_days' => $activeDays,
             ],
             'funnel' => $funnel,
         ];
@@ -169,15 +257,10 @@ class ReportsRepository
     public static function accountsSummary(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
-        // periodExpr() must be called once per usage within this single
-        // query, each with its own suffix -- PDO's real (non-emulated)
-        // prepared statements reject the same named placeholder appearing
-        // twice in one statement, same pitfall documented on periodExpr()
-        // itself and already worked around in coverageByVertical().
-        $periodContacted = self::periodExpr($filters, $params, '_acct_c');
-        $periodDelivered = self::periodExpr($filters, $params, '_acct_d');
-        $periodOpened = self::periodExpr($filters, $params, '_acct_o');
-        $periodReplied = self::periodExpr($filters, $params, '_acct_r');
+        $contactedExpr = self::stageExpr($filters, $params, 'ac', '_acct_c');
+        $deliveredExpr = self::stageExpr($filters, $params, 'ad', '_acct_d', "ad.delivery_status IS NULL OR ad.delivery_status NOT IN ('" . implode("','", DELIVERY_STATUS_BOUNCE_VALUES) . "')");
+        $openedExpr = self::stageExpr($filters, $params, 'ao', '_acct_o', 'ao.open_count > 0');
+        $repliedExpr = self::stageExpr($filters, $params, 'ar', '_acct_r', "ar.delivery_status = 'Replied'");
         $scopeClauses = ['l.deleted_at IS NULL'];
         ScopeFilter::apply($scopeClauses, $params, $scope);
         ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db);
@@ -192,13 +275,12 @@ class ReportsRepository
                    SUM(CASE WHEN suppressed_reason IS NOT NULL THEN 1 ELSE 0 END) AS suppressed_accounts
                  FROM (
                    SELECT SUBSTRING_INDEX(l.email, '@', -1) AS domain,
-                          SUM(CASE WHEN {$periodContacted} THEN 1 ELSE 0 END) AS contacted_leads,
-                          SUM(CASE WHEN {$periodDelivered} AND (a.delivery_status IS NULL OR a.delivery_status NOT IN ('" . implode("','", DELIVERY_STATUS_BOUNCE_VALUES) . "')) THEN 1 ELSE 0 END) AS delivered_leads,
-                          SUM(CASE WHEN {$periodOpened} AND a.open_count > 0 THEN 1 ELSE 0 END) AS opened_leads,
-                          SUM(CASE WHEN {$periodReplied} AND a.delivery_status = 'Replied' THEN 1 ELSE 0 END) AS replied_leads,
+                          SUM(CASE WHEN {$contactedExpr} THEN 1 ELSE 0 END) AS contacted_leads,
+                          SUM(CASE WHEN {$deliveredExpr} THEN 1 ELSE 0 END) AS delivered_leads,
+                          SUM(CASE WHEN {$openedExpr} THEN 1 ELSE 0 END) AS opened_leads,
+                          SUM(CASE WHEN {$repliedExpr} THEN 1 ELSE 0 END) AS replied_leads,
                           MAX(sd.reason) AS suppressed_reason
                      FROM leads l
-                     " . self::ASSIGNMENT_JOIN . "
                      LEFT JOIN suppressed_domains sd ON sd.domain = SUBSTRING_INDEX(l.email, '@', -1) AND sd.company_id = l.company_id
                     WHERE {$scopeWhere}
                     GROUP BY SUBSTRING_INDEX(l.email, '@', -1)
@@ -250,8 +332,8 @@ class ReportsRepository
     public static function coverageByVertical(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
-        $periodContacted = self::periodExpr($filters, $params, '_c');
-        $periodOpened = self::periodExpr($filters, $params, '_o');
+        $contactedExpr = self::stageExpr($filters, $params, 'ac', '_c');
+        $openedExpr = self::stageExpr($filters, $params, 'ao', '_o', 'ao.open_count > 0');
         $scopeClauses = ['l.deleted_at IS NULL'];
         ScopeFilter::apply($scopeClauses, $params, $scope);
         ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db);
@@ -259,10 +341,9 @@ class ReportsRepository
 
         $sql = "SELECT COALESCE(v.label, '(none)') AS grp,
                    COUNT(*) AS in_database,
-                   SUM(CASE WHEN {$periodContacted} THEN 1 ELSE 0 END) AS contacted,
-                   SUM(CASE WHEN {$periodOpened} AND a.open_count > 0 THEN 1 ELSE 0 END) AS opened
+                   SUM(CASE WHEN {$contactedExpr} THEN 1 ELSE 0 END) AS contacted,
+                   SUM(CASE WHEN {$openedExpr} THEN 1 ELSE 0 END) AS opened
                  FROM leads l
-                 " . self::ASSIGNMENT_JOIN . "
                  LEFT JOIN verticals v ON v.id = l.vertical_id
                  WHERE {$scopeWhere}
                  GROUP BY grp
@@ -359,23 +440,38 @@ class ReportsRepository
      * that predate this feature and have no sentiment recorded yet ("Not
      * yet categorized" -- resolves itself as campaigns get re-synced).
      * Uses the same base query/period definition as summary()'s "Replied"
-     * figure, so these counts always add up to exactly that number.
+     * figure (stageExpr(), ANY assignment not just the latest), so these
+     * counts always add up to exactly that number. Reads the sentiment
+     * off each lead's MOST RECENT qualifying reply -- a lead can only
+     * have one row per campaign, but could in principle have qualifying
+     * replies in more than one (rare), so this picks one deterministically
+     * rather than double-counting or picking arbitrarily.
      *
      * @return array<int,array{outcome:string,count:int}>
      */
     public static function repliesByOutcome(PDO $db, Scope $scope, array $filters): array
     {
         $params = [];
-        $period = self::periodExpr($filters, $params);
-        $scopeClauses = [];
+        $repliedExpr = self::stageExpr($filters, $params, 'ar', '_outcome', "ar.delivery_status = 'Replied'");
+        $scopeClauses = ['l.deleted_at IS NULL'];
         ScopeFilter::apply($scopeClauses, $params, $scope);
         ScopeFilter::applyOwnerScope($scopeClauses, $params, $scope, $db);
-        $scopeWhere = $scopeClauses ? (' AND ' . implode(' AND ', $scopeClauses)) : '';
+        $scopeWhere = implode(' AND ', $scopeClauses);
 
-        $sql = "SELECT COALESCE(NULLIF(a.reply_sentiment, ''), 'Not yet categorized') AS outcome, COUNT(*) AS cnt
+        $pickClauses = array_merge(
+            ["a2.lead_id = l.id", "a2.delivery_status = 'Replied'"],
+            self::periodClauses($filters, $params, 'a2', '_outcome_pick')
+        );
+        $pickWhere = implode(' AND ', $pickClauses);
+
+        $sql = "SELECT COALESCE(NULLIF((
+                     SELECT a2.reply_sentiment FROM lead_campaign_assignments a2
+                      WHERE {$pickWhere}
+                      ORDER BY a2.id DESC LIMIT 1
+                   ), ''), 'Not yet categorized') AS outcome,
+                   COUNT(*) AS cnt
                  FROM leads l
-                 " . self::ASSIGNMENT_JOIN . "
-                 WHERE l.deleted_at IS NULL AND {$period} AND a.delivery_status = 'Replied'{$scopeWhere}
+                 WHERE {$scopeWhere} AND {$repliedExpr}
                  GROUP BY outcome
                  ORDER BY cnt DESC";
 

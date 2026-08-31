@@ -98,6 +98,33 @@ $campaignsStmt = db()->prepare('SELECT c.id, c.name FROM campaigns c WHERE ' . i
 $campaignsStmt->execute($campaignParams);
 $campaignOptions = $campaignsStmt->fetchAll();
 
+$viewId = (int) ($_GET['view'] ?? 0);
+if ($viewId) {
+    $report = EmailReportRepository::loadVisible(db(), $scope, $viewId);
+    if (!$report) {
+        flash_set('danger', 'Report not found.');
+        header('Location: email_reports.php');
+        exit;
+    }
+    $rows = EmailReportRepository::campaignMetrics(db(), $scope, $report['campaign_ids']);
+    $html = EmailReportRepository::composeHtml($rows, $report['metrics'], $report['name']);
+
+    render_header($report['name'] . ' - Email Report');
+    ?>
+    <h1 class="h4 mb-1"><?= e($report['name']) ?></h1>
+    <p class="text-muted">
+      Live numbers as of right now -- the same view that gets sent by email.
+      <a href="email_reports.php">&laquo; Back to reports</a> &middot;
+      <a href="email_reports.php?edit=<?= (int) $viewId ?>">Edit this report</a>
+    </p>
+    <div class="card mb-4">
+      <div class="card-body table-responsive"><?= $html ?></div>
+    </div>
+    <?php
+    render_footer();
+    exit;
+}
+
 $editId = (int) ($_GET['edit'] ?? 0);
 $isBuilder = $editId > 0 || isset($_GET['new']) || ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['do'] ?? '') === 'preview');
 
@@ -213,6 +240,7 @@ render_header('Email Reports');
           <td class="small text-muted"><?= e(implode(', ', array_map(static fn (string $k) => EmailReportRepository::METRICS[$k] ?? $k, $r['metrics']))) ?></td>
           <td class="small text-muted"><?= e($r['created_by_name'] ?? '') ?></td>
           <td class="text-end">
+            <a href="email_reports.php?view=<?= (int) $r['id'] ?>" class="btn btn-sm btn-outline-primary">View</a>
             <a href="email_reports.php?edit=<?= (int) $r['id'] ?>" class="btn btn-sm btn-outline-secondary">Edit</a>
             <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#sendModal<?= (int) $r['id'] ?>" <?= $smtpConnected ? '' : 'disabled' ?>>Send</button>
             <form method="post" action="email_reports.php" class="d-inline" onsubmit="return confirm('Delete this report definition?');">
