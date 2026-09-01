@@ -580,11 +580,26 @@ class IcpRepository
      * than the plain cooldown rule, not a replacement for it, so a lead
      * still needs the cooldown window to pass too.
      *
+     * If icp_segments.avoid_repeat_service is on (opt-in, see
+     * sql/047_icp_avoid_repeat_service.sql), a lead blocked by that rule
+     * from EVERY one of this ICP's currently-linked campaigns is excluded
+     * too -- see LeadRepository::buildWhere()'s
+     * 'avoid_repeat_service_icp_id'. Only applied once the ICP actually
+     * has at least one link: $icp['link_count'], when present (rows from
+     * list()/findVisible()), gates this so the "eligible now" preview
+     * during initial ICP setup (before any campaign is linked) isn't
+     * zeroed out by an EXISTS over an empty icp_campaign_links set. A
+     * caller that fetched $icp without link_count at all (processIcp()'s
+     * raw `SELECT * FROM icp_segments`) only ever reaches here once
+     * linksSumTo100() has already confirmed links exist, so the filter
+     * is applied unconditionally in that case.
+     *
      * @param array<string,mixed> $icp a row from icp_segments
      * @return array<string,mixed>
      */
     public static function toFilters(array $icp, Scope $scope): array
     {
+        $hasLinks = !array_key_exists('link_count', $icp) || (int) $icp['link_count'] > 0;
         return [
             'company_country' => RoleGroupClassifier::parseKeywords($icp['company_country'] ?? ''),
             'industry' => RoleGroupClassifier::parseKeywords($icp['industry'] ?? ''),
@@ -600,6 +615,7 @@ class IcpRepository
             'country_group_id' => $icp['country_group_id'] ?: '',
             'assignable_after_cooldown_days' => $scope->leadCooldownDays,
             'require_sequence_completed_if_reassigning' => !empty($icp['require_sequence_completed']),
+            'avoid_repeat_service_icp_id' => (!empty($icp['avoid_repeat_service']) && $hasLinks) ? (int) $icp['id'] : null,
         ];
     }
 
@@ -633,6 +649,9 @@ class IcpRepository
         $params['assignable_after_cooldown_days'] = $filters['assignable_after_cooldown_days'];
         if ($filters['require_sequence_completed_if_reassigning']) {
             $params['require_sequence_completed_if_reassigning'] = '1';
+        }
+        if ($filters['avoid_repeat_service_icp_id']) {
+            $params['avoid_repeat_service_icp_id'] = $filters['avoid_repeat_service_icp_id'];
         }
         return $params;
     }

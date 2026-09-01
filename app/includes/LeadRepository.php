@@ -354,6 +354,44 @@ class LeadRepository
             )";
             $params['assignable_cooldown_days'] = (int) $filters['assignable_after_cooldown_days'];
         }
+        // 'avoid_repeat_service_icp_id': icp_segments.avoid_repeat_service
+        // (opt-in, see sql/047_icp_avoid_repeat_service.sql), applied here
+        // as well as at actual assignment time (WaveAssigner::
+        // filterEligibleForCampaign()) so the "N lead(s) eligible now"
+        // count an admin sees actually reflects who could be placed
+        // somewhere, not just who matches criteria + cooldown. Unlike
+        // require_sequence_completed_if_reassigning above (a flat
+        // boolean rule), "same service as a campaign I've already been
+        // through" is inherently relative to a SPECIFIC target campaign
+        // -- a lead blocked from one of this ICP's linked campaigns might
+        // still be perfectly fine for another. So this counts a lead as
+        // eligible if there's AT LEAST ONE linked campaign
+        // (icp_campaign_links, set by IcpRepository::toFilters() to this
+        // ICP's own id) it isn't blocked from: either that campaign has
+        // no service_id set (nothing to compare), or the lead has never
+        // been assigned to any campaign sharing that service_id. A lead
+        // blocked from every linked campaign this way is excluded.
+        // IcpRepository::toFilters() only sets this filter when the ICP
+        // actually has at least one link -- with zero links the EXISTS
+        // below would find no campaigns and exclude every lead, which
+        // would wrongly zero out the audience-size preview while an
+        // admin is still building the ICP before linking anything.
+        if (!empty($filters['avoid_repeat_service_icp_id'])) {
+            $clauses[] = "EXISTS (
+                SELECT 1 FROM icp_campaign_links svcl
+                JOIN campaigns svcc ON svcc.id = svcl.campaign_id
+                WHERE svcl.icp_id = :avoid_repeat_service_icp_id
+                  AND (
+                      svcc.service_id IS NULL
+                      OR NOT EXISTS (
+                          SELECT 1 FROM lead_campaign_assignments svca
+                          JOIN campaigns svcap ON svcap.id = svca.campaign_id
+                          WHERE svca.lead_id = l.id AND svcap.service_id = svcc.service_id
+                      )
+                  )
+            )";
+            $params['avoid_repeat_service_icp_id'] = (int) $filters['avoid_repeat_service_icp_id'];
+        }
         // 'imported' checks only the lead's *latest* assignment row
         // (highest id), not "any assignment ever" -- a lead can have more
         // than one historical row (e.g. reassigned after its earlier

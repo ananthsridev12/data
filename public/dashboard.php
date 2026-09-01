@@ -48,6 +48,7 @@ $filters = [
     // its own "N lead(s) eligible now" count is showing.
     'assignable_after_cooldown_days' => trim((string) ($_GET['assignable_after_cooldown_days'] ?? '')),
     'require_sequence_completed_if_reassigning' => !empty($_GET['require_sequence_completed_if_reassigning']),
+    'avoid_repeat_service_icp_id' => (int) ($_GET['avoid_repeat_service_icp_id'] ?? 0) ?: null,
 ];
 $page = max(1, (int) ($_GET['page'] ?? 1));
 
