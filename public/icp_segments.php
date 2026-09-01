@@ -26,6 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'employee_count' => implode(', ', (array) ($_POST['employee_count'] ?? [])),
             'auto_push_enabled' => !empty($_POST['auto_push_enabled']),
             'require_sequence_completed' => !empty($_POST['require_sequence_completed']),
+            'avoid_repeat_service' => !empty($_POST['avoid_repeat_service']),
         ];
 
         $hasAnyCriterion = $data['role_group_id'] || $data['vertical_id'] || $data['service_id'] || $data['country_group_id']
@@ -218,6 +219,10 @@ render_header('ICP Segments');
           <input class="form-check-input" type="checkbox" role="switch" name="require_sequence_completed" value="1" id="requireSeqCompletedNew">
           <label class="form-check-label small" for="requireSeqCompletedNew">Only reassign leads whose prior sequence fully completed <?= info_icon('When re-matching a previously-assigned lead (after cooldown), also require that its last campaign\'s sequence actually finished -- current step reached the sequence\'s real total, with no reply -- not just that the assignment is resolved and past cooldown. Off by default (broader reassignment); turn this on for an ICP meant specifically to catch "finished with silence" leads for a follow-up push.') ?></label>
         </div>
+        <div class="col-md-2 form-check form-switch pt-2 ps-5">
+          <input class="form-check-input" type="checkbox" role="switch" name="avoid_repeat_service" value="1" id="avoidRepeatServiceNew">
+          <label class="form-check-label small" for="avoidRepeatServiceNew">Don't re-pitch the same service <?= info_icon('When re-matching a previously-assigned lead, skip any of this ICP\'s linked campaigns that pitch the same Service as a campaign that lead has already been through -- even if resolved and past cooldown. Prevents an ICP that links several same-service sequence variants (e.g. two different sequences pitching the same product) from re-sending a lead into another same-service campaign. Off by default; a brand-new lead with no prior campaign history is never affected.') ?></label>
+        </div>
       </div>
 
       <div class="icp-section-label mb-2">Match criteria <span class="fw-normal text-muted" style="text-transform: none; letter-spacing: normal;">(at least one required)</span></div>
@@ -333,6 +338,7 @@ render_header('ICP Segments');
         <?php endif; ?>
         <?php if ($icp['auto_push_enabled']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Saleshandy</span>Auto-push on</span><?php endif; ?>
         <?php if ($icp['require_sequence_completed']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Reassign</span>Sequence completed only</span><?php endif; ?>
+        <?php if ($icp['avoid_repeat_service']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Reassign</span>No same-service repeats</span><?php endif; ?>
       </div>
       <div class="small text-muted">
         <?= e($icp['role_group_label'] ?: 'Any persona') ?>

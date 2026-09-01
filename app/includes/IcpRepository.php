@@ -181,13 +181,13 @@ class IcpRepository
     {
         $stmt = $db->prepare(
             'INSERT INTO icp_segments
-                (company_id, name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, require_sequence_completed, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (company_id, name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, require_sequence_completed, avoid_repeat_service, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $companyId, $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
-            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, $userId,
+            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, !empty($data['avoid_repeat_service']) ? 1 : 0, $userId,
         ]);
         return (int) $db->lastInsertId();
     }
@@ -202,13 +202,13 @@ class IcpRepository
             'UPDATE icp_segments
                 SET name = ?, role_group_id = ?, vertical_id = ?, service_id = ?, country_group_id = ?,
                     company_country = ?, industry = ?, seniority = ?, employee_count = ?, auto_push_enabled = ?,
-                    require_sequence_completed = ?
+                    require_sequence_completed = ?, avoid_repeat_service = ?
               WHERE id = ? AND company_id = ?'
         );
         $stmt->execute([
             $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
-            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, $id, $scope->companyId,
+            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, !empty($data['avoid_repeat_service']) ? 1 : 0, $id, $scope->companyId,
         ]);
     }
 
@@ -745,12 +745,12 @@ class IcpRepository
             foreach ($links as $link) {
                 $bucket = $buckets[(int) $link['campaign_id']] ?? [];
                 if ($bucket) {
-                    $stats = WaveAssigner::assign($db, $bucket, (int) $link['campaign_id'], $systemUserId, $titlePriority, $scope->leadCooldownDays, (int) $icp['id']);
+                    $stats = WaveAssigner::assign($db, $bucket, (int) $link['campaign_id'], $systemUserId, $titlePriority, $scope->leadCooldownDays, (int) $icp['id'], !empty($icp['avoid_repeat_service']));
                     $assigned += $stats['leaders'] + $stats['held'] + $stats['reassigned_sent'];
                     $lines[] = "  - \"{$link['campaign_name']}\" ({$link['percentage']}%): {$stats['leaders']} leader(s), {$stats['held']} held, "
                         . "{$stats['reassigned_sent']} sent directly (previously proven), "
                         . "{$stats['suppressed_skipped']} suppressed, {$stats['already_elsewhere_skipped']} already elsewhere, "
-                        . "{$stats['pending_elsewhere_skipped']} pending elsewhere";
+                        . "{$stats['pending_elsewhere_skipped']} pending elsewhere, {$stats['same_service_skipped']} same-service skipped";
                     if ($stats['pending_elsewhere_skipped'] > 0) {
                         // Which OTHER campaign(s) each blocked account's
                         // pending, unconfirmed persona is currently sitting

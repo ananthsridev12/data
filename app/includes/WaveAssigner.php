@@ -87,14 +87,24 @@ class WaveAssigner
      * other persona's send is confirmed (or it's marked bounced, which
      * suppresses the domain instead), this lead becomes assignable again.
      *
+     * $avoidRepeatService (icp_segments.avoid_repeat_service, opt-in, see
+     * sql/047_icp_avoid_repeat_service.sql) adds one more exclusion on top
+     * of everything above: a lead that has ANY prior assignment (any
+     * campaign, any time) whose campaign shares $campaignId's own
+     * service_id is dropped from eligible entirely, regardless of
+     * cooldown/resolved status. A lead with no prior history, or whose
+     * prior campaigns are all a different service (or have no service_id
+     * set), is unaffected. Off by default -- existing ICPs keep today's
+     * behavior.
+     *
      * @param int[] $leadIds
-     * @return array{eligible:int[], reassigned_ids:int[], suppressed_count:int, already_elsewhere_count:int, pending_elsewhere_count:int, pending_elsewhere_campaigns:array<string,int>}
+     * @return array{eligible:int[], reassigned_ids:int[], suppressed_count:int, already_elsewhere_count:int, pending_elsewhere_count:int, pending_elsewhere_campaigns:array<string,int>, same_service_skipped_count:int}
      */
-    public static function filterEligibleForCampaign(PDO $db, array $leadIds, int $campaignId, int $cooldownDays): array
+    public static function filterEligibleForCampaign(PDO $db, array $leadIds, int $campaignId, int $cooldownDays, bool $avoidRepeatService = false): array
     {
         $stats = [
             'eligible' => [], 'reassigned_ids' => [], 'suppressed_count' => 0, 'already_elsewhere_count' => 0,
-            'pending_elsewhere_count' => 0, 'pending_elsewhere_campaigns' => [],
+            'pending_elsewhere_count' => 0, 'pending_elsewhere_campaigns' => [], 'same_service_skipped_count' => 0,
         ];
         if (!$leadIds) {
             return $stats;
@@ -148,6 +158,24 @@ class WaveAssigner
         }
 
         $stats['eligible'] = array_values(array_diff($remaining2, array_keys($pending)));
+
+        if ($avoidRepeatService && $stats['eligible']) {
+            $svcStmt = $db->prepare('SELECT service_id FROM campaigns WHERE id = ?');
+            $svcStmt->execute([$campaignId]);
+            $serviceId = (int) $svcStmt->fetchColumn();
+            if ($serviceId) {
+                $eligiblePlaceholders = implode(',', array_fill(0, count($stats['eligible']), '?'));
+                $sameServiceStmt = $db->prepare(
+                    "SELECT DISTINCT a2.lead_id FROM lead_campaign_assignments a2
+                       JOIN campaigns c2 ON c2.id = a2.campaign_id
+                      WHERE a2.lead_id IN ({$eligiblePlaceholders}) AND a2.campaign_id != ? AND c2.service_id = ?"
+                );
+                $sameServiceStmt->execute(array_merge($stats['eligible'], [$campaignId, $serviceId]));
+                $sameServiceIds = array_map('intval', $sameServiceStmt->fetchAll(PDO::FETCH_COLUMN));
+                $stats['same_service_skipped_count'] = count($sameServiceIds);
+                $stats['eligible'] = array_values(array_diff($stats['eligible'], $sameServiceIds));
+            }
+        }
 
         // Which of the eligible leads have ANY prior assignment history at
         // all (across any campaign) -- i.e. already went through a
@@ -226,24 +254,26 @@ class WaveAssigner
      * @param int[] $leadIds
      * @param string[] $titlePriority ordered, case-insensitive substring keywords (e.g. ["VP Engineering", "CTO"])
      * @param int $cooldownDays the acting company's lead_cooldown_days (Scope::$leadCooldownDays) -- see filterEligibleForCampaign()
-     * @return array{leaders:int, held:int, reassigned_sent:int, suppressed_skipped:int, already_elsewhere_skipped:int, pending_elsewhere_skipped:int, pending_elsewhere_campaigns:array<string,int>, already_in_campaign:int, domains:int}
+     * @param bool $avoidRepeatService icp_segments.avoid_repeat_service -- see filterEligibleForCampaign()
+     * @return array{leaders:int, held:int, reassigned_sent:int, suppressed_skipped:int, already_elsewhere_skipped:int, pending_elsewhere_skipped:int, pending_elsewhere_campaigns:array<string,int>, same_service_skipped:int, already_in_campaign:int, domains:int}
      */
-    public static function assign(PDO $db, array $leadIds, int $campaignId, int $userId, array $titlePriority, int $cooldownDays, ?int $icpId = null): array
+    public static function assign(PDO $db, array $leadIds, int $campaignId, int $userId, array $titlePriority, int $cooldownDays, ?int $icpId = null, bool $avoidRepeatService = false): array
     {
         $stats = [
             'leaders' => 0, 'held' => 0, 'reassigned_sent' => 0, 'suppressed_skipped' => 0,
             'already_elsewhere_skipped' => 0, 'pending_elsewhere_skipped' => 0, 'pending_elsewhere_campaigns' => [],
-            'already_in_campaign' => 0, 'domains' => 0,
+            'same_service_skipped' => 0, 'already_in_campaign' => 0, 'domains' => 0,
         ];
         if (!$leadIds) {
             return $stats;
         }
 
-        $filtered = self::filterEligibleForCampaign($db, $leadIds, $campaignId, $cooldownDays);
+        $filtered = self::filterEligibleForCampaign($db, $leadIds, $campaignId, $cooldownDays, $avoidRepeatService);
         $stats['suppressed_skipped'] = $filtered['suppressed_count'];
         $stats['already_elsewhere_skipped'] = $filtered['already_elsewhere_count'];
         $stats['pending_elsewhere_skipped'] = $filtered['pending_elsewhere_count'];
         $stats['pending_elsewhere_campaigns'] = $filtered['pending_elsewhere_campaigns'];
+        $stats['same_service_skipped'] = $filtered['same_service_skipped_count'];
         if (!$filtered['eligible']) {
             return $stats;
         }
