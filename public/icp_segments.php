@@ -321,6 +321,33 @@ render_header('ICP Segments');
   </div>
 </div>
 
+<?php if ($icps): ?>
+<div class="card icp-card mb-4">
+  <div class="card-header fw-semibold">Bulk actions</div>
+  <div class="card-body">
+    <p class="text-muted small mb-2">
+      Check ICP segments below (or use "Select all shown"), then apply.
+      <?= info_icon('An ICP you don\'t fully own (Team Lead/Member only) is silently skipped rather than blocking the rest of the batch. "Distribute now" runs the same assignment (and auto-push, if that ICP has it on) as each ICP\'s own "Sync/Push now" button, one ICP at a time.') ?>
+    </p>
+    <form method="post" action="icp_bulk_action.php" id="icpBulkForm" class="d-flex flex-wrap align-items-center gap-2">
+      <?= csrf_field() ?>
+      <div class="form-check">
+        <input type="checkbox" class="form-check-input" id="icpSelectAll">
+        <label class="form-check-label small" for="icpSelectAll">Select all shown</label>
+      </div>
+      <button type="submit" name="action" value="bulk_auto_push_on" class="btn btn-outline-primary btn-sm">Turn auto-push ON</button>
+      <button type="submit" name="action" value="bulk_auto_push_off" class="btn btn-outline-secondary btn-sm">Turn auto-push OFF</button>
+      <button type="submit" name="action" value="bulk_distribute" class="btn btn-primary btn-sm">Distribute now</button>
+    </form>
+  </div>
+</div>
+<script>
+document.getElementById('icpSelectAll').addEventListener('change', function () {
+  document.querySelectorAll('.icp-bulk-checkbox').forEach(function (cb) { cb.checked = this.checked; }, this);
+});
+</script>
+<?php endif; ?>
+
 <?php foreach ($icpGroups as $groupLabel => $groupIcps): ?>
 <h2 class="h6 text-uppercase text-muted mb-2 mt-4"><?= e($groupLabel) ?> <span class="badge rounded-pill bg-secondary-subtle text-secondary-emphasis"><?= count($groupIcps) ?></span></h2>
 <div class="list-group mb-4">
@@ -329,6 +356,9 @@ render_header('ICP Segments');
     $ready = $total === 100;
 ?>
   <div class="list-group-item icp-card d-flex flex-wrap justify-content-between align-items-center gap-3 py-3">
+    <div class="flex-shrink-0 pt-1">
+      <input type="checkbox" name="icp_ids[]" value="<?= (int) $icp['id'] ?>" class="icp-bulk-checkbox form-check-input" form="icpBulkForm">
+    </div>
     <div class="flex-grow-1" style="min-width: 260px;">
       <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
         <a href="icp_segment_detail.php?id=<?= (int) $icp['id'] ?>" class="fw-semibold text-decoration-none"><?= e($icp['name']) ?></a>

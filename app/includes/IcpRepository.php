@@ -221,6 +221,75 @@ class IcpRepository
     }
 
     /**
+     * Bulk-set auto_push_enabled across multiple ICPs at once --
+     * icp_segments.php's bulk actions bar. Same per-ICP ownership gate as
+     * toggleActive() (admin: any ICP in the company; Team Lead/Member:
+     * only an ICP that's fully made up of their own campaigns), checked
+     * individually so one ICP the caller doesn't own is silently skipped
+     * rather than blocking every other selected ICP.
+     *
+     * @param int[] $ids
+     * @return int number of ICPs actually updated
+     */
+    public static function bulkSetAutoPush(PDO $db, array $ids, bool $enabled, Scope $scope): int
+    {
+        $updated = 0;
+        foreach (array_unique(array_map('intval', $ids)) as $id) {
+            if (!$id) {
+                continue;
+            }
+            $ownStmt = $db->prepare('SELECT 1 FROM icp_segments WHERE id = ? AND company_id = ?');
+            $ownStmt->execute([$id, $scope->companyId]);
+            if (!$ownStmt->fetchColumn()) {
+                continue;
+            }
+            if (!$scope->isAdmin() && !self::isFullyOwnedBySelf($db, $id, $scope->userId)) {
+                continue;
+            }
+            $db->prepare('UPDATE icp_segments SET auto_push_enabled = ? WHERE id = ? AND company_id = ?')
+                ->execute([$enabled ? 1 : 0, $id, $scope->companyId]);
+            $updated++;
+        }
+        return $updated;
+    }
+
+    /**
+     * Bulk "distribute now" across multiple ICPs at once -- runs
+     * runDistributionForIcp() for each id in turn (same ownership/100%-
+     * links gating, same auto-push-if-enabled behavior), aggregating the
+     * results instead of redirecting per-ICP like icp_distribution_run_one.php.
+     * An id that fails its own gate (not found/not owned/not 100%) is
+     * reported in $lines but doesn't stop the rest.
+     *
+     * @param int[] $ids
+     * @return array{ok_count:int,total_assigned:int,total_pushed:int,lines:array<int,string>}
+     */
+    public static function bulkDistribute(PDO $db, array $ids, Scope $scope): array
+    {
+        $okCount = 0;
+        $totalAssigned = 0;
+        $totalPushed = 0;
+        $lines = [];
+        foreach (array_unique(array_map('intval', $ids)) as $id) {
+            if (!$id) {
+                continue;
+            }
+            $result = self::runDistributionForIcp($db, $scope, $id);
+            $lines[] = $result['summary'];
+            if ($result['ok']) {
+                $okCount++;
+                if (preg_match('/(\d+) lead\(s\) assigned/', $result['summary'], $m)) {
+                    $totalAssigned += (int) $m[1];
+                }
+                if (preg_match('/(\d+) lead\(s\) auto-pushed/', $result['summary'], $m)) {
+                    $totalPushed += (int) $m[1];
+                }
+            }
+        }
+        return ['ok_count' => $okCount, 'total_assigned' => $totalAssigned, 'total_pushed' => $totalPushed, 'lines' => $lines];
+    }
+
+    /**
      * Links a campaign at a placeholder 0% and immediately rebalances
      * every link on this ICP to an even split -- so an admin never has
      * to hand-pick a percentage that happens to make the total land on
