@@ -222,16 +222,53 @@ class IcpRepository
 
     /**
      * Bulk-set auto_push_enabled across multiple ICPs at once --
-     * icp_segments.php's bulk actions bar. Same per-ICP ownership gate as
-     * toggleActive() (admin: any ICP in the company; Team Lead/Member:
-     * only an ICP that's fully made up of their own campaigns), checked
-     * individually so one ICP the caller doesn't own is silently skipped
-     * rather than blocking every other selected ICP.
+     * icp_segments.php's bulk actions bar. See bulkSetBoolColumn().
      *
      * @param int[] $ids
      * @return int number of ICPs actually updated
      */
     public static function bulkSetAutoPush(PDO $db, array $ids, bool $enabled, Scope $scope): int
+    {
+        return self::bulkSetBoolColumn($db, 'auto_push_enabled', $ids, $enabled, $scope);
+    }
+
+    /**
+     * Bulk-set avoid_repeat_service across multiple ICPs at once --
+     * icp_segments.php's bulk actions bar. See bulkSetBoolColumn().
+     *
+     * @param int[] $ids
+     * @return int number of ICPs actually updated
+     */
+    public static function bulkSetAvoidRepeatService(PDO $db, array $ids, bool $enabled, Scope $scope): int
+    {
+        return self::bulkSetBoolColumn($db, 'avoid_repeat_service', $ids, $enabled, $scope);
+    }
+
+    /**
+     * Bulk-set require_sequence_completed across multiple ICPs at once --
+     * icp_segments.php's bulk actions bar. See bulkSetBoolColumn().
+     *
+     * @param int[] $ids
+     * @return int number of ICPs actually updated
+     */
+    public static function bulkSetRequireSequenceCompleted(PDO $db, array $ids, bool $enabled, Scope $scope): int
+    {
+        return self::bulkSetBoolColumn($db, 'require_sequence_completed', $ids, $enabled, $scope);
+    }
+
+    /**
+     * Shared bulk-toggle machinery for icp_segments.php's bulk actions
+     * bar: same per-ICP ownership gate as toggleActive() (admin: any ICP
+     * in the company; Team Lead/Member: only an ICP that's fully made up
+     * of their own campaigns), checked individually so one ICP the caller
+     * doesn't own is silently skipped rather than blocking every other
+     * selected ICP. $column is always one of this class's own hardcoded
+     * constants, never derived from request input.
+     *
+     * @param int[] $ids
+     * @return int number of ICPs actually updated
+     */
+    private static function bulkSetBoolColumn(PDO $db, string $column, array $ids, bool $enabled, Scope $scope): int
     {
         $updated = 0;
         foreach (array_unique(array_map('intval', $ids)) as $id) {
@@ -246,7 +283,7 @@ class IcpRepository
             if (!$scope->isAdmin() && !self::isFullyOwnedBySelf($db, $id, $scope->userId)) {
                 continue;
             }
-            $db->prepare('UPDATE icp_segments SET auto_push_enabled = ? WHERE id = ? AND company_id = ?')
+            $db->prepare("UPDATE icp_segments SET {$column} = ? WHERE id = ? AND company_id = ?")
                 ->execute([$enabled ? 1 : 0, $id, $scope->companyId]);
             $updated++;
         }

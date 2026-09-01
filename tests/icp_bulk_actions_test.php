@@ -1,12 +1,15 @@
 <?php
-// IcpRepository::bulkSetAutoPush()/bulkDistribute() -- the "Bulk actions"
-// bar on icp_segments.php, applying auto-push toggle / distribute-now
-// across multiple selected ICPs at once. Each id still goes through the
-// same per-ICP ownership gate as the single-ICP actions (toggleActive()/
-// runDistributionForIcp(), see icp_owner_scope_test.php and
-// icp_distribution_run_one_test.php) -- an id the caller doesn't fully
-// own, or that doesn't exist, is silently skipped/reported rather than
-// failing the whole batch. Rolled back at the end.
+// IcpRepository's bulk-toggle methods (bulkSetAutoPush()/
+// bulkSetRequireSequenceCompleted()/bulkSetAvoidRepeatService(), all
+// thin wrappers over the shared bulkSetBoolColumn()) plus bulkDistribute()
+// -- the "Bulk actions" bar on icp_segments.php, applying a toggle or a
+// distribute-now run across multiple selected ICPs at once. Each id
+// still goes through the same per-ICP ownership gate as the single-ICP
+// actions (toggleActive()/runDistributionForIcp(), see
+// icp_owner_scope_test.php and icp_distribution_run_one_test.php) -- an
+// id the caller doesn't fully own, or that doesn't exist, is silently
+// skipped/reported rather than failing the whole batch. Rolled back at
+// the end.
 //
 // Usage: php tests/icp_bulk_actions_test.php
 
@@ -84,6 +87,27 @@ try {
     // --- A nonexistent id mixed into the batch is just skipped, not fatal.
     $updatedWithBogus = IcpRepository::bulkSetAutoPush($db, [$icpOwnedBySolo, 999999], true, $adminScope);
     $assert($updatedWithBogus === 1, "A nonexistent id in the batch is skipped without error, real one still updates (got {$updatedWithBogus})");
+
+    // --- bulkSetRequireSequenceCompleted(): same ownership gate, different column.
+    $updatedSeq = IcpRepository::bulkSetRequireSequenceCompleted($db, [$icpOwnedBySolo, $icpOwnedByOther], true, $memberSoloScope);
+    $assert($updatedSeq === 1, "Solo member's bulk require-sequence-completed-on updates exactly their own ICP (got {$updatedSeq})");
+    $ownSeqFlag = (int) $db->query("SELECT require_sequence_completed FROM icp_segments WHERE id = {$icpOwnedBySolo}")->fetchColumn();
+    $otherSeqFlag = (int) $db->query("SELECT require_sequence_completed FROM icp_segments WHERE id = {$icpOwnedByOther}")->fetchColumn();
+    $assert($ownSeqFlag === 1, "The solo member's own ICP got require_sequence_completed = 1");
+    $assert($otherSeqFlag === 0, "The other member's ICP was untouched (still 0)");
+
+    // --- bulkSetAvoidRepeatService(): same ownership gate, different column.
+    $updatedSvc = IcpRepository::bulkSetAvoidRepeatService($db, [$icpOwnedBySolo, $icpOwnedByOther], true, $memberSoloScope);
+    $assert($updatedSvc === 1, "Solo member's bulk avoid-repeat-service-on updates exactly their own ICP (got {$updatedSvc})");
+    $ownSvcFlag = (int) $db->query("SELECT avoid_repeat_service FROM icp_segments WHERE id = {$icpOwnedBySolo}")->fetchColumn();
+    $otherSvcFlag = (int) $db->query("SELECT avoid_repeat_service FROM icp_segments WHERE id = {$icpOwnedByOther}")->fetchColumn();
+    $assert($ownSvcFlag === 1, "The solo member's own ICP got avoid_repeat_service = 1");
+    $assert($otherSvcFlag === 0, "The other member's ICP was untouched (still 0)");
+
+    // --- Admin can bulk-toggle both flags back off across both ICPs.
+    $updatedSeqOffByAdmin = IcpRepository::bulkSetRequireSequenceCompleted($db, [$icpOwnedBySolo, $icpOwnedByOther], false, $adminScope);
+    $updatedSvcOffByAdmin = IcpRepository::bulkSetAvoidRepeatService($db, [$icpOwnedBySolo, $icpOwnedByOther], false, $adminScope);
+    $assert($updatedSeqOffByAdmin === 2 && $updatedSvcOffByAdmin === 2, "Admin's bulk-off updates both ICPs for both flags regardless of campaign ownership (got {$updatedSeqOffByAdmin}, {$updatedSvcOffByAdmin})");
 
     // --- bulkDistribute(): aggregates per-ICP runDistributionForIcp()
     // results -- the solo member's fully-owned, 100%-split ICP succeeds;

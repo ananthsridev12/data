@@ -329,14 +329,27 @@ render_header('ICP Segments');
       Check ICP segments below (or use "Select all shown"), then apply.
       <?= info_icon('An ICP you don\'t fully own (Team Lead/Member only) is silently skipped rather than blocking the rest of the batch. "Distribute now" runs the same assignment (and auto-push, if that ICP has it on) as each ICP\'s own "Sync/Push now" button, one ICP at a time.') ?>
     </p>
-    <form method="post" action="icp_bulk_action.php" id="icpBulkForm" class="d-flex flex-wrap align-items-center gap-2">
+    <form method="post" action="icp_bulk_action.php" id="icpBulkForm">
       <?= csrf_field() ?>
-      <div class="form-check">
+      <div class="form-check mb-2">
         <input type="checkbox" class="form-check-input" id="icpSelectAll">
         <label class="form-check-label small" for="icpSelectAll">Select all shown</label>
       </div>
-      <button type="submit" name="action" value="bulk_auto_push_on" class="btn btn-outline-primary btn-sm">Turn auto-push ON</button>
-      <button type="submit" name="action" value="bulk_auto_push_off" class="btn btn-outline-secondary btn-sm">Turn auto-push OFF</button>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <span class="small text-muted" style="min-width: 190px;">Auto-push to Saleshandy</span>
+        <button type="submit" name="action" value="bulk_auto_push_on" class="btn btn-outline-primary btn-sm">Turn ON</button>
+        <button type="submit" name="action" value="bulk_auto_push_off" class="btn btn-outline-secondary btn-sm">Turn OFF</button>
+      </div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <span class="small text-muted" style="min-width: 190px;">Only reassign leads whose prior sequence fully completed <?= info_icon('When re-matching a previously-assigned lead (after cooldown), also require that its last campaign\'s sequence actually finished -- current step reached the sequence\'s real total, with no reply -- not just that the assignment is resolved and past cooldown. Off by default (broader reassignment); turn this on for an ICP meant specifically to catch "finished with silence" leads for a follow-up push.') ?></span>
+        <button type="submit" name="action" value="bulk_require_sequence_completed_on" class="btn btn-outline-primary btn-sm">Turn ON</button>
+        <button type="submit" name="action" value="bulk_require_sequence_completed_off" class="btn btn-outline-secondary btn-sm">Turn OFF</button>
+      </div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+        <span class="small text-muted" style="min-width: 190px;">Don't re-pitch the same service <?= info_icon('When re-matching a previously-assigned lead, skip any of this ICP\'s linked campaigns that pitch the same Service as a campaign that lead has already been through -- even if resolved and past cooldown. Prevents an ICP that links several same-service sequence variants (e.g. two different sequences pitching the same product) from re-sending a lead into another same-service campaign. Off by default; a brand-new lead with no prior campaign history is never affected.') ?></span>
+        <button type="submit" name="action" value="bulk_avoid_repeat_service_on" class="btn btn-outline-primary btn-sm">Turn ON</button>
+        <button type="submit" name="action" value="bulk_avoid_repeat_service_off" class="btn btn-outline-secondary btn-sm">Turn OFF</button>
+      </div>
       <button type="submit" name="action" value="bulk_distribute" class="btn btn-primary btn-sm">Distribute now</button>
     </form>
   </div>
