@@ -45,6 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'selec
         'hide_used_in_campaign' => !empty($rawFilters['hide_used_in_campaign']),
         'pending_elsewhere' => $rawFilters['pending_elsewhere'] ?? '',
         'account_used_elsewhere' => $rawFilters['account_used_elsewhere'] ?? '',
+        'assigned_campaign_id' => $rawFilters['assigned_campaign_id'] ?? '',
     ];
 
     // Same reasoning as the GET-side gate below: without at least one
@@ -175,6 +176,11 @@ $filters = [
     'hide_used_in_campaign' => !isset($_GET['hide_used_in_campaign']) || $_GET['hide_used_in_campaign'] === '1',
     'pending_elsewhere' => trim((string) ($_GET['pending_elsewhere'] ?? '')),
     'account_used_elsewhere' => trim((string) ($_GET['account_used_elsewhere'] ?? '')),
+    // 'none' = never assigned to ANY campaign at all, not just this one --
+    // distinct from hide_used_in_campaign above (this campaign only) and
+    // from account_used_elsewhere (a DIFFERENT persona at the same
+    // company). Off by default, unlike hide_used_in_campaign.
+    'assigned_campaign_id' => trim((string) ($_GET['assigned_campaign_id'] ?? '')),
 ];
 
 // A completely unfiltered load (first click into this page) would run
@@ -321,6 +327,10 @@ render_header('Select leads');
     <div class="col-md-4 form-check d-flex align-items-center">
       <input class="form-check-input me-2" type="checkbox" name="hide_used_in_campaign" value="1" id="hideUsed" <?= $filters['hide_used_in_campaign'] ? 'checked' : '' ?>>
       <label class="form-check-label" for="hideUsed">Only leads not already in this campaign</label>
+    </div>
+    <div class="col-md-4 form-check d-flex align-items-center">
+      <input class="form-check-input me-2" type="checkbox" name="assigned_campaign_id" value="none" id="hideUsedAnywhere" <?= $filters['assigned_campaign_id'] === 'none' ? 'checked' : '' ?>>
+      <label class="form-check-label" for="hideUsedAnywhere">Hide leads already used in ANY campaign <?= info_icon('Stronger than "not already in this campaign" -- excludes a lead the instant it has ANY assignment history at all, in any campaign, past or present. Off by default. Different from "Account used elsewhere", which is about a different contact at the same company; this is about this exact lead.') ?></label>
     </div>
     <div class="col-md-2">
       <button type="submit" class="btn btn-primary btn-sm w-100">Update preview</button>
