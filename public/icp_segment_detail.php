@@ -39,6 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'auto_push_enabled' => !empty($_POST['auto_push_enabled']),
             'require_sequence_completed' => !empty($_POST['require_sequence_completed']),
             'avoid_repeat_service' => !empty($_POST['avoid_repeat_service']),
+            'exclude_previously_used' => !empty($_POST['exclude_previously_used']),
         ];
 
         $hasAnyCriterion = $data['role_group_id'] || $data['vertical_id'] || $data['service_id'] || $data['country_group_id']
@@ -218,6 +219,7 @@ render_header($icp['name'] . ' - ICP Segment');
       <?= info_icon('Leads matching this ICP\'s current criteria that are assignable right now -- either never assigned to any campaign before, or previously assigned but with that assignment resolved (not held, not still pending a delivery outcome) and past your company\'s cooldown period.'
           . ($icp['require_sequence_completed'] ? ' "Only reassign leads whose prior sequence fully completed" is ON for this ICP, so a previously-assigned lead must ALSO have gone through every step of its prior campaign\'s sequence with no reply -- not just resolved+cooled-down.' : '')
           . ($icp['avoid_repeat_service'] ? ' "Don\'t re-pitch the same service" is ON for this ICP -- a previously-assigned lead only counts here if at least one of this ICP\'s linked campaigns doesn\'t share a Service with a campaign it\'s already been through (a lead blocked from every linked campaign this way is excluded from this count entirely). Which SPECIFIC linked campaign it lands in is still decided per-campaign at assignment time, so it may still get skipped for one campaign and placed in another.' : '')
+          . ($icp['exclude_previously_used'] ? ' "Only match leads never used in any campaign" is ON for this ICP, so reassignment is off entirely -- only a lead with NO assignment history at all counts, no matter how cleanly or how long ago any prior campaign resolved.' : '')
           . ' Leads still held/pending elsewhere, or on a suppressed domain, are excluded. Exactly the pool the next distribution cron run would pick up and split across the linked campaigns.') ?>
       <?php if ($matchingCount > 0): ?>
         &middot; <a href="dashboard.php?<?= e(http_build_query(IcpRepository::toDashboardQueryParams($icp, $scope))) ?>">View these leads</a>
@@ -280,6 +282,10 @@ render_header($icp['name'] . ' - ICP Segment');
         <div class="col-md-2 form-check form-switch pt-2 ps-5">
           <input class="form-check-input" type="checkbox" role="switch" name="avoid_repeat_service" value="1" id="avoidRepeatServiceEdit" <?= $icp['avoid_repeat_service'] ? 'checked' : '' ?>>
           <label class="form-check-label small" for="avoidRepeatServiceEdit">Don't re-pitch the same service <?= info_icon('When re-matching a previously-assigned lead, skip any of this ICP\'s linked campaigns that pitch the same Service as a campaign that lead has already been through -- even if resolved and past cooldown. Prevents an ICP that links several same-service sequence variants (e.g. two different sequences pitching the same product) from re-sending a lead into another same-service campaign. Off by default; a brand-new lead with no prior campaign history is never affected.') ?></label>
+        </div>
+        <div class="col-md-2 form-check form-switch pt-2 ps-5">
+          <input class="form-check-input" type="checkbox" role="switch" name="exclude_previously_used" value="1" id="excludePreviouslyUsedEdit" <?= $icp['exclude_previously_used'] ? 'checked' : '' ?>>
+          <label class="form-check-label small" for="excludePreviouslyUsedEdit">Only match leads never used in any campaign <?= info_icon('Switches off reassignment entirely for this ICP -- only a lead with NO assignment history at all qualifies, no matter how cleanly or how long ago any prior campaign resolved. Stronger than "Sequence completed only" and "Don\'t re-pitch the same service", which just narrow WHICH previously-assigned leads re-qualify -- this excludes them all. Off by default (broader reassignment, today\'s baseline).') ?></label>
         </div>
       </div>
 

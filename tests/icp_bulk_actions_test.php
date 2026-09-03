@@ -1,7 +1,8 @@
 <?php
 // IcpRepository's bulk-toggle methods (bulkSetAutoPush()/
-// bulkSetRequireSequenceCompleted()/bulkSetAvoidRepeatService(), all
-// thin wrappers over the shared bulkSetBoolColumn()) plus bulkDistribute()
+// bulkSetRequireSequenceCompleted()/bulkSetAvoidRepeatService()/
+// bulkSetExcludePreviouslyUsed(), all thin wrappers over the shared
+// bulkSetBoolColumn()) plus bulkDistribute()
 // -- the "Bulk actions" bar on icp_segments.php, applying a toggle or a
 // distribute-now run across multiple selected ICPs at once. Each id
 // still goes through the same per-ICP ownership gate as the single-ICP
@@ -104,10 +105,19 @@ try {
     $assert($ownSvcFlag === 1, "The solo member's own ICP got avoid_repeat_service = 1");
     $assert($otherSvcFlag === 0, "The other member's ICP was untouched (still 0)");
 
-    // --- Admin can bulk-toggle both flags back off across both ICPs.
+    // --- bulkSetExcludePreviouslyUsed(): same ownership gate, different column.
+    $updatedExcl = IcpRepository::bulkSetExcludePreviouslyUsed($db, [$icpOwnedBySolo, $icpOwnedByOther], true, $memberSoloScope);
+    $assert($updatedExcl === 1, "Solo member's bulk exclude-previously-used-on updates exactly their own ICP (got {$updatedExcl})");
+    $ownExclFlag = (int) $db->query("SELECT exclude_previously_used FROM icp_segments WHERE id = {$icpOwnedBySolo}")->fetchColumn();
+    $otherExclFlag = (int) $db->query("SELECT exclude_previously_used FROM icp_segments WHERE id = {$icpOwnedByOther}")->fetchColumn();
+    $assert($ownExclFlag === 1, "The solo member's own ICP got exclude_previously_used = 1");
+    $assert($otherExclFlag === 0, "The other member's ICP was untouched (still 0)");
+
+    // --- Admin can bulk-toggle all three flags back off across both ICPs.
     $updatedSeqOffByAdmin = IcpRepository::bulkSetRequireSequenceCompleted($db, [$icpOwnedBySolo, $icpOwnedByOther], false, $adminScope);
     $updatedSvcOffByAdmin = IcpRepository::bulkSetAvoidRepeatService($db, [$icpOwnedBySolo, $icpOwnedByOther], false, $adminScope);
-    $assert($updatedSeqOffByAdmin === 2 && $updatedSvcOffByAdmin === 2, "Admin's bulk-off updates both ICPs for both flags regardless of campaign ownership (got {$updatedSeqOffByAdmin}, {$updatedSvcOffByAdmin})");
+    $updatedExclOffByAdmin = IcpRepository::bulkSetExcludePreviouslyUsed($db, [$icpOwnedBySolo, $icpOwnedByOther], false, $adminScope);
+    $assert($updatedSeqOffByAdmin === 2 && $updatedSvcOffByAdmin === 2 && $updatedExclOffByAdmin === 2, "Admin's bulk-off updates both ICPs for all three flags regardless of campaign ownership (got {$updatedSeqOffByAdmin}, {$updatedSvcOffByAdmin}, {$updatedExclOffByAdmin})");
 
     // --- bulkDistribute(): aggregates per-ICP runDistributionForIcp()
     // results -- the solo member's fully-owned, 100%-split ICP succeeds;

@@ -181,13 +181,14 @@ class IcpRepository
     {
         $stmt = $db->prepare(
             'INSERT INTO icp_segments
-                (company_id, name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, require_sequence_completed, avoid_repeat_service, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (company_id, name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, require_sequence_completed, avoid_repeat_service, exclude_previously_used, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $companyId, $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
-            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, !empty($data['avoid_repeat_service']) ? 1 : 0, $userId,
+            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, !empty($data['avoid_repeat_service']) ? 1 : 0,
+            !empty($data['exclude_previously_used']) ? 1 : 0, $userId,
         ]);
         return (int) $db->lastInsertId();
     }
@@ -202,13 +203,14 @@ class IcpRepository
             'UPDATE icp_segments
                 SET name = ?, role_group_id = ?, vertical_id = ?, service_id = ?, country_group_id = ?,
                     company_country = ?, industry = ?, seniority = ?, employee_count = ?, auto_push_enabled = ?,
-                    require_sequence_completed = ?, avoid_repeat_service = ?
+                    require_sequence_completed = ?, avoid_repeat_service = ?, exclude_previously_used = ?
               WHERE id = ? AND company_id = ?'
         );
         $stmt->execute([
             $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
-            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, !empty($data['avoid_repeat_service']) ? 1 : 0, $id, $scope->companyId,
+            !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, !empty($data['avoid_repeat_service']) ? 1 : 0,
+            !empty($data['exclude_previously_used']) ? 1 : 0, $id, $scope->companyId,
         ]);
     }
 
@@ -242,6 +244,18 @@ class IcpRepository
     public static function bulkSetAvoidRepeatService(PDO $db, array $ids, bool $enabled, Scope $scope): int
     {
         return self::bulkSetBoolColumn($db, 'avoid_repeat_service', $ids, $enabled, $scope);
+    }
+
+    /**
+     * Bulk-set exclude_previously_used across multiple ICPs at once --
+     * icp_segments.php's bulk actions bar. See bulkSetBoolColumn().
+     *
+     * @param int[] $ids
+     * @return int number of ICPs actually updated
+     */
+    public static function bulkSetExcludePreviouslyUsed(PDO $db, array $ids, bool $enabled, Scope $scope): int
+    {
+        return self::bulkSetBoolColumn($db, 'exclude_previously_used', $ids, $enabled, $scope);
     }
 
     /**
@@ -594,6 +608,18 @@ class IcpRepository
      * linksSumTo100() has already confirmed links exist, so the filter
      * is applied unconditionally in that case.
      *
+     * If icp_segments.exclude_previously_used is on (opt-in, see
+     * sql/048_icp_exclude_previously_used.sql), reassignment is switched
+     * off entirely for this ICP -- only a lead with NO assignment history
+     * at all (LeadRepository::buildWhere()'s 'assigned_campaign_id' =
+     * 'none', the same rule campaign_select_leads.php's "Hide leads
+     * already used in ANY campaign" checkbox uses) qualifies, regardless
+     * of how cleanly or how long ago any prior campaign resolved. Safe to
+     * combine with 'assignable_after_cooldown_days' above unchanged: its
+     * "never assigned" branch is a superset of this stricter check, so
+     * ANDing them together is equivalent to just this one, not a
+     * conflict.
+     *
      * @param array<string,mixed> $icp a row from icp_segments
      * @return array<string,mixed>
      */
@@ -616,6 +642,7 @@ class IcpRepository
             'assignable_after_cooldown_days' => $scope->leadCooldownDays,
             'require_sequence_completed_if_reassigning' => !empty($icp['require_sequence_completed']),
             'avoid_repeat_service_icp_id' => (!empty($icp['avoid_repeat_service']) && $hasLinks) ? (int) $icp['id'] : null,
+            'assigned_campaign_id' => !empty($icp['exclude_previously_used']) ? 'none' : '',
         ];
     }
 
@@ -652,6 +679,9 @@ class IcpRepository
         }
         if ($filters['avoid_repeat_service_icp_id']) {
             $params['avoid_repeat_service_icp_id'] = $filters['avoid_repeat_service_icp_id'];
+        }
+        if ($filters['assigned_campaign_id'] !== '') {
+            $params['assigned_campaign_id'] = $filters['assigned_campaign_id'];
         }
         return $params;
     }

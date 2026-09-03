@@ -27,6 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'auto_push_enabled' => !empty($_POST['auto_push_enabled']),
             'require_sequence_completed' => !empty($_POST['require_sequence_completed']),
             'avoid_repeat_service' => !empty($_POST['avoid_repeat_service']),
+            'exclude_previously_used' => !empty($_POST['exclude_previously_used']),
         ];
 
         $hasAnyCriterion = $data['role_group_id'] || $data['vertical_id'] || $data['service_id'] || $data['country_group_id']
@@ -223,6 +224,10 @@ render_header('ICP Segments');
           <input class="form-check-input" type="checkbox" role="switch" name="avoid_repeat_service" value="1" id="avoidRepeatServiceNew">
           <label class="form-check-label small" for="avoidRepeatServiceNew">Don't re-pitch the same service <?= info_icon('When re-matching a previously-assigned lead, skip any of this ICP\'s linked campaigns that pitch the same Service as a campaign that lead has already been through -- even if resolved and past cooldown. Prevents an ICP that links several same-service sequence variants (e.g. two different sequences pitching the same product) from re-sending a lead into another same-service campaign. Off by default; a brand-new lead with no prior campaign history is never affected.') ?></label>
         </div>
+        <div class="col-md-2 form-check form-switch pt-2 ps-5">
+          <input class="form-check-input" type="checkbox" role="switch" name="exclude_previously_used" value="1" id="excludePreviouslyUsedNew">
+          <label class="form-check-label small" for="excludePreviouslyUsedNew">Only match leads never used in any campaign <?= info_icon('Switches off reassignment entirely for this ICP -- only a lead with NO assignment history at all qualifies, no matter how cleanly or how long ago any prior campaign resolved. Stronger than "Sequence completed only" and "Don\'t re-pitch the same service", which just narrow WHICH previously-assigned leads re-qualify -- this excludes them all. Off by default (broader reassignment, today\'s baseline).') ?></label>
+        </div>
       </div>
 
       <div class="icp-section-label mb-2">Match criteria <span class="fw-normal text-muted" style="text-transform: none; letter-spacing: normal;">(at least one required)</span></div>
@@ -345,10 +350,15 @@ render_header('ICP Segments');
         <button type="submit" name="action" value="bulk_require_sequence_completed_on" class="btn btn-outline-primary btn-sm">Turn ON</button>
         <button type="submit" name="action" value="bulk_require_sequence_completed_off" class="btn btn-outline-secondary btn-sm">Turn OFF</button>
       </div>
-      <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
         <span class="small text-muted" style="min-width: 190px;">Don't re-pitch the same service <?= info_icon('When re-matching a previously-assigned lead, skip any of this ICP\'s linked campaigns that pitch the same Service as a campaign that lead has already been through -- even if resolved and past cooldown. Prevents an ICP that links several same-service sequence variants (e.g. two different sequences pitching the same product) from re-sending a lead into another same-service campaign. Off by default; a brand-new lead with no prior campaign history is never affected.') ?></span>
         <button type="submit" name="action" value="bulk_avoid_repeat_service_on" class="btn btn-outline-primary btn-sm">Turn ON</button>
         <button type="submit" name="action" value="bulk_avoid_repeat_service_off" class="btn btn-outline-secondary btn-sm">Turn OFF</button>
+      </div>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+        <span class="small text-muted" style="min-width: 190px;">Only match leads never used in any campaign <?= info_icon('Switches off reassignment entirely for this ICP -- only a lead with NO assignment history at all qualifies, no matter how cleanly or how long ago any prior campaign resolved. Stronger than "Sequence completed only" and "Don\'t re-pitch the same service", which just narrow WHICH previously-assigned leads re-qualify -- this excludes them all. Off by default (broader reassignment, today\'s baseline).') ?></span>
+        <button type="submit" name="action" value="bulk_exclude_previously_used_on" class="btn btn-outline-primary btn-sm">Turn ON</button>
+        <button type="submit" name="action" value="bulk_exclude_previously_used_off" class="btn btn-outline-secondary btn-sm">Turn OFF</button>
       </div>
       <button type="submit" name="action" value="bulk_distribute" class="btn btn-primary btn-sm">Distribute now</button>
     </form>
@@ -382,6 +392,7 @@ document.getElementById('icpSelectAll').addEventListener('change', function () {
         <?php if ($icp['auto_push_enabled']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Saleshandy</span>Auto-push on</span><?php endif; ?>
         <?php if ($icp['require_sequence_completed']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Reassign</span>Sequence completed only</span><?php endif; ?>
         <?php if ($icp['avoid_repeat_service']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Reassign</span>No same-service repeats</span><?php endif; ?>
+        <?php if ($icp['exclude_previously_used']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Reassign</span>Never-used leads only</span><?php endif; ?>
       </div>
       <div class="small text-muted">
         <?= e($icp['role_group_label'] ?: 'Any persona') ?>
