@@ -178,7 +178,7 @@ class LeadImporter
         // Ordered id ASC, same as lead_reclassify_roles.php -- first active
         // group with a keyword hit wins. Loaded once per chunk, not per
         // row, since role group rules don't change mid-import.
-        $roleGroupsStmt = $db->prepare('SELECT id, keywords FROM role_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
+        $roleGroupsStmt = $db->prepare('SELECT id, keywords, match_departments, match_sub_departments FROM role_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
         $roleGroupsStmt->execute([$companyId]);
         $roleGroups = $roleGroupsStmt->fetchAll();
         $countryGroupsStmt = $db->prepare('SELECT id, countries FROM country_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
@@ -345,7 +345,7 @@ class LeadImporter
             foreach ($extraColumns as $col) {
                 $values[] = $lookupIds[$col] ?? null;
             }
-            $values[] = RoleGroupClassifier::classify($data['title'] ?? null, $roleGroups);
+            $values[] = RoleGroupClassifier::classify($data['title'] ?? null, $roleGroups, $data['departments'] ?? null, $data['sub_departments'] ?? null);
             $values[] = EmployeeCountRangeClassifier::classify($data['employee_count'] ?? null);
             $values[] = CountryGroupClassifier::classify($data['company_country'] ?? null, $countryGroups);
             $values[] = $batchId;

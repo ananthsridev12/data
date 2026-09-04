@@ -14,13 +14,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $code = trim((string) ($_POST['code'] ?? ''));
         $label = trim((string) ($_POST['label'] ?? ''));
         $keywords = trim((string) ($_POST['keywords'] ?? ''));
+        $matchDepartments = !empty($_POST['match_departments']);
+        $matchSubDepartments = !empty($_POST['match_sub_departments']);
 
         if ($code === '' || $label === '') {
             flash_set('danger', 'Both a code and a name are required.');
         } else {
             try {
-                db()->prepare('INSERT INTO role_groups (company_id, code, label, keywords) VALUES (?, ?, ?, ?)')
-                    ->execute([$scope->companyId, $code, $label, $keywords !== '' ? $keywords : null]);
+                db()->prepare('INSERT INTO role_groups (company_id, code, label, keywords, match_departments, match_sub_departments) VALUES (?, ?, ?, ?, ?, ?)')
+                    ->execute([$scope->companyId, $code, $label, $keywords !== '' ? $keywords : null, $matchDepartments ? 1 : 0, $matchSubDepartments ? 1 : 0]);
                 flash_set('success', "\"{$label}\" added.");
             } catch (PDOException $ex) {
                 flash_set('danger', str_contains($ex->getMessage(), 'Duplicate') ? 'That code already exists.' : 'Could not add role group.');
@@ -30,13 +32,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = (int) ($_POST['id'] ?? 0);
         $label = trim((string) ($_POST['label'] ?? ''));
         $keywords = trim((string) ($_POST['keywords'] ?? ''));
+        $matchDepartments = !empty($_POST['match_departments']);
+        $matchSubDepartments = !empty($_POST['match_sub_departments']);
 
         if ($label === '') {
             flash_set('danger', 'Name is required.');
         } else {
-            db()->prepare('UPDATE role_groups SET label = ?, keywords = ? WHERE id = ? AND company_id = ?')
-                ->execute([$label, $keywords !== '' ? $keywords : null, $id, $scope->companyId]);
-            flash_set('success', "\"{$label}\" updated -- run \"Reclassify all leads now\" below to apply keyword changes to existing leads.");
+            db()->prepare('UPDATE role_groups SET label = ?, keywords = ?, match_departments = ?, match_sub_departments = ? WHERE id = ? AND company_id = ?')
+                ->execute([$label, $keywords !== '' ? $keywords : null, $matchDepartments ? 1 : 0, $matchSubDepartments ? 1 : 0, $id, $scope->companyId]);
+            flash_set('success', "\"{$label}\" updated -- run \"Reclassify all leads now\" below to apply keyword/matching changes to existing leads.");
         }
     } elseif ($action === 'toggle_active') {
         $id = (int) ($_POST['id'] ?? 0);
@@ -172,7 +176,7 @@ $unclassifiedCount = (int) $unclassifiedCountStmt->fetchColumn();
 // using the same id-ordered group list (first match wins) that
 // LeadImporter/lead_reclassify_roles.php actually classify with, not the
 // label-ordered $activeRoleGroups used for this page's own display.
-$classifyOrderRoleGroupsStmt = db()->prepare('SELECT id, keywords FROM role_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
+$classifyOrderRoleGroupsStmt = db()->prepare('SELECT id, keywords, match_departments, match_sub_departments FROM role_groups WHERE is_active = 1 AND company_id = ? ORDER BY id');
 $classifyOrderRoleGroupsStmt->execute([$scope->companyId]);
 $classifyOrderRoleGroups = $classifyOrderRoleGroupsStmt->fetchAll();
 $unclassifiedTitlesCandidatesStmt = db()->prepare(
@@ -205,8 +209,10 @@ render_header('Role Groups');
   Engineering") into a small set of named targeting buckets. Each group has an ordered, comma-separated,
   case-insensitive keyword list -- a lead's <code>title</code> is matched against each active group's
   keywords in order, first match wins (same matching style as the wave-1 leader title-priority list).
-  Leads are auto-classified on import; edit a group's keywords and click "Reclassify all leads now" below
-  to re-apply the updated rules to leads already in the system.
+  A group can optionally also match the SAME keyword list against a lead's Department/Sub-department
+  ("Also match Department"/"Also match Sub-department" below) -- off by default, opt in per group.
+  Leads are auto-classified on import; edit a group's keywords or matching options and click "Reclassify
+  all leads now" below to re-apply the updated rules to leads already in the system.
 </p>
 <p class="text-muted small">
   <strong>Matching is substring-based, not whole-word</strong> -- a short/ambiguous keyword can match inside
@@ -235,6 +241,14 @@ render_header('Role Groups');
       </div>
       <div class="col-md-1">
         <button type="submit" class="btn btn-primary btn-sm w-100">Add</button>
+      </div>
+      <div class="col-md-6 form-check form-check-inline mt-1">
+        <input class="form-check-input" type="checkbox" name="match_departments" value="1" id="matchDepartmentsNew">
+        <label class="form-check-label small" for="matchDepartmentsNew">Also match Department</label>
+      </div>
+      <div class="col-md-6 form-check form-check-inline mt-1">
+        <input class="form-check-input" type="checkbox" name="match_sub_departments" value="1" id="matchSubDepartmentsNew">
+        <label class="form-check-label small" for="matchSubDepartmentsNew">Also match Sub-department</label>
       </div>
     </form>
   </div>
@@ -267,7 +281,11 @@ render_header('Role Groups');
     <tr>
       <td><code><?= e($rg['code']) ?></code></td>
       <td><?= e($rg['label']) ?></td>
-      <td class="small text-muted"><?= e($rg['keywords'] ?? '') ?></td>
+      <td class="small text-muted">
+        <?= e($rg['keywords'] ?? '') ?>
+        <?php if ($rg['match_departments']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Match</span>Department</span><?php endif; ?>
+        <?php if ($rg['match_sub_departments']): ?><span class="icp-chip icp-chip-accent"><span class="icp-chip-label">Match</span>Sub-department</span><?php endif; ?>
+      </td>
       <td><span class="badge bg-<?= $rg['is_active'] ? 'success' : 'secondary' ?>"><?= $rg['is_active'] ? 'Active' : 'Inactive' ?></span></td>
       <td>
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editRoleGroup<?= (int) $rg['id'] ?>">Edit</button>
@@ -300,6 +318,17 @@ render_header('Role Groups');
                   <div class="mb-3">
                     <label class="form-label small text-muted mb-0">Pick from existing titles</label>
                     <?php render_multiselect_filter('title_picker_' . (int) $rg['id'], 'Existing titles', $titleOptions, RoleGroupClassifier::parseKeywords($rg['keywords'] ?? '')); ?>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label small text-muted mb-1 d-block">Also match the same keywords against <?= info_icon('Off by default. When on, this group\'s keyword list above is ALSO checked against the lead\'s Department/Sub-department value, in addition to title -- a lead can classify into this group even with a blank or non-matching title. Run "Reclassify all leads now" below after changing this to apply it to existing leads.') ?></label>
+                    <div class="form-check form-check-inline">
+                      <input class="form-check-input" type="checkbox" name="match_departments" value="1" id="matchDepartmentsEdit<?= (int) $rg['id'] ?>" <?= $rg['match_departments'] ? 'checked' : '' ?>>
+                      <label class="form-check-label small" for="matchDepartmentsEdit<?= (int) $rg['id'] ?>">Department</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                      <input class="form-check-input" type="checkbox" name="match_sub_departments" value="1" id="matchSubDepartmentsEdit<?= (int) $rg['id'] ?>" <?= $rg['match_sub_departments'] ? 'checked' : '' ?>>
+                      <label class="form-check-label small" for="matchSubDepartmentsEdit<?= (int) $rg['id'] ?>">Sub-department</label>
+                    </div>
                   </div>
                 </div>
                 <div class="modal-footer">
