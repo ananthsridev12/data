@@ -24,7 +24,11 @@ class LeadRepository
      *   imported_by (user id), campaign_id, hide_used_in_campaign (bool),
      *   show_suppressed (bool -- by default, leads on a suppressed domain
      *   are excluded entirely), sequence_completed ('1' -- the lead's
-     *   latest assignment finished its campaign's sequence)
+     *   latest assignment finished its campaign's sequence), bounce_status
+     *   ('pending'|'delivered'|'bounced'|'none', latest assignment),
+     *   bounce_type (one of WaveAssigner::BOUNCE_TYPES, or 'none', latest
+     *   assignment), delivery_status (string[], latest assignment's raw
+     *   Saleshandy-synced value, IN-matched)
      * @return array{rows: array<int,array>, total: int, page: int, perPage: int, totalPages: int}
      */
     public static function search(PDO $db, Scope $scope, array $filters, int $page = 1): array
@@ -424,6 +428,47 @@ class LeadRepository
         } elseif (($filters['imported'] ?? '') === '0') {
             $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.status IN ('exported', 'pushed') AND a.id = {$latestAssignment})";
         }
+        // 'bounce_status'/'bounce_type'/'delivery_status': same "latest
+        // assignment, current standing" reasoning as 'imported' above --
+        // whether this lead is currently pending/delivered/bounced (Wave-1's
+        // own bounce_status), what specific bounce_type it recorded, and
+        // Saleshandy's own synced delivery_status, all describe the lead's
+        // CURRENT campaign standing, not lifetime history, so a lead
+        // reassigned into a fresh campaign correctly shows its NEW
+        // assignment's (unbounced) status, not a stale bounce from an
+        // earlier, resolved campaign. 'none' means "no assignment at all,
+        // or (for bounce_type only) an assignment with nothing recorded" --
+        // both naturally fall out of a bare NOT EXISTS, since the {$latestAssignment}
+        // subquery returns NULL for a never-assigned lead and a.id = NULL
+        // never matches any row.
+        if (($filters['bounce_status'] ?? '') !== '') {
+            if ($filters['bounce_status'] === 'none') {
+                $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.id = {$latestAssignment})";
+            } else {
+                $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.id = {$latestAssignment} AND a.bounce_status = :bounce_status)";
+                $params['bounce_status'] = $filters['bounce_status'];
+            }
+        }
+        if (($filters['bounce_type'] ?? '') !== '') {
+            if ($filters['bounce_type'] === 'none') {
+                $clauses[] = "NOT EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.id = {$latestAssignment} AND a.bounce_type IS NOT NULL)";
+            } else {
+                $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.id = {$latestAssignment} AND a.bounce_type = :bounce_type)";
+                $params['bounce_type'] = $filters['bounce_type'];
+            }
+        }
+        if (!empty($filters['delivery_status'])) {
+            $deliveryStatusValues = array_values(array_filter((array) $filters['delivery_status'], static fn ($v) => $v !== ''));
+            if ($deliveryStatusValues) {
+                $dsPlaceholders = [];
+                foreach ($deliveryStatusValues as $i => $v) {
+                    $key = "delivery_status_{$i}";
+                    $dsPlaceholders[] = ":{$key}";
+                    $params[$key] = $v;
+                }
+                $clauses[] = "EXISTS (SELECT 1 FROM lead_campaign_assignments a WHERE a.lead_id = l.id AND a.id = {$latestAssignment} AND a.delivery_status IN (" . implode(',', $dsPlaceholders) . '))';
+            }
+        }
         // 'email_sent'/'sequence_completed' check EVERY assignment the
         // lead has ever had, not just the latest -- unlike 'imported'
         // above, these are permanent facts once true, not current
@@ -551,6 +596,34 @@ class LeadRepository
         ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db);
         $where = implode(' AND ', $clauses);
         $stmt = $db->prepare("SELECT DISTINCT l.{$column} FROM leads l WHERE {$where} ORDER BY l.{$column}{$limitSql}");
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    /**
+     * DISTINCT values actually observed on this company's
+     * lead_campaign_assignments, across every assignment (not scoped to
+     * "latest" -- this only powers a filter dropdown's option list, not a
+     * match check). Unlike distinctValues() above (leads.* columns, small
+     * fixed-ish sets), delivery_status is free-text synced straight from
+     * Saleshandy and varies account to account, so its filter options
+     * have to be looked up rather than hardcoded (bounce_status/
+     * bounce_type ARE small fixed sets and don't need this -- see
+     * buildWhere()'s 'bounce_status'/'bounce_type' filters).
+     *
+     * @return string[]
+     */
+    public static function distinctAssignmentValues(PDO $db, Scope $scope, string $column): array
+    {
+        $allowed = ['delivery_status'];
+        if (!in_array($column, $allowed, true)) {
+            throw new InvalidArgumentException("Column not filterable: {$column}");
+        }
+        $clauses = ['l.company_id = :scope_company_id', "a.{$column} IS NOT NULL", "a.{$column} <> ''"];
+        $params = ['scope_company_id' => $scope->companyId];
+        ScopeFilter::applyOwnerScope($clauses, $params, $scope, $db);
+        $where = implode(' AND ', $clauses);
+        $stmt = $db->prepare("SELECT DISTINCT a.{$column} FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id WHERE {$where} ORDER BY a.{$column}");
         $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }

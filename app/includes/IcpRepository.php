@@ -181,12 +181,13 @@ class IcpRepository
     {
         $stmt = $db->prepare(
             'INSERT INTO icp_segments
-                (company_id, name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, auto_push_enabled, require_sequence_completed, avoid_repeat_service, exclude_previously_used, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (company_id, name, role_group_id, vertical_id, service_id, country_group_id, company_country, industry, seniority, employee_count, bounce_status_filter, bounce_type_filter, delivery_status_filter, auto_push_enabled, require_sequence_completed, avoid_repeat_service, exclude_previously_used, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $companyId, $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
+            $data['bounce_status_filter'] ?: null, $data['bounce_type_filter'] ?: null, $data['delivery_status_filter'] ?: null,
             !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, !empty($data['avoid_repeat_service']) ? 1 : 0,
             !empty($data['exclude_previously_used']) ? 1 : 0, $userId,
         ]);
@@ -202,13 +203,15 @@ class IcpRepository
         $stmt = $db->prepare(
             'UPDATE icp_segments
                 SET name = ?, role_group_id = ?, vertical_id = ?, service_id = ?, country_group_id = ?,
-                    company_country = ?, industry = ?, seniority = ?, employee_count = ?, auto_push_enabled = ?,
+                    company_country = ?, industry = ?, seniority = ?, employee_count = ?,
+                    bounce_status_filter = ?, bounce_type_filter = ?, delivery_status_filter = ?, auto_push_enabled = ?,
                     require_sequence_completed = ?, avoid_repeat_service = ?, exclude_previously_used = ?
               WHERE id = ? AND company_id = ?'
         );
         $stmt->execute([
             $data['name'], $data['role_group_id'] ?: null, $data['vertical_id'] ?: null, $data['service_id'] ?: null, $data['country_group_id'] ?: null,
             $data['company_country'] ?: null, $data['industry'] ?: null, $data['seniority'] ?: null, $data['employee_count'] ?: null,
+            $data['bounce_status_filter'] ?: null, $data['bounce_type_filter'] ?: null, $data['delivery_status_filter'] ?: null,
             !empty($data['auto_push_enabled']) ? 1 : 0, !empty($data['require_sequence_completed']) ? 1 : 0, !empty($data['avoid_repeat_service']) ? 1 : 0,
             !empty($data['exclude_previously_used']) ? 1 : 0, $id, $scope->companyId,
         ]);
@@ -620,6 +623,14 @@ class IcpRepository
      * ANDing them together is equivalent to just this one, not a
      * conflict.
      *
+     * icp_segments.bounce_status_filter/bounce_type_filter/
+     * delivery_status_filter (sql/049_icp_bounce_filters.sql) are plain
+     * optional match criteria -- same LeadRepository::buildWhere()
+     * 'bounce_status'/'bounce_type'/'delivery_status' filters just added
+     * to campaign_select_leads.php and dashboard.php, all checked against
+     * the lead's CURRENT (latest) assignment. Blank/unset by default, no
+     * interaction with the reassignment toggles above.
+     *
      * @param array<string,mixed> $icp a row from icp_segments
      * @return array<string,mixed>
      */
@@ -643,6 +654,9 @@ class IcpRepository
             'require_sequence_completed_if_reassigning' => !empty($icp['require_sequence_completed']),
             'avoid_repeat_service_icp_id' => (!empty($icp['avoid_repeat_service']) && $hasLinks) ? (int) $icp['id'] : null,
             'assigned_campaign_id' => !empty($icp['exclude_previously_used']) ? 'none' : '',
+            'bounce_status' => $icp['bounce_status_filter'] ?: '',
+            'bounce_type' => $icp['bounce_type_filter'] ?: '',
+            'delivery_status' => RoleGroupClassifier::parseKeywords($icp['delivery_status_filter'] ?? ''),
         ];
     }
 
@@ -661,8 +675,13 @@ class IcpRepository
     {
         $filters = self::toFilters($icp, $scope);
         $params = [];
-        foreach (['company_country', 'industry', 'seniority', 'employee_count_range'] as $key) {
+        foreach (['company_country', 'industry', 'seniority', 'employee_count_range', 'delivery_status'] as $key) {
             if ($filters[$key]) {
+                $params[$key] = $filters[$key];
+            }
+        }
+        foreach (['bounce_status', 'bounce_type'] as $key) {
+            if ($filters[$key] !== '') {
                 $params[$key] = $filters[$key];
             }
         }

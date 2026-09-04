@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/includes/LeadRepository.php';
 require_once __DIR__ . '/../app/includes/ColumnPreferences.php';
 require_once __DIR__ . '/../app/includes/TagRepository.php';
 require_once __DIR__ . '/../app/includes/EmployeeCountRangeClassifier.php';
+require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 
 $user = require_login();
 $scope = Scope::fromUser(db(), $user);
@@ -49,6 +50,11 @@ $filters = [
     'assignable_after_cooldown_days' => trim((string) ($_GET['assignable_after_cooldown_days'] ?? '')),
     'require_sequence_completed_if_reassigning' => !empty($_GET['require_sequence_completed_if_reassigning']),
     'avoid_repeat_service_icp_id' => (int) ($_GET['avoid_repeat_service_icp_id'] ?? 0) ?: null,
+    // Latest-assignment bounce/delivery filters -- see LeadRepository::
+    // buildWhere()'s 'bounce_status'/'bounce_type'/'delivery_status'.
+    'bounce_status' => trim((string) ($_GET['bounce_status'] ?? '')),
+    'bounce_type' => trim((string) ($_GET['bounce_type'] ?? '')),
+    'delivery_status' => $multiParam('delivery_status'),
 ];
 $page = max(1, (int) ($_GET['page'] ?? 1));
 
@@ -66,7 +72,8 @@ $hasRealFilter = $filters['q'] !== '' || $filters['company'] !== '' || $filters[
     || $filters['industry'] || $filters['country'] || $filters['employee_count_range']
     || $filters['vertical_id'] !== '' || $filters['service_id'] !== '' || $filters['role_group_id'] !== '' || $filters['country_group_id'] !== '' || $filters['imported_by'] !== ''
     || $filters['campaign_id'] !== '' || $filters['company_country']
-    || $filters['assigned_campaign_id'] !== '' || $filters['imported'] !== '' || $filters['email_sent'] !== '' || $filters['sequence_completed'] !== '';
+    || $filters['assigned_campaign_id'] !== '' || $filters['imported'] !== '' || $filters['email_sent'] !== '' || $filters['sequence_completed'] !== ''
+    || $filters['bounce_status'] !== '' || $filters['bounce_type'] !== '' || $filters['delivery_status'];
 
 if ($hasRealFilter) {
     $result = LeadRepository::search(db(), $scope, $filters, $page);
@@ -97,6 +104,7 @@ $importers = db()->query(
     "SELECT DISTINCT u.id, u.name FROM users u JOIN import_batches ib ON ib.uploaded_by = u.id ORDER BY u.name"
 )->fetchAll();
 $existingTags = TagRepository::all(db(), $scope->companyId);
+$deliveryStatusOptions = LeadRepository::distinctAssignmentValues(db(), $scope, 'delivery_status');
 
 // Rebuild the current filter query string (minus `page`) for pagination links
 // and for the "export/assign everything matching this filter" hidden fields.
@@ -209,6 +217,39 @@ render_header('Dashboard');
       <div class="col-md-3 form-check d-flex align-items-center">
         <input class="form-check-input me-2" type="checkbox" name="show_suppressed" value="1" id="showSuppressed" <?= $filters['show_suppressed'] ? 'checked' : '' ?>>
         <label class="form-check-label" for="showSuppressed">Show suppressed (bounced-domain) leads</label>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted mb-0">
+          Bounce Status
+          <?= info_icon('This lead\'s own CURRENT assignment (its latest one, if reassigned) -- Wave-1\'s own pending/delivered/bounced outcome tracking, not Saleshandy\'s delivery_status. "Never assigned" means no campaign assignment at all.') ?>
+        </label>
+        <select name="bounce_status" class="form-select form-select-sm">
+          <option value="">All</option>
+          <option value="pending" <?= $filters['bounce_status'] === 'pending' ? 'selected' : '' ?>>Pending</option>
+          <option value="delivered" <?= $filters['bounce_status'] === 'delivered' ? 'selected' : '' ?>>Delivered</option>
+          <option value="bounced" <?= $filters['bounce_status'] === 'bounced' ? 'selected' : '' ?>>Bounced</option>
+          <option value="none" <?= $filters['bounce_status'] === 'none' ? 'selected' : '' ?>>Never assigned</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted mb-0">
+          Bounce Type
+          <?= info_icon('Only set once a bounce is actually recorded on this lead\'s current assignment. "None" means no bounce type recorded (including never-assigned leads).') ?>
+        </label>
+        <select name="bounce_type" class="form-select form-select-sm">
+          <option value="">All</option>
+          <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+            <option value="<?= e($bt) ?>" <?= $filters['bounce_type'] === $bt ? 'selected' : '' ?>><?= e($bt) ?></option>
+          <?php endforeach; ?>
+          <option value="none" <?= $filters['bounce_type'] === 'none' ? 'selected' : '' ?>>None</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted mb-0">
+          Delivery Status
+          <?= info_icon('The raw value synced from Saleshandy on this lead\'s current assignment (e.g. Active, Replied, Paused, Hard Bounced) -- different from Bounce Status/Type above, which are this app\'s own Wave-1 tracking.') ?>
+        </label>
+        <?php render_multiselect_filter('delivery_status', 'Delivery Status', $deliveryStatusOptions, $filters['delivery_status']); ?>
       </div>
       <div class="col-md-2">
         <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>

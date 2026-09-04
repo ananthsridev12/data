@@ -24,6 +24,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'industry' => implode(', ', (array) ($_POST['industry'] ?? [])),
             'seniority' => implode(', ', (array) ($_POST['seniority'] ?? [])),
             'employee_count' => implode(', ', (array) ($_POST['employee_count'] ?? [])),
+            'bounce_status_filter' => trim((string) ($_POST['bounce_status_filter'] ?? '')),
+            'bounce_type_filter' => trim((string) ($_POST['bounce_type_filter'] ?? '')),
+            'delivery_status_filter' => implode(', ', (array) ($_POST['delivery_status_filter'] ?? [])),
             'auto_push_enabled' => !empty($_POST['auto_push_enabled']),
             'require_sequence_completed' => !empty($_POST['require_sequence_completed']),
             'avoid_repeat_service' => !empty($_POST['avoid_repeat_service']),
@@ -31,7 +34,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
 
         $hasAnyCriterion = $data['role_group_id'] || $data['vertical_id'] || $data['service_id'] || $data['country_group_id']
-            || $data['company_country'] !== '' || $data['industry'] !== '' || $data['seniority'] !== '' || $data['employee_count'] !== '';
+            || $data['company_country'] !== '' || $data['industry'] !== '' || $data['seniority'] !== '' || $data['employee_count'] !== ''
+            || $data['bounce_status_filter'] !== '' || $data['bounce_type_filter'] !== '' || $data['delivery_status_filter'] !== '';
 
         if ($name === '') {
             flash_set('danger', 'A name is required.');
@@ -61,6 +65,7 @@ $roleGroups = LeadRepository::activeLookupOptions(db(), $scope, 'role_groups');
 $verticals = LeadRepository::activeLookupOptions(db(), $scope, 'verticals');
 $services = LeadRepository::activeLookupOptions(db(), $scope, 'services');
 $countryGroups = LeadRepository::activeLookupOptions(db(), $scope, 'country_groups');
+$deliveryStatusOptions = LeadRepository::distinctAssignmentValues(db(), $scope, 'delivery_status');
 
 // Vertical/Service/Country Group filter for the list below -- narrows
 // which ICPs are shown (and which sections get built, see $icpGroups
@@ -276,6 +281,41 @@ render_header('ICP Segments');
         <div class="col-md-4">
           <label class="form-label small text-muted mb-1">Employee Count</label>
           <?php render_multiselect_filter('employee_count', 'Employee Count', $employeeCountRanges, []); ?>
+        </div>
+      </div>
+      <div class="row g-3 mb-4">
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">
+            Bounce Status
+            <?= info_icon('Matches a lead\'s CURRENT (latest) assignment -- Wave-1\'s own pending/delivered/bounced tracking. "Never assigned" means no campaign assignment at all. Optional, like every other match criterion here.') ?>
+          </label>
+          <select name="bounce_status_filter" class="form-select">
+            <option value="">Any</option>
+            <option value="pending">Pending</option>
+            <option value="delivered">Delivered</option>
+            <option value="bounced">Bounced</option>
+            <option value="none">Never assigned</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">
+            Bounce Type
+            <?= info_icon('Only set once a bounce is actually recorded on the lead\'s current assignment.') ?>
+          </label>
+          <select name="bounce_type_filter" class="form-select">
+            <option value="">Any</option>
+            <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+              <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
+            <?php endforeach; ?>
+            <option value="none">None</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small text-muted mb-1">
+            Delivery Status
+            <?= info_icon('The raw value synced from Saleshandy on the lead\'s current assignment (e.g. Active, Replied, Paused, Hard Bounced).') ?>
+          </label>
+          <?php render_multiselect_filter('delivery_status_filter', 'Delivery Status', $deliveryStatusOptions, []); ?>
         </div>
       </div>
 
