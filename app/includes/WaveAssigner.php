@@ -16,7 +16,36 @@
  */
 class WaveAssigner
 {
+    // Fallback seed list ONLY -- for a company whose
+    // bounce_type_suppression_settings has never been populated (e.g. a
+    // brand-new tenant created after sql/016 ran). The real, authoritative,
+    // admin-editable list is per-company in that table (see
+    // bounce_settings.php) and now has more values than this original
+    // 5-item set (e.g. "Bounced", "Hard Bounced", "Block Bounced", "All
+    // Bounced", "Soft Bounced" -- Saleshandy's own raw delivery_status
+    // bounce variants, added later without this constant being updated to
+    // match). Use listBounceTypes() below everywhere a dropdown or
+    // validation allowlist needs "every bounce type this company
+    // recognizes" -- never reference this constant directly outside of it.
     public const BOUNCE_TYPES = ['Hard Bounce', 'Soft Bounce', 'Spam Complaint', 'Invalid Address', 'Other'];
+
+    /**
+     * The full, authoritative, per-company list of bounce types -- what
+     * every "Bounce Type" dropdown/validation allowlist should actually
+     * use, not the narrower BOUNCE_TYPES constant above. Reads
+     * bounce_type_suppression_settings (the same admin-editable list
+     * bounce_settings.php manages), falling back to BOUNCE_TYPES only if
+     * that company has no rows there at all yet.
+     *
+     * @return string[]
+     */
+    public static function listBounceTypes(PDO $db, int $companyId): array
+    {
+        $stmt = $db->prepare('SELECT bounce_type FROM bounce_type_suppression_settings WHERE company_id = ? ORDER BY bounce_type');
+        $stmt->execute([$companyId]);
+        $types = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        return $types ?: self::BOUNCE_TYPES;
+    }
 
     // Seniority fallback rank used when no title-priority keyword matches
     // any lead at a domain -- lower number wins. Unlisted values sort last.

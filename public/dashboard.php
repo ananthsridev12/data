@@ -238,7 +238,7 @@ render_header('Dashboard');
         </label>
         <select name="bounce_type" class="form-select form-select-sm">
           <option value="">All</option>
-          <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+          <?php foreach (WaveAssigner::listBounceTypes(db(), $scope->companyId) as $bt): ?>
             <option value="<?= e($bt) ?>" <?= $filters['bounce_type'] === $bt ? 'selected' : '' ?>><?= e($bt) ?></option>
           <?php endforeach; ?>
           <option value="none" <?= $filters['bounce_type'] === 'none' ? 'selected' : '' ?>>None</option>

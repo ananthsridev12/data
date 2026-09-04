@@ -363,7 +363,7 @@ render_header($icp['name'] . ' - ICP Segment');
           </label>
           <select name="bounce_type_filter" class="form-select">
             <option value="">Any</option>
-            <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+            <?php foreach (WaveAssigner::listBounceTypes(db(), $scope->companyId) as $bt): ?>
               <option value="<?= e($bt) ?>" <?= $icp['bounce_type_filter'] === $bt ? 'selected' : '' ?>><?= e($bt) ?></option>
             <?php endforeach; ?>
             <option value="none" <?= $icp['bounce_type_filter'] === 'none' ? 'selected' : '' ?>>None</option>

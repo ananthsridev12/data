@@ -9,6 +9,7 @@ $user = require_login();
 $scope = Scope::fromUser(db(), $user);
 
 $columns = ColumnPreferences::getForUser(db(), $user['id'], 'campaign_leads');
+$knownBounceTypes = WaveAssigner::listBounceTypes(db(), $scope->companyId);
 
 $campaignId = (int) ($_GET['campaign_id'] ?? 0);
 $campaign = CampaignAccess::loadVisible(db(), $scope, $campaignId);
@@ -386,7 +387,7 @@ render_header('Campaign leads');
         <div class="d-flex flex-wrap gap-2 align-items-center">
           <select name="bounce_type" class="form-select form-select-sm" style="max-width: 220px;">
             <option value="">Bounce type (optional)</option>
-            <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+            <?php foreach ($knownBounceTypes as $bt): ?>
               <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
             <?php endforeach; ?>
           </select>
@@ -432,7 +433,7 @@ render_header('Campaign leads');
                   <input type="hidden" name="leader_assignment_id" value="<?= (int) $w['leader_assignment_id'] ?>">
                   <select name="bounce_type" class="form-select form-select-sm d-inline-block mb-1" style="max-width: 160px;">
                     <option value="">Bounce type...</option>
-                    <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+                    <?php foreach ($knownBounceTypes as $bt): ?>
                       <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
                     <?php endforeach; ?>
                   </select><br>

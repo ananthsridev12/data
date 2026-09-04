@@ -26,9 +26,9 @@ class LeadRepository
      *   are excluded entirely), sequence_completed ('1' -- the lead's
      *   latest assignment finished its campaign's sequence), bounce_status
      *   ('pending'|'delivered'|'bounced'|'none', latest assignment),
-     *   bounce_type (one of WaveAssigner::BOUNCE_TYPES, or 'none', latest
-     *   assignment), delivery_status (string[], latest assignment's raw
-     *   Saleshandy-synced value, IN-matched)
+     *   bounce_type (one of WaveAssigner::listBounceTypes(), or 'none',
+     *   latest assignment), delivery_status (string[], latest assignment's
+     *   raw Saleshandy-synced value, IN-matched)
      * @return array{rows: array<int,array>, total: int, page: int, perPage: int, totalPages: int}
      */
     public static function search(PDO $db, Scope $scope, array $filters, int $page = 1): array

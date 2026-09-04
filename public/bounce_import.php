@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/includes/WaveAssigner.php';
 
 $user = require_login();
 $scope = Scope::fromUser(db(), $user);
+$knownBounceTypes = WaveAssigner::listBounceTypes(db(), $scope->companyId);
 
 $results = null;
 
@@ -33,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $batchBounceType = $_POST['bounce_type'] ?? '';
-    if (!in_array($batchBounceType, WaveAssigner::BOUNCE_TYPES, true)) {
+    if (!in_array($batchBounceType, $knownBounceTypes, true)) {
         $batchBounceType = null;
     }
 
@@ -79,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $rowBounceType = $batchBounceType;
             if ($typeCol !== null) {
                 $fromRow = trim((string) ($row[$typeCol] ?? ''));
-                if (in_array($fromRow, WaveAssigner::BOUNCE_TYPES, true)) {
+                if (in_array($fromRow, $knownBounceTypes, true)) {
                     $rowBounceType = $fromRow;
                 }
             }
@@ -134,7 +135,7 @@ render_header('Bounce import');
       <input type="file" name="bounce_file" class="form-control form-control-sm" accept=".csv" required style="max-width: 320px;">
       <select name="bounce_type" class="form-select form-select-sm" style="max-width: 220px;">
         <option value="">Bounce type for this file (optional)</option>
-        <?php foreach (WaveAssigner::BOUNCE_TYPES as $bt): ?>
+        <?php foreach ($knownBounceTypes as $bt): ?>
           <option value="<?= e($bt) ?>"><?= e($bt) ?></option>
         <?php endforeach; ?>
       </select>

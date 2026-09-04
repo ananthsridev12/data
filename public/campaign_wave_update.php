@@ -45,7 +45,7 @@ if ($action === 'release') {
     flash_set('success', "{$count} held lead(s) released and are now active in this campaign.");
 } elseif ($action === 'suppress') {
     $bounceType = $_POST['bounce_type'] ?? '';
-    if (!in_array($bounceType, WaveAssigner::BOUNCE_TYPES, true)) {
+    if (!in_array($bounceType, WaveAssigner::listBounceTypes(db(), $scope->companyId), true)) {
         $bounceType = null;
     }
     $result = WaveAssigner::suppress(db(), $leaderAssignmentId, $user['id'], $scope->companyId, 'Wave-1 bounce', $bounceType);

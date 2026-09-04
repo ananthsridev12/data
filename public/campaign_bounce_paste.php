@@ -31,7 +31,7 @@ if (!$campaignName) {
 }
 
 $bounceType = $_POST['bounce_type'] ?? '';
-if (!in_array($bounceType, WaveAssigner::BOUNCE_TYPES, true)) {
+if (!in_array($bounceType, WaveAssigner::listBounceTypes(db(), $scope->companyId), true)) {
     $bounceType = null;
 }
 
