@@ -586,7 +586,7 @@ class LeadRepository
      */
     public static function distinctValues(PDO $db, Scope $scope, string $column, int $limit = 0): array
     {
-        $allowed = ['seniority', 'industry', 'country', 'employee_count', 'employee_count_range', 'company_country', 'title', 'departments'];
+        $allowed = ['seniority', 'industry', 'country', 'employee_count', 'employee_count_range', 'company_country', 'title', 'departments', 'sub_departments'];
         if (!in_array($column, $allowed, true)) {
             throw new InvalidArgumentException("Column not filterable: {$column}");
         }

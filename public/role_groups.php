@@ -195,11 +195,15 @@ foreach ($unclassifiedTitlesCandidates as $row) {
         }
     }
 }
-// Every distinct title already in the leads table -- lets an admin pick
-// from real data via the checkbox dropdown below instead of guessing
-// keyword phrases blind. Same source/widget already used for Dashboard's
-// Title filter.
+// Every distinct title/department/sub-department already in the leads
+// table -- lets an admin pick from real data via the checkbox dropdowns
+// below instead of guessing keyword phrases blind. All three pickers feed
+// the SAME keywords field (see assets/js/app.js), since match_departments/
+// match_sub_departments just widen which lead column that one list is
+// checked against -- there's no separate keyword list per field.
 $titleOptions = LeadRepository::distinctValues(db(), $scope, 'title', 1000);
+$departmentOptions = LeadRepository::distinctValues(db(), $scope, 'departments', 1000);
+$subDepartmentOptions = LeadRepository::distinctValues(db(), $scope, 'sub_departments', 1000);
 
 render_header('Role Groups');
 ?>
@@ -242,13 +246,19 @@ render_header('Role Groups');
       <div class="col-md-1">
         <button type="submit" class="btn btn-primary btn-sm w-100">Add</button>
       </div>
-      <div class="col-md-6 form-check form-check-inline mt-1">
+      <div class="col-md-3 form-check form-check-inline mt-1">
         <input class="form-check-input" type="checkbox" name="match_departments" value="1" id="matchDepartmentsNew">
         <label class="form-check-label small" for="matchDepartmentsNew">Also match Department</label>
       </div>
-      <div class="col-md-6 form-check form-check-inline mt-1">
+      <div class="col-md-3">
+        <?php render_multiselect_filter('department_picker_new', 'Pick from existing departments', $departmentOptions, []); ?>
+      </div>
+      <div class="col-md-3 form-check form-check-inline mt-1">
         <input class="form-check-input" type="checkbox" name="match_sub_departments" value="1" id="matchSubDepartmentsNew">
         <label class="form-check-label small" for="matchSubDepartmentsNew">Also match Sub-department</label>
+      </div>
+      <div class="col-md-3">
+        <?php render_multiselect_filter('sub_department_picker_new', 'Pick from existing sub-departments', $subDepartmentOptions, []); ?>
       </div>
     </form>
   </div>
@@ -329,6 +339,14 @@ render_header('Role Groups');
                       <input class="form-check-input" type="checkbox" name="match_sub_departments" value="1" id="matchSubDepartmentsEdit<?= (int) $rg['id'] ?>" <?= $rg['match_sub_departments'] ? 'checked' : '' ?>>
                       <label class="form-check-label small" for="matchSubDepartmentsEdit<?= (int) $rg['id'] ?>">Sub-department</label>
                     </div>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label small text-muted mb-0">Pick from existing departments</label>
+                    <?php render_multiselect_filter('department_picker_' . (int) $rg['id'], 'Existing departments', $departmentOptions, RoleGroupClassifier::parseKeywords($rg['keywords'] ?? '')); ?>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label small text-muted mb-0">Pick from existing sub-departments</label>
+                    <?php render_multiselect_filter('sub_department_picker_' . (int) $rg['id'], 'Existing sub-departments', $subDepartmentOptions, RoleGroupClassifier::parseKeywords($rg['keywords'] ?? '')); ?>
                   </div>
                 </div>
                 <div class="modal-footer">

@@ -7,14 +7,17 @@
   });
 })();
 
-// Role Groups' "Pick from existing titles" checkbox dropdown -- checking
-// a title appends it into that form's Keywords field (comma-separated);
-// unchecking removes it. Selector matches by name prefix since each
-// instance (the Add form, each Edit modal) uses a unique
-// render_multiselect_filter() name to avoid id collisions across modals,
-// but they all feed the same "keywords" field in their own form.
+// Role Groups' "Pick from existing titles/departments/sub-departments"
+// checkbox dropdowns -- checking a value appends it into that form's
+// Keywords field (comma-separated); unchecking removes it. All three
+// pickers feed the SAME "keywords" field, since match_departments/
+// match_sub_departments just widen which lead column that one shared
+// list is checked against (see RoleGroupClassifier::classify()) -- there
+// is no separate keyword list per field. Selector matches by name prefix
+// since each instance (the Add form, each Edit modal) uses a unique
+// render_multiselect_filter() name to avoid id collisions across modals.
 (function () {
-  document.querySelectorAll('input[name^="title_picker"]').forEach(function (cb) {
+  document.querySelectorAll('input[name^="title_picker"], input[name^="department_picker"], input[name^="sub_department_picker"]').forEach(function (cb) {
     cb.addEventListener('change', function () {
       var form = cb.closest('form');
       var field = form ? form.querySelector('[name="keywords"]') : null;
