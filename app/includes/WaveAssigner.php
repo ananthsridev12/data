@@ -543,9 +543,16 @@ class WaveAssigner
      * suppression list so it's excluded from every future campaign/import
      * too.
      *
+     * $bouncedAt (sql/051_bounced_at.sql): when the bounce actually
+     * happened, if known (e.g. Saleshandy's own "Bounced At" timestamp --
+     * see SaleshandyClient::fetchSequenceActivity()). Defaults to NOW()
+     * for callers with no real per-event timestamp to draw on (manual
+     * Bounce Import/paste-bounces/per-leader "Bounced" button) -- still
+     * better than leaving the column blank.
+     *
      * @return array{held_suppressed:int, domain_suppressed:bool}
      */
-    public static function suppress(PDO $db, int $leaderAssignmentId, int $userId, int $companyId, string $reason = 'Wave-1 bounce', ?string $bounceType = null): array
+    public static function suppress(PDO $db, int $leaderAssignmentId, int $userId, int $companyId, string $reason = 'Wave-1 bounce', ?string $bounceType = null, ?string $bouncedAt = null): array
     {
         $leadStmt = $db->prepare(
             'SELECT l.email FROM lead_campaign_assignments a JOIN leads l ON l.id = a.lead_id WHERE a.id = ?'
@@ -559,8 +566,8 @@ class WaveAssigner
             $domainSuppressed = true;
         }
 
-        $db->prepare("UPDATE lead_campaign_assignments SET bounce_status = 'bounced', bounce_type = ? WHERE id = ?")
-            ->execute([$bounceType, $leaderAssignmentId]);
+        $db->prepare("UPDATE lead_campaign_assignments SET bounce_status = 'bounced', bounce_type = ?, bounced_at = ? WHERE id = ?")
+            ->execute([$bounceType, $bouncedAt ?? date('Y-m-d H:i:s'), $leaderAssignmentId]);
         $stmt = $db->prepare("UPDATE lead_campaign_assignments SET wave_status = 'suppressed' WHERE wave_leader_id = ?");
         $stmt->execute([$leaderAssignmentId]);
         return ['held_suppressed' => $stmt->rowCount(), 'domain_suppressed' => $domainSuppressed];
@@ -573,9 +580,12 @@ class WaveAssigner
      * if that email happens to be a pending wave-1 leader in some
      * campaign, cascade-suppress its held group there too.
      *
+     * $bouncedAt: see suppress()'s docblock -- same reasoning, defaults
+     * to NOW() when the caller has no real per-event timestamp.
+     *
      * @return array{domain:string, cascaded:int, suppressed:bool}
      */
-    public static function suppressByEmail(PDO $db, string $email, int $userId, int $companyId, string $reason, ?string $bounceType = null): array
+    public static function suppressByEmail(PDO $db, string $email, int $userId, int $companyId, string $reason, ?string $bounceType = null, ?string $bouncedAt = null): array
     {
         $suppressed = self::bounceTypeSuppresses($db, $bounceType, $companyId);
         $domain = $suppressed
@@ -591,9 +601,10 @@ class WaveAssigner
         $leaderIds = array_map('intval', $leaderStmt->fetchAll(PDO::FETCH_COLUMN));
 
         $cascaded = 0;
+        $bouncedAt = $bouncedAt ?? date('Y-m-d H:i:s');
         foreach ($leaderIds as $leaderId) {
-            $db->prepare("UPDATE lead_campaign_assignments SET bounce_status = 'bounced', bounce_type = ? WHERE id = ?")
-                ->execute([$bounceType, $leaderId]);
+            $db->prepare("UPDATE lead_campaign_assignments SET bounce_status = 'bounced', bounce_type = ?, bounced_at = ? WHERE id = ?")
+                ->execute([$bounceType, $bouncedAt, $leaderId]);
             $stmt = $db->prepare("UPDATE lead_campaign_assignments SET wave_status = 'suppressed' WHERE wave_leader_id = ?");
             $stmt->execute([$leaderId]);
             $cascaded += $stmt->rowCount();

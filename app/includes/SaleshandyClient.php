@@ -714,6 +714,12 @@ class SaleshandyClient
                     'sentAt' => self::parseSaleshandyDate($row['Email Sent At'] ?? null),
                     'replied' => ($row['Replied'] ?? 'No') === 'Yes',
                     'bounced' => ($row['Bounced'] ?? 'No') === 'Yes',
+                    // Confirmed against a real API response: "Bounced At"
+                    // often carries only a date, no time-of-day (unlike
+                    // "Email Sent At") -- parseSaleshandyDate() still
+                    // parses it fine (defaults to midnight in the given
+                    // GMT offset), just without hour/minute precision.
+                    'bouncedAt' => self::parseSaleshandyDate($row['Bounced At'] ?? null),
                     'unsubscribed' => ($row['Unsubscribed'] ?? 'No') === 'Yes',
                     'stepNumber' => isset($row['Step Number']) ? (int) $row['Step Number'] : null,
                     'openCount' => isset($row['Open Count']) ? (int) $row['Open Count'] : 0,
@@ -774,8 +780,8 @@ class SaleshandyClient
      * signal on any single row (a reply, a bounce, a later step reached)
      * isn't lost by only looking at that email's first or last row.
      *
-     * @param array<int,array{email:string,name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,stepNumber:?int,openCount:int,lastOpenedAt:?int,clickCount:int,sentiment:?string}> $activity
-     * @return array<string,array{name:string,sentAt:?int,replied:bool,bounced:bool,unsubscribed:bool,currentStep:?int,openCount:int,lastOpenedAt:?int,clickCount:int,sentiment:?string}>
+     * @param array<int,array{email:string,name:string,sentAt:?int,replied:bool,bounced:bool,bouncedAt:?int,unsubscribed:bool,stepNumber:?int,openCount:int,lastOpenedAt:?int,clickCount:int,sentiment:?string}> $activity
+     * @return array<string,array{name:string,sentAt:?int,replied:bool,bounced:bool,bouncedAt:?int,unsubscribed:bool,currentStep:?int,openCount:int,lastOpenedAt:?int,clickCount:int,sentiment:?string}>
      */
     private function aggregateActivityByEmail(array $activity): array
     {
@@ -785,11 +791,16 @@ class SaleshandyClient
                 continue;
             }
             if (!isset($byEmail[$row['email']])) {
-                $byEmail[$row['email']] = ['name' => $row['name'], 'sentAt' => $row['sentAt'], 'replied' => false, 'bounced' => false, 'unsubscribed' => false, 'currentStep' => null, 'openCount' => 0, 'lastOpenedAt' => null, 'clickCount' => 0, 'sentiment' => null];
+                $byEmail[$row['email']] = ['name' => $row['name'], 'sentAt' => $row['sentAt'], 'replied' => false, 'bounced' => false, 'bouncedAt' => null, 'unsubscribed' => false, 'currentStep' => null, 'openCount' => 0, 'lastOpenedAt' => null, 'clickCount' => 0, 'sentiment' => null];
             }
             $agg = &$byEmail[$row['email']];
             $agg['replied'] = $agg['replied'] || $row['replied'];
             $agg['bounced'] = $agg['bounced'] || $row['bounced'];
+            // Earliest known bounce time across this email's step rows --
+            // same "earliest wins" convention as sentAt below.
+            if ($row['bouncedAt'] !== null && ($agg['bouncedAt'] === null || $row['bouncedAt'] < $agg['bouncedAt'])) {
+                $agg['bouncedAt'] = $row['bouncedAt'];
+            }
             $agg['unsubscribed'] = $agg['unsubscribed'] || $row['unsubscribed'];
             if ($agg['name'] === '' && $row['name'] !== '') {
                 $agg['name'] = $row['name'];
@@ -978,7 +989,8 @@ class SaleshandyClient
                 'UPDATE lead_campaign_assignments
                     SET delivery_status = ?, saleshandy_current_step = ?, saleshandy_synced_at = NOW(),
                         email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?),
-                        open_count = ?, last_opened_at = ?, click_count = ?, reply_sentiment = ?
+                        open_count = ?, last_opened_at = ?, click_count = ?, reply_sentiment = ?,
+                        bounced_at = COALESCE(?, bounced_at)
                   WHERE id = ?'
             );
 
@@ -989,10 +1001,19 @@ class SaleshandyClient
                     continue; // activity for an email not assigned to this campaign locally
                 }
 
+                $bouncedAt = null;
                 if ($row['bounced']) {
                     $status = 'Bounced';
                     $stats['bounced']++;
-                    WaveAssigner::suppressByEmail($db, $email, $userId, (int) $campaign['company_id'], "Saleshandy sync: {$campaign['name']}", $status);
+                    // Real API timestamp when Saleshandy provided one
+                    // (sql/051_bounced_at.sql), else NOW() as the best
+                    // available fallback -- same default suppressByEmail()
+                    // itself applies, kept consistent here since this sync
+                    // might be the only path that ever touches this
+                    // specific row's bounced_at (suppressByEmail() only
+                    // updates wave-1 LEADER rows, not every bounced row).
+                    $bouncedAt = $row['bouncedAt'] !== null ? date('Y-m-d H:i:s', $row['bouncedAt']) : date('Y-m-d H:i:s');
+                    WaveAssigner::suppressByEmail($db, $email, $userId, (int) $campaign['company_id'], "Saleshandy sync: {$campaign['name']}", $status, $bouncedAt);
                 } elseif ($row['replied']) {
                     $status = 'Replied';
                     $stats['replied']++;
@@ -1008,7 +1029,7 @@ class SaleshandyClient
                 $emailSentAt = $row['sentAt'] !== null ? date('Y-m-d', $row['sentAt']) : null;
                 $lastOpenedAt = $row['lastOpenedAt'] !== null ? date('Y-m-d H:i:s', $row['lastOpenedAt']) : null;
                 $sentiment = $row['replied'] ? $row['sentiment'] : null;
-                $updateStmt->execute([$status, $row['currentStep'], $emailSent, $emailSentAt, $row['openCount'], $lastOpenedAt, $row['clickCount'], $sentiment, $assignmentId]);
+                $updateStmt->execute([$status, $row['currentStep'], $emailSent, $emailSentAt, $row['openCount'], $lastOpenedAt, $row['clickCount'], $sentiment, $bouncedAt, $assignmentId]);
                 $stats['matched']++;
             }
         }
@@ -1158,8 +1179,8 @@ class SaleshandyClient
         $insertAssignment = $db->prepare(
             "INSERT INTO lead_campaign_assignments
                 (lead_id, campaign_id, assigned_by, status, exported_at, delivery_status,
-                 saleshandy_current_step, saleshandy_synced_at, email_sent, email_sent_at, saleshandy_pushed_at)
-             VALUES (?, ?, ?, 'pushed', ?, ?, ?, NOW(), ?, ?, ?)"
+                 saleshandy_current_step, saleshandy_synced_at, email_sent, email_sent_at, saleshandy_pushed_at, bounced_at)
+             VALUES (?, ?, ?, 'pushed', ?, ?, ?, NOW(), ?, ?, ?, ?)"
         );
 
         foreach ($byEmail as $email => $row) {
@@ -1195,15 +1216,21 @@ class SaleshandyClient
             // that is known, so the column isn't left misleadingly blank
             // for an entire class of leads.
             $pushedAt = $row['sentAt'] !== null ? date('Y-m-d H:i:s', $row['sentAt']) : date('Y-m-d H:i:s');
+            // Real API timestamp (sql/051_bounced_at.sql) when Saleshandy
+            // provided one, else NOW() as the best available fallback --
+            // same reasoning as syncCampaign()'s own bounced_at handling.
+            $bouncedAt = $row['bounced']
+                ? ($row['bouncedAt'] !== null ? date('Y-m-d H:i:s', $row['bouncedAt']) : date('Y-m-d H:i:s'))
+                : null;
 
             $insertAssignment->execute([
                 $leadId, $campaign['id'], $userId, $exportedAt, $deliveryStatus,
-                $row['currentStep'], $emailSent, $emailSentAt, $pushedAt,
+                $row['currentStep'], $emailSent, $emailSentAt, $pushedAt, $bouncedAt,
             ]);
             $stats['assignments_created']++;
 
             if ($row['bounced']) {
-                WaveAssigner::suppressByEmail($db, $email, $userId, (int) $campaign['company_id'], "Saleshandy pull-in: {$campaign['name']}", 'Bounced');
+                WaveAssigner::suppressByEmail($db, $email, $userId, (int) $campaign['company_id'], "Saleshandy pull-in: {$campaign['name']}", 'Bounced', $bouncedAt);
             }
         }
 
@@ -1381,7 +1408,8 @@ class SaleshandyClient
         $updateDeliveryStatus = $db->prepare(
             'UPDATE lead_campaign_assignments
                 SET delivery_status = ?, saleshandy_current_step = ?, saleshandy_synced_at = NOW(),
-                    email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?)
+                    email_sent = email_sent OR ?, email_sent_at = COALESCE(email_sent_at, ?),
+                    bounced_at = COALESCE(?, bounced_at)
               WHERE id = ?'
         );
         $updateOpens = $db->prepare('UPDATE lead_campaign_assignments SET open_count = ?, last_opened_at = ?, click_count = ?, reply_sentiment = ? WHERE id = ?');
@@ -1418,10 +1446,14 @@ class SaleshandyClient
             // Same priority as syncCampaign()'s per-row loop, but against
             // the full history rather than a possibly-stale narrow window
             // -- so this always overwrites, it's not a fill-if-empty guard.
+            $bouncedAt = null;
             if ($row['bounced']) {
                 $newStatus = 'Bounced';
                 $stats['bounced']++;
-                WaveAssigner::suppressByEmail($db, $email, $userId, (int) $campaign['company_id'], "Saleshandy backfill: {$campaign['name']}", $newStatus);
+                // Real API timestamp (sql/051_bounced_at.sql) when
+                // available, else NOW() -- same fallback as syncCampaign().
+                $bouncedAt = $row['bouncedAt'] !== null ? date('Y-m-d H:i:s', $row['bouncedAt']) : date('Y-m-d H:i:s');
+                WaveAssigner::suppressByEmail($db, $email, $userId, (int) $campaign['company_id'], "Saleshandy backfill: {$campaign['name']}", $newStatus, $bouncedAt);
             } elseif ($row['replied']) {
                 $newStatus = 'Replied';
                 $stats['replied']++;
@@ -1447,7 +1479,7 @@ class SaleshandyClient
             // email_sent = email_sent OR ? merge as syncCampaign()'s own
             // per-row update, so the two can never disagree.
             $emailSentAt = date('Y-m-d', $row['sentAt']);
-            $updateDeliveryStatus->execute([$newStatus, $row['currentStep'], 1, $emailSentAt, $assignment['id']]);
+            $updateDeliveryStatus->execute([$newStatus, $row['currentStep'], 1, $emailSentAt, $bouncedAt, $assignment['id']]);
         }
 
         $stats['released'] += $this->releaseResolvedWaveLeaders($db, (int) $campaign['id']);
